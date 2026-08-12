@@ -1,3 +1,8 @@
+# private planning docs
+/PRD.md
+/prd.md
+/plan.md
+
 # dependencies
 node_modules/
 .pnpm-store/
