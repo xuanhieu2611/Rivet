@@ -1,0 +1,104 @@
+name: Neon preview branch
+
+# Every pull request gets a throwaway Neon branch off the project's default
+# database and has the migrations applied to it, so schema changes are verified
+# against real Postgres before they can merge. The branch is deleted on close.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+
+# One run at a time per pull request. A close event cancels an in-flight create
+# run, which is what stops a branch from being created after it was deleted.
+concurrency:
+  group: neon-branch-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  # NEON_API_KEY is not available on forked-pull-request runs, and may not be set
+  # on the repository at all yet. Rather than fail red for a missing credential,
+  # detect it once and let the real jobs skip. Once the secret exists this job
+  # reports `true` and any failure below is a genuine failure.
+  guard:
+    name: Check credentials
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Detect NEON_API_KEY
+        id: check
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+        run: |
+          if [ -n "$NEON_API_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Neon preview branch skipped::NEON_API_KEY is not set for this run, so no preview database branch was created and migrations were not verified."
+          fi
+
+  migrate:
+    name: Create branch and apply migrations
+    needs: guard
+    if: needs.guard.outputs.configured == 'true' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create Neon branch
+        id: create-branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: preview/pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Mask the branch connection string
+        # `db_url` embeds the role password. Registering it as a secret means any
+        # later step that leaks it - now or after someone edits this file - gets
+        # redacted by the runner instead of publishing credentials to the log.
+        env:
+          BRANCH_DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: echo "::add-mask::$BRANCH_DATABASE_URL"
+
+      - name: Apply migrations
+        # The direct (unpooled) endpoint: DDL through Neon's PgBouncer in
+        # transaction pooling mode is unreliable. `db_url` is that endpoint;
+        # `db_url_pooled` is the one the app would use.
+        env:
+          DATABASE_URL_UNPOOLED: ${{ steps.create-branch.outputs.db_url }}
+        run: pnpm db:migrate
+
+  delete:
+    name: Delete preview branch
+    # Depends only on `guard`, never on `migrate`, so cleanup still happens for a
+    # pull request whose create run failed, was cancelled, or never ran.
+    needs: guard
+    if: needs.guard.outputs.configured == 'true' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete Neon branch
+        uses: neondatabase/delete-branch-action@v3
+        # A pull request opened before this workflow existed has no branch to
+        # delete, and the API returns 404. Nothing is wrong in that case, so do
+        # not fail the run over it.
+        continue-on-error: true
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}

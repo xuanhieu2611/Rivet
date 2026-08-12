@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Nothing in this workflow writes to the repository or to any GitHub API.
+permissions:
+  contents: read
+
+# Superseded pushes to a pull request cancel their in-flight run. Pushes to main
+# are never cancelled - every commit on the default branch gets a real result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    # Deliberately no DATABASE_URL. Every page and route handler is
+    # `dynamic = "force-dynamic"` and the Drizzle client is constructed lazily, so
+    # the whole pipeline - including `pnpm build` - runs without a database.
+    # Migrations are exercised separately in neon-branch.yml.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        # Version comes from `packageManager` in package.json.
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
