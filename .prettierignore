@@ -1,0 +1,22 @@
+node_modules/
+.pnpm-store/
+pnpm-lock.yaml
+
+# build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# turborepo
+.turbo/
+
+# generated
+coverage/
+**/drizzle/**
+
+# private planning docs (gitignored, but keep them out of formatting too)
+PRD.md
+prd.md
+plan.md

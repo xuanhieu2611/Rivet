@@ -1,0 +1,27 @@
+{
+  "name": "@rivet/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "tsconfig.base.json",
+    "eslint.base.js"
+  ],
+  "exports": {
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./eslint.base.js": "./eslint.base.js"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.1",
+    "typescript-eslint": "^8.67.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3"
+  }
+}
