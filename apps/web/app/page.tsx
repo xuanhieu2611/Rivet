@@ -1,5 +1,6 @@
 import "server-only";
 
+import { listJobs } from "@rivet/core";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/status-badge";
@@ -13,7 +14,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime, shortenRepoUrl } from "@/lib/format";
-import { listJobs } from "@/lib/services/job-service";
 
 /**
  * Reads Postgres on every request, so it must never be prerendered - `next build`

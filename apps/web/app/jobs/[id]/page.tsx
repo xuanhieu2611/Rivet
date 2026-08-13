@@ -1,5 +1,6 @@
 import "server-only";
 
+import { getJob } from "@rivet/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -9,7 +10,6 @@ import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime, formatDuration, formatUsd } from "@/lib/format";
-import { getJob } from "@/lib/services/job-service";
 
 /** Reads Postgres per request; `next build` must not need a database. */
 export const dynamic = "force-dynamic";

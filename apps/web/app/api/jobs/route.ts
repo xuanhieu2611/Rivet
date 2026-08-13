@@ -1,10 +1,10 @@
 import "server-only";
 
 import { createJobSchema } from "@rivet/contracts";
+import { createJob, listJobs, resolveListLimit } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { badRequest, readJsonBody, serverError, validationFailed } from "@/lib/api/responses";
-import { createJob, listJobs, resolveListLimit } from "@/lib/services/job-service";
 
 /**
  * Never prerender: these handlers talk to Postgres, and `next build` must not

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { jobStatusSchema } from "@rivet/contracts";
+import { getJob, updateJobStatus } from "@rivet/core";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -11,7 +12,6 @@ import {
   serverError,
   validationFailed,
 } from "@/lib/api/responses";
-import { getJob, updateJobStatus } from "@/lib/services/job-service";
 
 export const dynamic = "force-dynamic";
 

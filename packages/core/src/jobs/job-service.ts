@@ -6,10 +6,11 @@ import { desc, eq } from "drizzle-orm";
  * All of Rivet's job business logic, in one framework-agnostic module.
  *
  * There is deliberately NO Next.js import in this file - not `server-only`, not
- * `next/cache`, nothing. It takes plain arguments and returns plain data so the
- * Milestone 1 `apps/api` service can lift it out verbatim when the worker forces
- * a real service boundary. The `server-only` guard belongs in the route handlers
- * and pages that wrap it, which is where it is.
+ * `next/cache`, nothing. It takes plain arguments and returns plain data, which
+ * is what let it move out of `apps/web` into this package intact once the
+ * Milestone 1 worker became a second consumer of the same logic. The
+ * `server-only` guard belongs in the route handlers and pages that wrap it,
+ * which is where it is.
  */
 
 export const DEFAULT_JOB_LIST_LIMIT = 50;

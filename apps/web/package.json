@@ -14,6 +14,7 @@
   "dependencies": {
     "@hookform/resolvers": "^5.7.1",
     "@rivet/contracts": "workspace:*",
+    "@rivet/core": "workspace:*",
     "@rivet/database": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
