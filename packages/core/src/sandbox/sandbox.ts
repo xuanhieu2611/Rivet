@@ -28,7 +28,14 @@ export interface SandboxSpec {
   jobId: string;
   /** Pinned by digest, not just by tag, so an upstream retag cannot change what a job runs. */
   image: string;
-  /** Where commands run by default. `/workspace` today. */
+  /**
+   * Where the job's work happens. `/home/node/workspace` today.
+   *
+   * Not `/workspace`, and the reason is a property of containers rather than a
+   * preference: a sandbox runs as an unprivileged user, so the workdir's parent
+   * has to be one that user can already write. `/` is not, and a directory the
+   * runtime creates on the way in belongs to root.
+   */
   workdir: string;
   memoryBytes: number;
   /** CPU quota in billionths of a core, Docker's own unit. 2 CPUs is 2_000_000_000. */

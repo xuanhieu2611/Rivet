@@ -49,31 +49,82 @@ export function truncate(text: string, maxBytes: number): TruncatedText {
     return { text, truncated: false, elidedBytes: 0 };
   }
 
-  const headTarget = Math.ceil(limit / 2);
-  let headEnd = headTarget;
-  while (headEnd > 0 && isContinuationByte(bytes[headEnd])) headEnd -= 1;
+  const headBytes = Math.ceil(limit / 2);
+  const tailBytes = limit - headBytes;
+  return renderTruncated(
+    bytes.subarray(0, headBytes),
+    tailBytes === 0 ? EMPTY : bytes.subarray(bytes.byteLength - tailBytes),
+    bytes.byteLength - headBytes - tailBytes,
+  );
+}
 
-  let tailStart = bytes.byteLength - (limit - headTarget);
-  while (tailStart < bytes.byteLength && isContinuationByte(bytes[tailStart])) tailStart += 1;
-
-  const elidedBytes = tailStart - headEnd;
-  const head = bytes.subarray(0, headEnd).toString("utf8");
-  const tail = bytes.subarray(tailStart).toString("utf8");
-  return {
-    text: `${head}${ELISION_PREFIX}${elidedBytes}${ELISION_SUFFIX}${tail}`,
-    truncated: true,
-    elidedBytes,
-  };
+/** How `truncate` splits a cap between the two ends it keeps. */
+export function truncationSplit(maxBytes: number): { headBytes: number; tailBytes: number } {
+  const limit = Math.max(0, Math.floor(maxBytes));
+  const headBytes = Math.ceil(limit / 2);
+  return { headBytes, tailBytes: limit - headBytes };
 }
 
 /**
- * True for a byte that continues a multi-byte UTF-8 character, `10xxxxxx`.
+ * Assembles a truncated transcript from the two ends that survived.
  *
- * An index past the end reads as `undefined`, which is not a continuation byte,
- * which is the right answer: the end of the buffer is always a valid boundary.
+ * Split out from `truncate` because the sandbox adapter never has the whole
+ * text: it caps output as it streams, precisely so that a command printing a
+ * gigabyte costs a bounded amount of memory rather than an unbounded one. It
+ * keeps the two ends and a byte count, and hands them here, so the format is
+ * produced in one place instead of two that can drift.
+ *
+ * Both ends are trimmed back to a UTF-8 boundary and whatever that costs is
+ * added to the elided count, which is what keeps kept-plus-elided equal to what
+ * came in.
  */
+export function renderTruncated(head: Buffer, tail: Buffer, elidedBytes: number): TruncatedText {
+  const keptHead = trimTrailingPartialChar(head);
+  const keptTail = trimLeadingContinuation(tail);
+  const elided =
+    elidedBytes + (head.byteLength - keptHead.byteLength) + (tail.byteLength - keptTail.byteLength);
+
+  return {
+    text: `${keptHead.toString("utf8")}${ELISION_PREFIX}${elided}${ELISION_SUFFIX}${keptTail.toString("utf8")}`,
+    truncated: true,
+    elidedBytes: elided,
+  };
+}
+
+const EMPTY = Buffer.alloc(0);
+
+/** Drops a final character whose remaining bytes were cut off. */
+function trimTrailingPartialChar(buffer: Buffer): Buffer {
+  let start = buffer.byteLength - 1;
+  while (start >= 0 && isContinuationByte(buffer[start])) start -= 1;
+  if (start < 0) return EMPTY;
+
+  const expected = charByteLength(buffer[start]);
+  return start + expected <= buffer.byteLength ? buffer : buffer.subarray(0, start);
+}
+
+/** Drops leading bytes that belong to a character whose start was cut off. */
+function trimLeadingContinuation(buffer: Buffer): Buffer {
+  let index = 0;
+  while (index < buffer.byteLength && isContinuationByte(buffer[index])) index += 1;
+  return buffer.subarray(index);
+}
+
+/** True for a byte that continues a multi-byte UTF-8 character, `10xxxxxx`. */
 function isContinuationByte(byte: number | undefined): boolean {
   return byte !== undefined && (byte & 0xc0) === 0x80;
+}
+
+/** How many bytes the character starting with this byte occupies. */
+function charByteLength(byte: number | undefined): number {
+  if (byte === undefined) return 1;
+  if ((byte & 0x80) === 0) return 1;
+  if ((byte & 0xe0) === 0xc0) return 2;
+  if ((byte & 0xf0) === 0xe0) return 3;
+  if ((byte & 0xf8) === 0xf0) return 4;
+  // Not a valid leading byte at all. Treating it as one byte keeps the invalid
+  // sequence intact rather than deleting evidence of what the command printed.
+  return 1;
 }
 
 export interface RecordCommandInput {
