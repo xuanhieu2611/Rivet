@@ -39,6 +39,26 @@
         "RIVET_ALLOW_REMOTE_INTEGRATION",
         "RIVET_TEST_LOG_LEVEL"
       ]
+    },
+    "test:sandbox": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [],
+      "env": [
+        "DOCKER_HOST",
+        "RIVET_ALLOW_REMOTE_SANDBOX",
+        "RIVET_TEST_LOG_LEVEL",
+        "SANDBOX_IMAGE",
+        "SANDBOX_WORKDIR",
+        "SANDBOX_MEMORY_MB",
+        "SANDBOX_CPUS",
+        "SANDBOX_PIDS_LIMIT",
+        "SANDBOX_COMMAND_TIMEOUT_MS",
+        "SANDBOX_CLONE_TIMEOUT_MS",
+        "SANDBOX_INSTALL_TIMEOUT_MS",
+        "SANDBOX_BASELINE_TIMEOUT_MS",
+        "SANDBOX_MAX_OUTPUT_BYTES"
+      ]
     }
   }
 }
