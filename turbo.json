@@ -45,6 +45,9 @@
       "cache": false,
       "outputs": [],
       "env": [
+        "DATABASE_URL",
+        "DATABASE_URL_UNPOOLED",
+        "REDIS_URL",
         "DOCKER_HOST",
         "RIVET_ALLOW_REMOTE_SANDBOX",
         "RIVET_TEST_LOG_LEVEL",

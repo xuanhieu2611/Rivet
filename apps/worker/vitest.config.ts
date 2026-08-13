@@ -7,6 +7,6 @@ export default defineConfig({
     // Belt and braces. The integration suite lives under `tests/` and has its
     // own config, so this pattern already excludes it - but `pnpm test` must
     // run with no database and no Redis, and that is worth stating twice.
-    exclude: ["**/node_modules/**", "**/*.int.test.ts"],
+    exclude: ["**/node_modules/**", "**/*.int.test.ts", "**/*.sbx.test.ts"],
   },
 });

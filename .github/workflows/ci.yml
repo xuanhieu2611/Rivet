@@ -119,3 +119,60 @@ jobs:
       # way would be a schema no deployment has.
       - name: Integration tests
         run: pnpm test:integration
+
+  sandbox:
+    name: Sandbox
+    runs-on: ubuntu-latest
+    # A third, independent job. `verify` remains completely free of Docker,
+    # Postgres, and Redis; this job proves the real adapter and the end-to-end
+    # worker path against the same services a local sandbox run uses.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rivet_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:8
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/rivet_test
+      DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@localhost:5432/rivet_test
+      REDIS_URL: redis://localhost:6379
+      SANDBOX_IMAGE: node@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # GitHub-hosted Linux runners already provide the daemon. Pull explicitly
+      # before Vitest so image setup is visible and shared by every case.
+      - name: Pre-pull sandbox image
+        run: docker pull "$SANDBOX_IMAGE"
+
+      - name: Sandbox tests
+        run: pnpm test:sandbox

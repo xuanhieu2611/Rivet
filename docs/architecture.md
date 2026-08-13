@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, at the end of Milestone 1, and names the
+This document describes Rivet **as it exists today**, at the end of Milestone 2, and names the
 places where the current shape is a deliberate shortcut rather than the intended end state. It is
 updated as each milestone lands rather than describing a system that does not exist yet.
 
@@ -21,9 +21,9 @@ that run a coding agent inside disposable sandboxes:
 ```
 
 Milestone 0 built the leftmost column: a UI, an API, and durable job state. Milestone 1 built the
-queue, the worker, and everything that makes a job survive the worker dying. What is downstream of
-the worker - the sandbox, the coding agent, the model - arrives in Milestones 2 through 5, and the
-phases are simulated until then.
+queue, the worker, and everything that makes a job survive the worker dying. Milestone 2 built the
+Docker sandbox and made provisioning and baseline testing real. The coding agent and model arrive in
+Milestones 4 and 5; the five phases that need them remain simulated until then.
 
 ## What exists today
 
@@ -34,16 +34,16 @@ phases are simulated until then.
 | Worker        | `apps/worker`        | BullMQ consumer: claim, heartbeat, run the pipeline, finalize, sweep    |
 | Domain logic  | `packages/core`      | Jobs, transitions, claims, cancellation, the event log, the pipeline    |
 | Queue adapter | `packages/queue`     | BullMQ over Redis behind core's `JobQueue` port, plus an in-memory fake |
-| Contracts     | `packages/contracts` | Zod schemas, the status enum, `JobSummary` / `JobDetail` / `JobEvent`   |
+| Sandbox       | `packages/sandbox`   | Dockerode behind core's `SandboxProvider` port, plus a scripted fake    |
+| Contracts     | `packages/contracts` | Zod schemas, job/event/command contracts, and the status enum           |
 | Data access   | `packages/database`  | Drizzle schema, generated migrations, the `pg` pool                     |
 | Shared config | `packages/config`    | The tsconfig and ESLint bases every workspace extends                   |
 
-Two tables. `jobs` holds the domain model: the task the user described, the repository and base
-branch, a `job_status` enum covering the full fourteen-state lifecycle, budget ceilings, the lease
-and retry columns Milestone 1 added, and the result columns later milestones fill in. `job_events`
-is the append-only history behind the execution timeline. Columns that only have a value once a
-later milestone is real are nullable, so the sandbox and the agent will not need a migration to
-start writing them.
+Three tables. `jobs` holds the domain model: the task, repository and base branch, the full status
+machine, budget ceilings, lease and retry state, and the sandbox's resolved commit and environment
+fingerprint. `job_events` is the append-only history behind the execution timeline. `job_commands`
+is the append-only command ledger; transcripts live there rather than bloating every timeline read.
+Columns that only later milestones can fill remain nullable.
 
 ## The two deployables and the package they share
 
@@ -69,11 +69,11 @@ interim rule from M0 still stands: route handlers do parse, validate, delegate, 
 else. Orchestration accumulating in a `route.ts` is the signal that something belongs in core.
 
 Two more rules keep the package honest, and both are load-bearing rather than stylistic. It imports
-no `bullmq` and no `ioredis`, because domain logic that depends on the delivery mechanism cannot
-claim to be independent of it - core declares a `JobQueue` interface and `packages/queue` is the
-only place that knows Redis exists. And it reads no `process.env`: configuration arrives as
-arguments, which is what lets the pipeline run at `speed: 0` in unit tests, in under a millisecond,
-with no fake timers.
+no `bullmq`, `ioredis` or `dockerode`, because domain logic that depends on an adapter cannot claim
+to be independent of it. Core declares `JobQueue` and `SandboxProvider` ports; `packages/queue` and
+`packages/sandbox` are the only packages that know Redis and Docker exist. And core reads no
+`process.env`: configuration arrives as arguments, which is what lets the pipeline run at `speed: 0`
+in unit tests, in under a millisecond, with no fake timers.
 
 ## How a request flows
 
@@ -152,6 +152,44 @@ opens a connection and never throws, exactly like `@rivet/database`, because `ne
 with no `REDIS_URL`. Outside production both the client and the `Queue` are also cached on
 `globalThis`, because Next.js re-evaluates server modules on every hot reload and a module-level
 `let` would leak a connection pair per edit until Upstash started refusing them.
+
+## The sandbox
+
+The sandbox follows the same port/adapter split as the queue. `packages/core` declares the
+`SandboxProvider`, `Sandbox`, request, result and resource-limit types, while `packages/sandbox`
+implements them with dockerode and supplies a scripted fake. Core can orchestrate provisioning and
+testing without importing Docker, and importing the adapter does not contact the daemon. The client,
+image check and network are all lazy. That preserves the important property that unit tests and
+builds need no Docker daemon.
+
+A real attempt gets one long-lived container. It runs as uid 1000 with all Linux capabilities
+dropped, `no-new-privileges`, memory and swap set to the same ceiling, CPU and PID limits, and the
+user-defined `rivet-sandbox` bridge. Provisioning clones into `/home/node/workspace/repo`, resolves
+HEAD, installs from the detected lockfile, and records the image, tool versions, lockfile hash,
+commit and limits as an environment fingerprint. Baseline testing then runs the repository's own
+`test` script in the same filesystem. Every command is an argv array rather than a shell string, and
+stdout and stderr are captured separately. Output above the cap keeps its head and tail with an
+explicit byte-count marker in the middle.
+
+The processor owns the container handle, not the phase that creates it. Its `finally` destroys the
+container after completion, failure, cancellation, job timeout, lease loss and graceful shutdown.
+That ownership matters because the processor deliberately abandons a phase promise that ignores an
+abort. A command timeout or abort kills the whole disposable container because Docker exposes no
+reliable way to kill an exec by itself. `destroy()` is idempotent and never masks the error that led
+to cleanup.
+
+`kill -9` skips every `finally`, so the sweeper also runs a sandbox reaper. This is the third
+reconciliation loop: the lease reconciles Postgres with workers, orphan re-enqueueing reconciles
+Postgres with Redis, and the reaper reconciles Postgres with Docker. Containers carry job, worker
+and creation-time labels. After a grace period, the reaper removes one unless Postgres says its job
+has a live, unexpired lease.
+
+Sandbox failures are explicit. Daemon outages and container-create failures are retryable host
+problems. An unavailable repository, unsupported project and dependency-install failure are terminal
+repository problems. Command timeout and OOM are terminal limit failures, with OOM read from
+Docker's state rather than guessed from exit code 137. A non-zero command exit is not itself an
+exception: provisioning interprets it as failure, while a red baseline records `failed` and lets the
+job continue.
 
 ## The worker
 
@@ -464,7 +502,7 @@ than a fresh empty container.
 
 ## How this is tested
 
-Two suites, and the split is deliberate rather than administrative.
+Three suites, and the split is deliberate rather than administrative.
 
 `pnpm test` runs with **no database and no Redis**, and that is a property worth protecting rather
 than a limitation to work around. It is what proves the lazy clients stay lazy and that `pnpm build`
@@ -475,10 +513,15 @@ pipeline runner at `speed: 0`, the config invariant, the in-memory queue and the
 `pnpm test:integration` runs 34 tests in about 15 seconds against real Postgres, real Redis and real
 BullMQ workers - `postgres:17` and `redis:8` service containers in CI, local services on a dev
 machine. It is a separate vitest config with no file pattern in common with the default suite, so
-`pnpm test` cannot pick it up by accident. What it proves is the list of claims this document makes:
-exclusive claim under a race, compare-and-swap rejection, heartbeat renewal and fencing, crash
-recovery and sweeper reclaim, retry and terminal failure, timeout, cancellation in all four of its
-states, idempotent enqueue, and the orphaned-`queued` reconciliation.
+`pnpm test` cannot pick it up by accident. It proves exclusive claims, fencing, retries,
+cancellation, timeouts, crash recovery and the Postgres/Redis reconciliation paths.
+
+`pnpm test:sandbox` is the third, non-overlapping suite. It uses the real Docker daemon plus local
+Postgres and Redis. It proves stream separation, non-zero exits, truncation, command timeouts,
+memory and PID limits, uid 1000, cleanup and reaping, then drives a hermetic repository through the
+real worker to `completed`. Its git daemon serves temporary bare repositories only; no public
+network or package registry is involved. The suite refuses a non-local Docker host unless the caller
+explicitly opts in, just as the integration suite refuses remote databases.
 
 Two details in that suite are load-bearing. Time is **compressed, not faked**: a two-second lease
 and a half-second heartbeat are real timings against a real database, with `pipelineSpeed: 0` so
@@ -493,9 +536,9 @@ Named so their absence reads as a decision rather than an oversight: no authenti
 (Milestone 9 brings GitHub identity), no `repository_id` foreign key (there is no Repository table
 to point at, so the job stores a plain `repo_url`), no event stream - the timeline is polled, not
 pushed (M3), no model call of any kind (M4), no checkpoints or resumable jobs (M6), no transactional
-outbox (see the dual-write section for why), and no deployment: both processes run locally, because
-Milestone 2's Docker sandboxes will constrain the worker's host anyway and deploying twice is wasted
-work.
+outbox (see the dual-write section for why), and no deployment. There is a real Docker sandbox, but
+no coding agent or model yet, and the bridge network is not the hardened isolation boundary a
+production worker needs.
 
 The one piece of scaffolding left in the codebase is `apps/web/components/job-status-poller.tsx`, a
 client component calling `router.refresh()` every two seconds while a job is non-terminal. It exists

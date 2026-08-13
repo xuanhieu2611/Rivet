@@ -15,17 +15,17 @@ boundary is the point of the project, and it is what the architecture is organiz
 
 ## Status
 
-**Milestone 1 - background job execution - is complete.** Jobs run. Creating one enqueues it on
-Redis, a worker process claims it under a Postgres lease, walks it through a pipeline, heartbeats
-while it works, and lands it in a terminal status. The execution timeline on the job page is the
-database's own account of the run, written transactionally with each status change. Retries with
-backoff, cooperative cancellation, per-job timeouts, and recovery from a `kill -9` mid-run all work,
-and each of those claims is covered by an integration test against real Postgres and real Redis.
+**Milestone 2 - sandbox execution - is complete.** Creating a job now gives a worker a real Docker
+container, clones the requested repository and branch, resolves the commit, installs dependencies,
+and runs the repository's baseline test script. Every command records its argv, duration, exit code,
+separate stdout and stderr, and bounded transcript. A red baseline is recorded without blaming the
+job. CPU, memory, PID and command-time limits are enforced.
 
-What is still simulated is the work itself: the seven phases are sleeps, about 21 seconds end to
-end. There is no sandbox, no coding agent and no model call yet - Milestones 2 and 4 - and the
-machinery around the phases is deliberately built so that replacing their bodies changes nothing
-else.
+The processor destroys the container after success, failure, cancellation, timeout, lease loss and
+shutdown. A reaper removes what a `kill -9` leaves behind. The separate sandbox suite proves those
+claims against Docker, Postgres, Redis and a hermetic git fixture. Analysis, planning,
+implementation, review and finalization are still simulated until the coding agent arrives in
+Milestones 4 and 5; there is no model call yet.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together and what will have
 to move as later milestones land.
@@ -76,11 +76,11 @@ pnpm dev
 
 `pnpm dev` starts two processes: the Next.js app on <http://localhost:3000> and the worker.
 
-The demo is watching a job run. Create one from **New job** and you land on its detail page. Within
-a second or so the worker claims it, and the status badge and the execution timeline update every
-two seconds as it moves through provisioning, analysis, planning, implementation, testing, review
-and finalization - about 21 seconds in total. Cancel it partway through and it stops between phases.
-The dashboard shows the same transitions in the list.
+The demo is watching a job run. Create one from **New job** with a public Node repository and you
+land on its detail page. The worker creates a sandbox, clones and installs the repository, records
+the resolved commit and environment fingerprint, runs its baseline tests, and then moves through the
+five still-simulated phases. The job page shows the command ledger and transcripts as it polls.
+Cancel it partway through and the running command and container are stopped.
 
 To watch the recovery machinery instead, break a job on purpose. Set `RIVET_FAULT_PHASE=testing`
 with one of the `RIVET_FAULT_MODE` values and restart the worker: `throw` retries the job with
@@ -114,6 +114,38 @@ It defaults to `postgresql://postgres:postgres@localhost:5432/rivet_test` and
 different values. Migrations are applied by the suite's own setup, from the same folder and with the
 same migrator as `pnpm db:migrate`.
 
+## Running the sandbox suite
+
+This suite needs the same local Postgres and Redis services plus a running Docker daemon. It
+creates, kills and removes containers, exercises every resource limit, and drives a temporary
+repository through a real BullMQ worker. Its git fixture is served from a temporary directory by
+`git daemon`, so clone, install and test are hermetic and need no public network.
+
+```bash
+docker version # must include a Server section
+pnpm test:sandbox
+```
+
+The suite refuses a non-local `DOCKER_HOST` unless `RIVET_ALLOW_REMOTE_SANDBOX=1` is set. That
+escape hatch should only be used for a disposable daemon you intentionally chose. Database and Redis
+URLs have the same local-only guard as the integration suite.
+
+## How this sandbox differs from a production one
+
+The Docker sandbox is a useful execution boundary, not a claim of hostile-code isolation. Containers
+share the host kernel. The `rivet-sandbox` bridge can still reach the host and the public internet;
+there is no egress domain allowlist. Rivet uses Docker's default seccomp profile rather than a
+Rivet-specific one, and it does not enable user-namespace remapping. A kernel or daemon escape,
+network access to an unprotected host service, or dependency code phoning home are outside the
+protection this milestone provides.
+
+A production worker should put untrusted jobs behind a stronger boundary such as gVisor, Firecracker
+microVMs or Kata Containers; route network access through an egress proxy with an explicit domain
+allowlist; isolate each job's network; and provide only per-job credentials with a minutes-long TTL.
+Control-plane database, Redis and provider credentials should never enter that environment. Docker
+remains appropriate for this local milestone because the limits, lifecycle and adapter boundary
+carry forward when the isolation backend changes.
+
 ## Environment variables
 
 A single `.env.local` at the repository root serves every workspace: the web app loads it from
@@ -127,7 +159,9 @@ documents every worker tuning variable with the reasoning behind its default.
 | `DATABASE_URL_UNPOOLED` | yes for migrations | `pnpm db:migrate`, `pnpm db:studio` | Neon's **direct** endpoint. Migrations fall back to `DATABASE_URL` when it is unset, which is how CI passes a single URL |
 | `REDIS_URL`             | yes                | the app and the worker, at runtime  | Upstash, for BullMQ. `rediss://` (two s) is TLS, which Upstash requires                                                  |
 | `WORKER_*`              | no                 | the worker                          | Concurrency, lease, heartbeat, sweep interval, attempt ceiling, shutdown grace. Defaults are in `.env.example`           |
-| `RIVET_*`               | no                 | the worker                          | Pipeline speed for the five simulated phases and fault injection modes                                                   |
+| `RIVET_*`               | no                 | the worker                          | Sandbox mode, pipeline speed for five simulated phases, and fault injection                                              |
+| `SANDBOX_*`             | no                 | the worker                          | Image, workdir, resource ceilings, command budgets and output cap                                                        |
+| `DOCKER_HOST`           | no                 | the worker and sandbox tests        | Overrides the local Docker socket                                                                                        |
 
 DDL through Neon's PgBouncer endpoint in transaction pooling mode is unreliable, so migrations
 deliberately bypass the pooler while application queries go through it.
@@ -151,6 +185,7 @@ Every command is run from the repository root. Turborepo fans them out across th
 | `pnpm typecheck`        | `tsc --noEmit` across every workspace                                           |
 | `pnpm test`             | Vitest unit tests. No database, no Redis                                        |
 | `pnpm test:integration` | The `*.int.test.ts` suite, against a local Postgres and Redis                   |
+| `pnpm test:sandbox`     | The `*.sbx.test.ts` suite, against Docker, local Postgres and Redis             |
 | `pnpm format`           | Prettier, writing changes                                                       |
 | `pnpm format:check`     | Prettier in check mode - this is what CI runs                                   |
 | `pnpm db:generate`      | Generates a migration from the Drizzle schema into `packages/database/drizzle/` |
@@ -162,30 +197,32 @@ Every command is run from the repository root. Turborepo fans them out across th
 ```text
 apps/
   web/                 Next.js App Router UI + the /api/jobs route handlers
-  worker/              the long-running job runner, and the integration suite
+  worker/              the long-running job runner, integration suite and sandbox suite
 packages/
   config/              shared tsconfig and ESLint bases
   contracts/           zod schemas and response types shared by client and server
   core/                all domain logic: jobs, transitions, events, pipeline, the queue port
   database/            Drizzle schema, migrations and the pg client
   queue/               the BullMQ adapter, an in-memory fake, and the Redis connection
+  sandbox/             the dockerode adapter, scripted fake, and lazy Docker client
 docs/
   architecture.md
 .github/workflows/     CI, and the per-pull-request Neon database branch
 ```
 
 `apps/web` and `apps/worker` are two deployables sharing one copy of the domain logic in
-`packages/core`, which imports no framework and no queue library. Nothing in `packages/` has a build
-step - they are consumed as raw TypeScript - and neither does the worker, which runs under `tsx`.
+`packages/core`, which imports no framework, queue library or Docker client. Nothing in `packages/`
+has a build step - they are consumed as raw TypeScript - and neither does the worker, which runs
+under `tsx`.
 
 ## Continuous integration
 
 Two workflows run on every pull request:
 
-- **CI** (`.github/workflows/ci.yml`) - two parallel jobs. **Verify** runs typecheck, lint, format
-  check, unit tests and build with no database and no Redis, which is the property that keeps the
-  lazy clients honest. **Integration** brings up `postgres:17` and `redis:8` service containers and
-  runs the integration suite against them.
+- **CI** (`.github/workflows/ci.yml`) - three independent parallel jobs. **Verify** runs typecheck,
+  lint, format check, unit tests and build with no database, Redis or Docker. **Integration** brings
+  up `postgres:17` and `redis:8`. **Sandbox** adds the host Docker daemon, pre-pulls the pinned
+  image, and runs the real adapter and end-to-end checkpoint.
 - **Neon preview branch** (`.github/workflows/neon-branch.yml`) - creates an ephemeral Neon branch
   named `preview/pr-<n>`, applies the migrations to it to prove they still apply cleanly against
   real Postgres, and deletes the branch when the pull request closes.
@@ -204,7 +241,7 @@ built before any agent behaviour.
 - [x] **M1 - Background job execution.** Redis, a BullMQ queue, a worker service, a Postgres lease
       and heartbeat protocol, persisted state transitions with an append-only event log, retries,
       cancellation, timeouts, and a sweeper that recovers jobs from a crashed worker.
-- [ ] **M2 - Sandbox execution.** A sandbox abstraction over Docker: clone a repository, run
+- [x] **M2 - Sandbox execution.** A sandbox abstraction over Docker: clone a repository, run
       commands, capture output, enforce timeouts and resource limits, tear down cleanly.
 - [ ] **M3 - Real-time execution timeline.** A job event stream, an SSE endpoint, and a live
       timeline and log view in the UI with reconnect support.
