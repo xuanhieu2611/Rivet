@@ -1,4 +1,10 @@
-import { isQuietSweep, type JobQueue, sweepJobs } from "@rivet/core";
+import {
+  isJobLive,
+  isQuietSweep,
+  type JobQueue,
+  type SandboxProvider,
+  sweepJobs,
+} from "@rivet/core";
 
 import type { WorkerConfig } from "./config";
 import type { Logger } from "./logger";
@@ -17,6 +23,14 @@ export interface SweepDeps {
   queue: JobQueue;
   config: WorkerConfig;
   log: Logger;
+  /**
+   * The sandbox reaper, when this worker has one.
+   *
+   * Absent under `RIVET_SANDBOX=off`, where no container was ever created and
+   * asking Docker about it would be the only thing in the process that needed a
+   * daemon.
+   */
+  sandbox?: SandboxProvider;
 }
 
 export function createSweepRunner(deps: SweepDeps): () => Promise<void> {
@@ -24,6 +38,15 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<void> {
 
   return async function runSweep(): Promise<void> {
     const started = Date.now();
+    // Containers first. A pass that reclaims a job puts it back in `queued`, and
+    // the container its dead worker left behind should be gone before another
+    // worker picks that job up - not because anything breaks otherwise (the new
+    // run creates its own container and the old one is invisible to it) but
+    // because "one container per running job" is a much easier thing to check by
+    // eye than "one container per running job, plus however many are pending a
+    // sweep".
+    await reapSandboxes(deps);
+
     const report = await sweepJobs(queue, {
       maxAttempts: config.maxAttempts,
       // A row must have been sitting in `queued` for a full sweep interval
@@ -78,4 +101,35 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<void> {
       }
     }
   };
+}
+
+/**
+ * The third reconciliation loop, and the one `kill -9` makes necessary.
+ *
+ * The lease reconciles Postgres against a worker that stopped answering, and
+ * `requeueOrphanedJobs` reconciles Postgres against Redis. This reconciles
+ * Postgres against the Docker daemon, which holds state nobody else knows
+ * about: a worker killed outright never reaches its `finally`, so the container
+ * it created outlives every process that knew it existed. The label is the only
+ * handle left on it, and `isJobLive` is the only authority on whether it is
+ * still wanted.
+ *
+ * Failures here are logged, never thrown. A daemon that is temporarily
+ * unreachable must not abort a sweep whose job-reconciliation half is perfectly
+ * able to run, and the next pass will try again in a minute.
+ */
+async function reapSandboxes(deps: SweepDeps): Promise<void> {
+  if (!deps.sandbox) return;
+
+  try {
+    const removed = await deps.sandbox.reap((jobId) => isJobLive(jobId));
+    if (removed.length > 0) {
+      deps.log.warn(
+        { count: removed.length, category: "sandbox_leaked" },
+        "reaped sandboxes whose jobs are no longer running",
+      );
+    }
+  } catch (error) {
+    deps.log.error({ err: error }, "could not reap sandboxes");
+  }
 }

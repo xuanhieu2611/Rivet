@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { assertLeaseInvariant, parseWorkerConfig, WorkerConfigError } from "./config";
+import {
+  assertLeaseInvariant,
+  DEFAULT_SANDBOX_IMAGE,
+  DEFAULT_SANDBOX_WORKDIR,
+  parseWorkerConfig,
+  WorkerConfigError,
+} from "./config";
 
 describe("parseWorkerConfig", () => {
   it("applies every default for an empty environment", () => {
@@ -13,7 +19,92 @@ describe("parseWorkerConfig", () => {
       pipelineSpeed: 1,
       shutdownGraceMs: 15_000,
       logLevel: "info",
+      sandbox: {
+        mode: "docker",
+        image: DEFAULT_SANDBOX_IMAGE,
+        workdir: DEFAULT_SANDBOX_WORKDIR,
+        memoryBytes: 2_048 * 1_024 * 1_024,
+        nanoCpus: 2_000_000_000,
+        pidsLimit: 512,
+        commandTimeoutMs: 120_000,
+        cloneTimeoutMs: 180_000,
+        installTimeoutMs: 300_000,
+        baselineTimeoutMs: 300_000,
+        maxOutputBytes: 65_536,
+      },
     });
+  });
+
+  it("defaults to a real sandbox, so simulation is always a decision", () => {
+    // The Milestone 1 pipeline is still in the codebase and still works. It is
+    // reachable only by asking for it, because a default that happens to be
+    // fake is the kind of thing that survives into a deployment.
+    expect(parseWorkerConfig({}).sandbox.mode).toBe("docker");
+  });
+
+  it("pins the image by digest as well as by tag", () => {
+    // A tag is what a human reads; the digest is what stops an upstream retag
+    // silently changing what a job runs.
+    expect(DEFAULT_SANDBOX_IMAGE).toContain("@sha256:");
+  });
+
+  it("converts the sandbox limits into the units Docker wants", () => {
+    const config = parseWorkerConfig({
+      SANDBOX_MEMORY_MB: "512",
+      // Fractional on purpose: half a core is a reasonable ask and NanoCpus is
+      // an integer.
+      SANDBOX_CPUS: "0.5",
+      SANDBOX_PIDS_LIMIT: "64",
+    });
+
+    expect(config.sandbox.memoryBytes).toBe(536_870_912);
+    expect(config.sandbox.nanoCpus).toBe(500_000_000);
+    expect(config.sandbox.pidsLimit).toBe(64);
+  });
+
+  it("gives the clone, the install and the baseline budgets of their own", () => {
+    // Three different kinds of slow. A cold install and a four-minute test
+    // suite are both normal; reporting either as `command_timed_out` would
+    // blame the sandbox for a property of the repository.
+    const config = parseWorkerConfig({
+      SANDBOX_COMMAND_TIMEOUT_MS: "1000",
+      SANDBOX_CLONE_TIMEOUT_MS: "2000",
+      SANDBOX_INSTALL_TIMEOUT_MS: "3000",
+      SANDBOX_BASELINE_TIMEOUT_MS: "4000",
+    });
+
+    expect(config.sandbox.commandTimeoutMs).toBe(1_000);
+    expect(config.sandbox.cloneTimeoutMs).toBe(2_000);
+    expect(config.sandbox.installTimeoutMs).toBe(3_000);
+    expect(config.sandbox.baselineTimeoutMs).toBe(4_000);
+  });
+
+  it("refuses a workdir that is not absolute", () => {
+    // It is passed straight to `mkdir -p` and to every `cwd` in the run.
+    expect(() => parseWorkerConfig({ SANDBOX_WORKDIR: "workspace" })).toThrow(WorkerConfigError);
+  });
+
+  it("refuses to simulate the pipeline in production", () => {
+    // A worker that completes every job in twenty-one seconds without doing
+    // anything looks entirely healthy, which is the worst failure mode
+    // available. Refusing to boot is the cheap version of that conversation.
+    expect(() => parseWorkerConfig({ RIVET_SANDBOX: "off", NODE_ENV: "production" })).toThrow(
+      WorkerConfigError,
+    );
+    expect(() => parseWorkerConfig({ RIVET_SANDBOX: "off", NODE_ENV: "production" })).toThrow(
+      /RIVET_SANDBOX=off/,
+    );
+  });
+
+  it("allows the simulated pipeline everywhere else", () => {
+    // Including with no NODE_ENV at all, which is how the integration suite and
+    // a laptop with no daemon run.
+    expect(parseWorkerConfig({ RIVET_SANDBOX: "off" }).sandbox.mode).toBe("off");
+    expect(parseWorkerConfig({ RIVET_SANDBOX: "off", NODE_ENV: "test" }).sandbox.mode).toBe("off");
+  });
+
+  it("rejects a sandbox mode that is not one of the two", () => {
+    expect(() => parseWorkerConfig({ RIVET_SANDBOX: "podman" })).toThrow(WorkerConfigError);
   });
 
   it("reads values from the environment", () => {

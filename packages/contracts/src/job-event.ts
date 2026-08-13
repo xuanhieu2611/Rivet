@@ -178,6 +178,16 @@ export type JobEventData = {
   argv?: string[];
   /** The commit the clone resolved to, on `repo.cloned`. */
   commitSha?: string;
+  /**
+   * What the baseline run established, on `baseline.recorded`.
+   *
+   * Three outcomes rather than an exit code, because `skipped` is not one: a
+   * repository with no `test` script produced no exit code at all, and reading
+   * that off `exitCode: null` would collide with "the command was killed before
+   * it could exit". `failed` is a fact about the repository and never a failed
+   * job - PRD §11 C.
+   */
+  baseline?: "passed" | "failed" | "skipped";
 };
 
 /** One row of the job timeline. */

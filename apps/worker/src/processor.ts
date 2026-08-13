@@ -4,12 +4,14 @@ import {
   appendEvent,
   claimJob,
   classify,
+  createPhaseContextFactory,
   describeError,
   failureCategoryFor,
   JobTimedOutError,
   type Phase,
   releaseJob,
   runPipeline,
+  SandboxHolder,
   simulatedPipeline,
   transitionJob,
   TransitionConflictError,
@@ -176,6 +178,18 @@ export function createProcessor(deps: ProcessorDeps) {
 
     const injection = faults();
 
+    // The run's container, owned here rather than by the pipeline that creates
+    // it. That placement is the whole of the milestone's cleanup story: the
+    // processor abandons a hung phase promise rather than waiting for it (see
+    // the `Promise.race` below), so destruction cannot live inside the thing
+    // that might never return. The `provisioning` phase's only obligation is to
+    // put the handle in here the instant `create()` resolves.
+    const sandboxes = new SandboxHolder();
+
+    // Whether this run is still entitled to write to the job. Everything except
+    // a lost lease is; see `handleFailure`.
+    let mayWrite = true;
+
     try {
       const pipeline = runPipeline({
         phases,
@@ -183,6 +197,17 @@ export function createProcessor(deps: ProcessorDeps) {
         speed: config.pipelineSpeed,
         sleep: injection.sleep,
         ...(injection.fault ? { fault: injection.fault } : {}),
+
+        context: createPhaseContextFactory({
+          job: claimed,
+          // The fencing token. Every write a phase makes carries it, so a phase
+          // still running after the job was reclaimed writes nothing.
+          leaseOwner: workerId,
+          sandboxes,
+          signal: controller.signal,
+          log,
+          maxOutputBytes: config.sandbox.maxOutputBytes,
+        }),
 
         onPhaseStart: async (phase) => {
           if (phase.status === currentStatus) {
@@ -228,8 +253,11 @@ export function createProcessor(deps: ProcessorDeps) {
       // run is about to give up, and will simply fail - but an unhandled
       // rejection would take the whole worker down with it.
       //
-      // Milestone 2 has a harder version of this problem, because an abandoned
-      // phase will own a container rather than a `setTimeout`.
+      // Milestone 2 is the harder version of this problem, because an abandoned
+      // phase owns a container rather than a `setTimeout`. That is exactly why
+      // the holder is out here: the `finally` destroys the container without
+      // needing the phase to come back and hand it over, and the command that
+      // phase was waiting on dies with it.
       pipeline.catch(() => undefined);
       await Promise.race([pipeline, deadline.expiry]);
 
@@ -247,13 +275,64 @@ export function createProcessor(deps: ProcessorDeps) {
 
       log.info("completed");
     } catch (error) {
+      // Computed before `handleFailure`, which throws on two of its branches
+      // and would otherwise never let this be read. `classify` is pure, so
+      // asking twice costs nothing.
+      mayWrite = classify(error) !== "lease_lost";
       await handleFailure(error, { job, token, jobId, currentStatus, workerId, log });
     } finally {
       deadline.cancel();
+      // Before the heartbeat stops, so the lease is still being renewed while a
+      // container is being removed - which can take a moment on a loaded host.
+      await destroySandbox({ sandboxes, jobId, mayWrite, log });
       await stopHeartbeat();
       runs.release(jobId);
     }
   };
+}
+
+interface DestroyContext {
+  sandboxes: SandboxHolder;
+  jobId: string;
+  mayWrite: boolean;
+  log: Logger;
+}
+
+/**
+ * The one exit every run takes, whatever happened on the way.
+ *
+ * Six of them, and they are worth naming because the container has to go on all
+ * six: completed, failed, cancelled, timed out, lease lost, worker shutting
+ * down. `lease_lost` is the interesting one - the run deliberately writes
+ * nothing to Postgres, because another worker owns that job now and every write
+ * would land in the middle of its run - but it must still destroy its own
+ * container. Not writing to a job someone else owns and not leaking your own
+ * process's resources are different obligations, and only the first one is
+ * about ownership.
+ *
+ * This cannot throw. It runs in a `finally` that is usually already carrying
+ * the error that actually mattered, and a cleanup failure that replaces it
+ * turns a two-minute diagnosis into an hour. What it cannot remove, the sweeper's
+ * reaper removes later - the same backstop argument the lease makes.
+ */
+async function destroySandbox(context: DestroyContext): Promise<void> {
+  const { sandboxes, jobId, mayWrite, log } = context;
+  try {
+    const containerId = await sandboxes.destroy();
+    if (!containerId) return;
+
+    log.info({ containerId }, "sandbox destroyed");
+    if (!mayWrite) return;
+
+    await appendEvent({
+      jobId,
+      type: "sandbox.destroyed",
+      message: `Sandbox ${containerId.slice(0, 12)} removed.`,
+      data: { containerId },
+    });
+  } catch (error) {
+    log.error({ err: error }, "could not clean up the sandbox; the reaper will get it");
+  }
 }
 
 /**

@@ -6,7 +6,7 @@ import {
   type JobStatus,
 } from "@rivet/contracts";
 import { db, type Database, jobs } from "@rivet/database";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { transitionJob, TransitionConflictError } from "./transitions";
 
@@ -191,6 +191,40 @@ export async function releaseJob(
     if (error instanceof TransitionConflictError) return null;
     throw error;
   }
+}
+
+/**
+ * Is anybody actually running this job right now?
+ *
+ * The question the reaper asks about every container it finds, and the answer
+ * has to come from Postgres for the same reason every other ownership question
+ * does: Docker knows a container exists, and that is not evidence that the
+ * process which created it is still alive. A job is live when it is in a leased
+ * status *and* that lease has not expired, evaluated against the database's
+ * clock rather than the sweeper's.
+ *
+ * Deliberately conservative in one direction and not the other. A job that has
+ * been reclaimed is not live, so the container its dead worker left behind is
+ * removed - which is the entire point. A job that is live keeps every container
+ * labelled with its id, including one left over from a previous attempt on a
+ * worker that crashed: the reaper's only handle is the job id, so it cannot
+ * tell those apart, and sparing an extra container until the job reaches a
+ * terminal status is much cheaper than removing the one a live run is using.
+ */
+export async function isJobLive(jobId: string, database: Database = db): Promise<boolean> {
+  const [row] = await database
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.id, jobId),
+        inArray(jobs.status, [...LEASED_STATUSES]),
+        sql`${jobs.leaseExpiresAt} > now()`,
+      ),
+    )
+    .limit(1);
+
+  return row !== undefined;
 }
 
 /** Lease deadline `seconds` after the database's clock, never this process's. */

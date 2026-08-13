@@ -1,6 +1,7 @@
 import type { JobStatus } from "@rivet/contracts";
 
 import type { SandboxProvider } from "../sandbox/sandbox";
+import { baselinePhase } from "./baseline-phase";
 import type { PhaseContext } from "./phase-context";
 import { provisioningPhase } from "./provisioning-phase";
 
@@ -59,6 +60,14 @@ export interface PipelineOptions {
   cloneTimeoutMs: number;
   /** Longer again: a cold dependency install is the slowest thing here. */
   installTimeoutMs: number;
+  /**
+   * The repository's own test suite, which is allowed to be slow.
+   *
+   * Its own budget rather than `commandTimeoutMs`, because a four-minute suite
+   * is a property of the repository and reporting it as `command_timed_out`
+   * would be Rivet calling a perfectly normal project broken.
+   */
+  baselineTimeoutMs: number;
   /** Passed to every sandbox. Empty at Milestone 2, and that is the point. */
   env?: Record<string, string>;
 }
@@ -102,15 +111,17 @@ export function simulatedPipeline(): readonly Phase[] {
  * The same seven phases, with the ones Milestone 2 made real given a body.
  *
  * `provisioning` creates a container, clones the repository and installs its
- * dependencies. `testing` becomes the baseline run in the next step of this
- * milestone; `analyzing`, `planning`, `implementing`, `reviewing` and
- * `finalizing` stay simulated until Milestones 4 and 5, and there is nothing
- * clever about their sleeps in the meantime.
+ * dependencies; `testing` runs the repository's own suite and records what it
+ * found. `analyzing`, `planning`, `implementing`, `reviewing` and `finalizing`
+ * stay simulated until Milestones 4 and 5, and there is nothing clever about
+ * their sleeps in the meantime - which is why this returns the same seven
+ * statuses in the same order either way, and why one guard-table test walks
+ * both pipelines.
  */
 export function buildPipeline(options: PipelineOptions): readonly Phase[] {
   const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {
     provisioning: provisioningPhase(options),
-    // TODO(M2 step 6): `testing` becomes the baseline run.
+    testing: baselinePhase(options),
   };
 
   return PHASE_TEMPLATE.map((phase) => {

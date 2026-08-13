@@ -35,6 +35,7 @@ const PIPELINES: Record<string, readonly Phase[]> = {
     commandTimeoutMs: 120_000,
     cloneTimeoutMs: 180_000,
     installTimeoutMs: 300_000,
+    baselineTimeoutMs: 300_000,
   }),
 };
 
@@ -109,11 +110,12 @@ describe("simulatedPipeline", () => {
 });
 
 describe("buildPipeline", () => {
-  it("makes provisioning real and leaves the rest simulated", () => {
+  it("makes provisioning and testing real and leaves the rest simulated", () => {
     const real = PIPELINES.sandbox!.filter((phase) => phase.run).map((phase) => phase.status);
-    // `testing` joins this list when the baseline run lands; the other five
-    // wait for Milestones 4 and 5.
-    expect(real).toEqual(["provisioning"]);
+    // The two phases Milestone 2 was scoped to. The other five wait for
+    // Milestones 4 and 5, and this list is how a phase quietly acquiring a body
+    // gets noticed.
+    expect(real).toEqual(["provisioning", "testing"]);
   });
 
   it("does not share phase objects with the simulated pipeline", () => {

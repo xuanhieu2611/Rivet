@@ -59,6 +59,23 @@ export const TEST_CONFIG: WorkerConfig = {
   pipelineSpeed: 0,
   shutdownGraceMs: 5_000,
   logLevel: "fatal",
+  // `off`, and the whole suite depends on it: these 27 tests are about the
+  // lease, the queue and the recovery paths, and they run in CI against
+  // Postgres and Redis service containers with no Docker daemon anywhere. A
+  // test that wants a real sandbox belongs in the `*.sbx.test.ts` suite.
+  sandbox: {
+    mode: "off",
+    image: "unused-under-off",
+    workdir: "/home/node/workspace",
+    memoryBytes: 512 * 1_024 * 1_024,
+    nanoCpus: 1_000_000_000,
+    pidsLimit: 128,
+    commandTimeoutMs: 5_000,
+    cloneTimeoutMs: 5_000,
+    installTimeoutMs: 5_000,
+    baselineTimeoutMs: 5_000,
+    maxOutputBytes: 16_384,
+  },
 };
 
 export function uniqueQueueName(suite: string): string {

@@ -19,7 +19,7 @@ import type {
   RecordedCommand,
 } from "./phase-context";
 import type { PipelineOptions } from "./phases";
-import { detectPackageManager, provisioningPhase } from "./provisioning-phase";
+import { provisioningPhase } from "./provisioning-phase";
 
 /**
  * The phase against a hand-made context: no database, no Docker, no clock.
@@ -46,6 +46,7 @@ const OPTIONS_BASE = {
   commandTimeoutMs: 120_000,
   cloneTimeoutMs: 180_000,
   installTimeoutMs: 300_000,
+  baselineTimeoutMs: 300_000,
 };
 
 /** The repository the fake sandbox pretends to hold, unless a test says otherwise. */
@@ -329,51 +330,5 @@ describe("provisioningPhase", () => {
     await expect(test.run()).rejects.toBe(failure);
     expect(test.holder.current).toBeUndefined();
     expect(test.events).toEqual([]);
-  });
-});
-
-describe("detectPackageManager", () => {
-  const cases = [
-    { entries: ["package.json", "pnpm-lock.yaml"], name: "pnpm", lockfile: "pnpm-lock.yaml" },
-    { entries: ["package.json", "yarn.lock"], name: "yarn", lockfile: "yarn.lock" },
-    { entries: ["package.json", "package-lock.json"], name: "npm", lockfile: "package-lock.json" },
-    { entries: ["package.json", "bun.lock"], name: "bun", lockfile: "bun.lock" },
-    { entries: ["package.json", "bun.lockb"], name: "bun", lockfile: "bun.lockb" },
-    { entries: ["package.json"], name: "npm", lockfile: null },
-  ] as const;
-
-  for (const { entries, name, lockfile } of cases) {
-    it(`reads ${lockfile ?? "no lockfile"} as ${name}`, () => {
-      expect(detectPackageManager(entries)).toMatchObject({ name, lockfile });
-    });
-  }
-
-  it("prefers pnpm when a repository carries more than one lockfile", () => {
-    // Repositories that switched managers and did not clean up are common, and
-    // guessing differently on two runs of the same commit would make the
-    // fingerprint a fiction.
-    const plan = detectPackageManager([
-      "package.json",
-      "package-lock.json",
-      "yarn.lock",
-      "pnpm-lock.yaml",
-    ]);
-    expect(plan?.name).toBe("pnpm");
-  });
-
-  it("installs from the manifest when there is no lockfile at all", () => {
-    // `npm ci` refuses to run without one, so this is the single case that does
-    // not get a reproducible install.
-    expect(detectPackageManager(["package.json"])?.install).toEqual([
-      "npm",
-      "install",
-      "--no-audit",
-      "--no-fund",
-    ]);
-  });
-
-  it("is null without a manifest, whatever else is there", () => {
-    expect(detectPackageManager(["pnpm-lock.yaml", "src", "README.md"])).toBeNull();
-    expect(detectPackageManager([])).toBeNull();
   });
 });

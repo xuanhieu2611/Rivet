@@ -18,11 +18,20 @@ it runs, and lands it in a terminal status. Retries, cancellation, timeouts, and
 work and are covered by an integration suite. What is still fake is the work itself: the phases are
 sleeps. There is no event stream (M3) and no model call (M4).
 
-Milestone 2 is in progress. `packages/sandbox` is real, and so is the `provisioning` phase that
-`buildPipeline()` returns - it creates a container, clones the repository, resolves the commit and
-installs dependencies. The worker does not call `buildPipeline()` yet; it still runs
-`simulatedPipeline()`, and wiring the two together is the milestone's remaining work along with the
-baseline test run and container cleanup.
+Milestone 2 is in progress and now runs end to end. `packages/sandbox` is real; `buildPipeline()`
+gives `provisioning` and `testing` real bodies - create a container, clone the repository, resolve
+the commit, install dependencies, then run the repository's own test suite and record the result -
+and `apps/worker` calls it, selected by `RIVET_SANDBOX` (`docker` by default, `off` for the
+simulated pipeline). The processor owns the container and destroys it on every exit; the sweeper
+reaps whatever a `kill -9` left behind. What remains is failure-classification coverage for the new
+categories, the fault modes, the UI, the `*.sbx.test.ts` suite and its CI job, and the docs.
+
+**A red baseline is not a failed job.** The `testing` phase records
+`baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
+whatever the exit code was: PRD §11 C wants to know whether the repository was already broken
+_before_ Rivet touched it, and failing the job would make Rivet unable to work on the repositories
+it is most useful for. Only a command that was killed - `command_timed_out`, `oom_killed` - fails a
+job from that phase, because those are facts about the sandbox rather than about the repository.
 
 ## Commands
 
@@ -85,7 +94,10 @@ Milestone 2 makes a job's sandbox a real container, so Docker Desktop is a prere
 Postgres and Redis - but only for running jobs for real. `pnpm build`, `pnpm test`, `pnpm lint` and
 `pnpm typecheck` still run with no database, no Redis **and no Docker daemon**, which is the
 property CI's `verify` job exists to protect. `RIVET_SANDBOX=off` selects the simulated pipeline and
-is what the integration suite runs under, so that suite still needs only Postgres and Redis.
+is what the integration suite runs under, so that suite still needs only Postgres and Redis. It is
+the one configuration `parseWorkerConfig` refuses under `NODE_ENV=production`: a worker that
+completes every job in twenty-one seconds without doing any work looks perfectly healthy, and that
+is the worst failure mode on offer.
 
 ```bash
 brew install --cask docker-desktop   # needs sudo, so run it from a terminal that can prompt
@@ -135,9 +147,10 @@ says what it wanted.
 
 ```
 apps/web            Next.js 16 App Router. Pages and route handlers. No business logic.
-apps/worker         Long-running Node process. BullMQ Worker, heartbeat, sweeper, fault injection.
-packages/core       All domain logic: jobs/, events/, pipeline/, queue/ (the port). No framework.
+apps/worker         Long-running Node process. BullMQ Worker, heartbeat, sweeper, reaper, faults.
+packages/core       All domain logic: jobs/, events/, pipeline/, queue/, sandbox/ (the two ports).
 packages/queue      BullMQ adapter for the port, an in-memory fake, the lazy ioredis connection.
+packages/sandbox    dockerode adapter for the sandbox port, a scripted fake, the lazy Docker client.
 packages/contracts  Zod schemas, the job status enum, JobSummary / JobDetail / JobEvent.
 packages/database   Drizzle schema, generated migrations, the pg Pool. Neon Postgres.
 packages/config     tsconfig + ESLint bases that every workspace extends.
@@ -165,13 +178,16 @@ re-enqueues it. Read `docs/architecture.md` before changing anything in that loo
 
 ### Invariants that are easy to break
 
-**`packages/core` imports no `next/*`, no `bullmq`, no `ioredis`, and reads no `process.env`.** All
-four rules exist for one reason: core is shared by two deployables and must not depend on either
-one's framework or on the delivery mechanism. Configuration arrives as function arguments, which is
-what lets the whole pipeline run in under a millisecond at `speed: 0` with no fake timers and no
-sleeping in CI. Core declares the `JobQueue` port; `packages/queue` is the only package that knows
-Redis exists. Every module lives under `jobs/`, `events/`, `pipeline/` or `queue/` - a file at the
-top level next to `index.ts` is the first sign the package is becoming a junk drawer.
+**`packages/core` imports no `next/*`, no `bullmq`, no `ioredis`, no `dockerode`, and reads no
+`process.env`.** All five rules exist for one reason: core is shared by two deployables and must not
+depend on either one's framework or on the delivery mechanism. Configuration arrives as function
+arguments, which is what lets the whole pipeline run in under a millisecond at `speed: 0` with no
+fake timers and no sleeping in CI - and it is why `PipelineOptions` carries the image, the limits
+and all four timeouts rather than defaulting any of them here. A default limit in the package that
+is supposed to hold no policy is how a container ends up unbounded. Core declares the `JobQueue` and
+`Sandbox` ports; `packages/queue` and `packages/sandbox` are the only packages that know Redis and
+Docker exist. Every module lives under `jobs/`, `events/`, `pipeline/`, `queue/` or `sandbox/` - a
+file at the top level next to `index.ts` is the first sign the package is becoming a junk drawer.
 
 **`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
 merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, so a caller cannot

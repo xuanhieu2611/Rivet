@@ -4,8 +4,10 @@ import {
   RepoUnavailableError,
   UnsupportedProjectError,
 } from "../sandbox/errors";
+import { problem, splitLines } from "./command-output";
 import type { PhaseContext, PhaseExecInput, RecordedCommand } from "./phase-context";
 import type { PipelineOptions } from "./phases";
+import { detectPackageManager, type ProjectPlan, REPO_DIRNAME } from "./project";
 
 /**
  * Phase one, for real: a container, a repository in it, and its dependencies.
@@ -23,9 +25,6 @@ import type { PipelineOptions } from "./phases";
  * factory rather than a function: `packages/core` reads no environment, so the
  * image and the limits have to arrive from `apps/worker` as arguments.
  */
-
-/** Where the working tree lands, relative to the sandbox's workdir. */
-export const REPO_DIRNAME = "repo";
 
 export function provisioningPhase(options: PipelineOptions): (ctx: PhaseContext) => Promise<void> {
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
@@ -151,92 +150,6 @@ export function provisioningPhase(options: PipelineOptions): (ctx: PhaseContext)
   };
 }
 
-/** The package managers this milestone can drive, in lockfile precedence order. */
-export const PACKAGE_MANAGERS = ["pnpm", "yarn", "npm", "bun"] as const;
-export type PackageManagerName = (typeof PACKAGE_MANAGERS)[number];
-
-export interface ProjectPlan {
-  name: PackageManagerName;
-  /** The lockfile that decided it, or null when there was none. */
-  lockfile: string | null;
-  install: string[];
-  /** Prints the manager's own version, for the fingerprint. */
-  version: string[];
-  env?: Record<string, string>;
-}
-
-/**
- * Corepack will not prompt for a download it cannot ask a human about.
- *
- * `pnpm` and `yarn` are not in the sandbox image; corepack ships with Node and
- * fetches the right one. Without this it stops on an interactive confirmation
- * inside a container with no terminal, and the symptom is an install that hangs
- * until its timeout rather than one that says what it wanted.
- */
-const COREPACK_ENV = { COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" };
-
-/**
- * Which package manager a repository uses, decided by its lockfile.
- *
- * Lockfile-driven rather than `packageManager`-field-driven because the
- * lockfile is the thing the install command has to agree with, and a repository
- * whose field and lockfile disagree is one where the lockfile wins.
- *
- * Returns `null` for anything without a `package.json`, which is the
- * `unsupported_project` case: no lockfile at all is still a Node project and
- * still installable, but no manifest is not a project this milestone can build.
- */
-export function detectPackageManager(entries: readonly string[]): ProjectPlan | null {
-  const files = new Set(entries);
-  if (!files.has("package.json")) return null;
-
-  if (files.has("pnpm-lock.yaml")) {
-    return {
-      name: "pnpm",
-      lockfile: "pnpm-lock.yaml",
-      install: ["corepack", "pnpm", "install", "--frozen-lockfile"],
-      version: ["corepack", "pnpm", "--version"],
-      env: COREPACK_ENV,
-    };
-  }
-  if (files.has("yarn.lock")) {
-    return {
-      name: "yarn",
-      lockfile: "yarn.lock",
-      install: ["corepack", "yarn", "install", "--immutable"],
-      version: ["corepack", "yarn", "--version"],
-      env: COREPACK_ENV,
-    };
-  }
-  if (files.has("package-lock.json")) {
-    return {
-      name: "npm",
-      lockfile: "package-lock.json",
-      install: ["npm", "ci"],
-      version: ["npm", "--version"],
-    };
-  }
-  if (files.has("bun.lock") || files.has("bun.lockb")) {
-    return {
-      name: "bun",
-      lockfile: files.has("bun.lock") ? "bun.lock" : "bun.lockb",
-      install: ["bun", "install", "--frozen-lockfile"],
-      version: ["bun", "--version"],
-    };
-  }
-
-  // A manifest with no lockfile. `npm ci` refuses to run without one, so this
-  // is the one case that installs from the manifest and accepts that two runs a
-  // week apart may resolve differently - which is exactly what the fingerprint
-  // is for.
-  return {
-    name: "npm",
-    lockfile: null,
-    install: ["npm", "install", "--no-audit", "--no-fund"],
-    version: ["npm", "--version"],
-  };
-}
-
 /**
  * What this run actually executed in, recorded because a green run nobody can
  * reproduce is a green run nobody can trust (PRD §11 B, §24.2).
@@ -324,20 +237,6 @@ async function readValue(ctx: PhaseContext, input: PhaseExecInput): Promise<stri
     return null;
   }
   return result.stdout.trim() || null;
-}
-
-/** The last thing the command said, which is where a tool puts its reason. */
-function problem(result: RecordedCommand): string {
-  const lines = [...splitLines(result.stderr), ...splitLines(result.stdout)];
-  const last = lines.at(-1);
-  return last ? `exit ${result.exitCode ?? "(killed)"}: ${last}` : `exit ${result.exitCode}`;
-}
-
-function splitLines(text: string): string[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
 }
 
 /** Container ids are 64 hex characters; nobody reads more than the first twelve. */

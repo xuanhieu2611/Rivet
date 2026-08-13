@@ -16,6 +16,7 @@
     "@rivet/core": "workspace:*",
     "@rivet/database": "workspace:*",
     "@rivet/queue": "workspace:*",
+    "@rivet/sandbox": "workspace:*",
     "bullmq": "6.1.0",
     "dotenv": "^17.4.2",
     "pino": "^10.3.1",

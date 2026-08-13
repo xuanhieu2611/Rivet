@@ -1,3 +1,4 @@
+import { buildPipeline, type Phase, type SandboxProvider, simulatedPipeline } from "@rivet/core";
 import { closeDb } from "@rivet/database";
 import {
   closeJobQueue,
@@ -7,6 +8,7 @@ import {
   QUEUE_NAMES,
   getRedis,
 } from "@rivet/queue";
+import { dockerConnectionTarget, DockerSandboxProvider } from "@rivet/sandbox";
 import { Worker } from "bullmq";
 
 import { loadRootEnv, parseWorkerConfig, WorkerConfigError } from "./config";
@@ -45,11 +47,62 @@ const workerId = createWorkerId();
 const log = createLogger(config.logLevel, workerId);
 const runs = new RunRegistry();
 
+/**
+ * The pipeline this worker runs, and the provider behind it.
+ *
+ * The choice is made once, here, and everything downstream is told rather than
+ * asked: `buildPipeline` closes the provider and the limits into the phase
+ * bodies, so nothing in `packages/core` ever reads an environment variable and
+ * the processor never learns that Docker exists. `RIVET_SANDBOX=off` returns
+ * the Milestone 1 pipeline unchanged - seven sleeps and no daemon - which is
+ * what the integration suite runs under and what `parseWorkerConfig` refuses in
+ * production.
+ *
+ * Constructing the provider connects to nothing; dockerode dials per request.
+ * A missing daemon therefore surfaces as the first job's `sandbox_unavailable`
+ * rather than as a worker that will not start, which is the right way round: a
+ * worker that can still sweep, reclaim and report is more useful than one that
+ * refused to boot.
+ */
+const { phases, sandbox } = ((): { phases: readonly Phase[]; sandbox?: SandboxProvider } => {
+  if (config.sandbox.mode === "off") {
+    log.warn("RIVET_SANDBOX=off: running the simulated pipeline, no containers will be created");
+    return { phases: simulatedPipeline() };
+  }
+
+  const target = dockerConnectionTarget();
+  log.info({ socketPath: target.socketPath, source: target.source }, "using the Docker daemon");
+
+  const provider = new DockerSandboxProvider({ workerId, log });
+  return {
+    phases: buildPipeline({
+      sandbox: provider,
+      image: config.sandbox.image,
+      workdir: config.sandbox.workdir,
+      memoryBytes: config.sandbox.memoryBytes,
+      nanoCpus: config.sandbox.nanoCpus,
+      pidsLimit: config.sandbox.pidsLimit,
+      commandTimeoutMs: config.sandbox.commandTimeoutMs,
+      cloneTimeoutMs: config.sandbox.cloneTimeoutMs,
+      installTimeoutMs: config.sandbox.installTimeoutMs,
+      baselineTimeoutMs: config.sandbox.baselineTimeoutMs,
+    }),
+    sandbox: provider,
+  };
+})();
+
 // The worker needs a `Queue` as well as a `Worker`: the sweeper re-enqueues
 // what it reclaims, and the recurring sweep itself is registered through the
 // queue's scheduler.
 const queue = getBullJobQueue();
-const sweep = createSweepRunner({ queue, config, log });
+const sweep = createSweepRunner({
+  queue,
+  config,
+  log,
+  // The reaper's half of the sweep. Absent under `off`, where there is nothing
+  // to reap and no daemon to ask.
+  ...(sandbox ? { sandbox } : {}),
+});
 
 const worker = new Worker<JobRunsMessage>(
   QUEUE_NAMES.jobRuns,
@@ -59,6 +112,7 @@ const worker = new Worker<JobRunsMessage>(
     log,
     runs,
     sweep,
+    phases,
     // One injection per run, because `hang` is per-run state. Without
     // `RIVET_FAULT_*` set this is the plain abortable sleep and no fault at all.
     faults: () => createFaultInjection(config.fault, log),
@@ -120,6 +174,8 @@ log.info(
     pipelineSpeed: config.pipelineSpeed,
     fault: config.fault ?? null,
     queue: QUEUE_NAMES.jobRuns,
+    sandbox: config.sandbox.mode,
+    sandboxImage: config.sandbox.mode === "docker" ? config.sandbox.image : null,
   },
   "worker started",
 );
