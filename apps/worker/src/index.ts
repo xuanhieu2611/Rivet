@@ -12,7 +12,7 @@ import { dockerConnectionTarget, DockerSandboxProvider } from "@rivet/sandbox";
 import { Worker } from "bullmq";
 
 import { loadRootEnv, parseWorkerConfig, WorkerConfigError } from "./config";
-import { createFaultInjection } from "./faults";
+import { createFaultInjection, type FaultInjection } from "./faults";
 import { createWorkerId } from "./identity";
 import { createLogger } from "./logger";
 import { createProcessor, RunRegistry } from "./processor";
@@ -64,7 +64,11 @@ const runs = new RunRegistry();
  * worker that can still sweep, reclaim and report is more useful than one that
  * refused to boot.
  */
-const { phases, sandbox } = ((): { phases: readonly Phase[]; sandbox?: SandboxProvider } => {
+const { phases, phaseFactory, sandbox } = ((): {
+  phases: readonly Phase[];
+  phaseFactory?: (injection: FaultInjection) => readonly Phase[];
+  sandbox?: SandboxProvider;
+} => {
   if (config.sandbox.mode === "off") {
     log.warn("RIVET_SANDBOX=off: running the simulated pipeline, no containers will be created");
     return { phases: simulatedPipeline() };
@@ -74,19 +78,22 @@ const { phases, sandbox } = ((): { phases: readonly Phase[]; sandbox?: SandboxPr
   log.info({ socketPath: target.socketPath, source: target.source }, "using the Docker daemon");
 
   const provider = new DockerSandboxProvider({ workerId, log });
+  const pipelineOptions = {
+    image: config.sandbox.image,
+    workdir: config.sandbox.workdir,
+    memoryBytes: config.sandbox.memoryBytes,
+    nanoCpus: config.sandbox.nanoCpus,
+    pidsLimit: config.sandbox.pidsLimit,
+    commandTimeoutMs: config.sandbox.commandTimeoutMs,
+    cloneTimeoutMs: config.sandbox.cloneTimeoutMs,
+    installTimeoutMs: config.sandbox.installTimeoutMs,
+    baselineTimeoutMs: config.sandbox.baselineTimeoutMs,
+  };
+
   return {
-    phases: buildPipeline({
-      sandbox: provider,
-      image: config.sandbox.image,
-      workdir: config.sandbox.workdir,
-      memoryBytes: config.sandbox.memoryBytes,
-      nanoCpus: config.sandbox.nanoCpus,
-      pidsLimit: config.sandbox.pidsLimit,
-      commandTimeoutMs: config.sandbox.commandTimeoutMs,
-      cloneTimeoutMs: config.sandbox.cloneTimeoutMs,
-      installTimeoutMs: config.sandbox.installTimeoutMs,
-      baselineTimeoutMs: config.sandbox.baselineTimeoutMs,
-    }),
+    phases: buildPipeline({ sandbox: provider, ...pipelineOptions }),
+    phaseFactory: (injection) =>
+      buildPipeline({ sandbox: injection.sandbox ?? provider, ...pipelineOptions }),
     sandbox: provider,
   };
 })();
@@ -113,9 +120,10 @@ const worker = new Worker<JobRunsMessage>(
     runs,
     sweep,
     phases,
+    ...(phaseFactory ? { phaseFactory } : {}),
     // One injection per run, because `hang` is per-run state. Without
     // `RIVET_FAULT_*` set this is the plain abortable sleep and no fault at all.
-    faults: () => createFaultInjection(config.fault, log),
+    faults: () => createFaultInjection(config.fault, log, sandbox),
   }),
   {
     connection: getRedis(),

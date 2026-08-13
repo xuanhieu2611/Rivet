@@ -170,10 +170,11 @@ describe("parseWorkerConfig", () => {
     expect(config.maxAttempts).toBe(5);
   });
 
-  it("reads a fault when both halves are set", () => {
-    const config = parseWorkerConfig({ RIVET_FAULT_PHASE: "testing", RIVET_FAULT_MODE: "throw" });
-
-    expect(config.fault).toEqual({ phase: "testing", mode: "throw" });
+  it("reads every fault mode when both halves are set", () => {
+    for (const mode of ["throw", "fatal", "hang", "exit", "no-daemon", "oom", "slow-command"]) {
+      const config = parseWorkerConfig({ RIVET_FAULT_PHASE: "testing", RIVET_FAULT_MODE: mode });
+      expect(config.fault).toEqual({ phase: "testing", mode });
+    }
   });
 
   it("leaves the fault absent when neither half is set", () => {

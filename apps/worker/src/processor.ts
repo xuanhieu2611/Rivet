@@ -84,6 +84,15 @@ export interface ProcessorDeps {
   /** Overridable so a test can drive a two-phase pipeline. */
   phases?: readonly Phase[];
   /**
+   * Rebuilds a pipeline after per-run fault injection has been created.
+   *
+   * Sandbox faults need a provider wrapper that belongs to this attempt, not
+   * to the worker process: two jobs may be in different fault phases at the
+   * same time. The ordinary `phases` override remains for tests that do not
+   * need a sandbox-backed pipeline.
+   */
+  phaseFactory?: (injection: FaultInjection) => readonly Phase[];
+  /**
    * Fault injection and the sleep that goes with it.
    *
    * A factory rather than a value because `hang` is per-run state: two jobs
@@ -191,8 +200,11 @@ export function createProcessor(deps: ProcessorDeps) {
     let mayWrite = true;
 
     try {
+      // Build after the try begins so a faulty per-run factory follows the same
+      // cleanup path as every other phase failure.
+      const runPhases = deps.phaseFactory?.(injection) ?? phases;
       const pipeline = runPipeline({
-        phases,
+        phases: runPhases,
         signal: controller.signal,
         speed: config.pipelineSpeed,
         sleep: injection.sleep,
@@ -383,7 +395,7 @@ interface FailureContext {
  * drifting apart, and the switch below is the entire retry policy.
  */
 async function handleFailure(error: unknown, context: FailureContext): Promise<void> {
-  const { jobId, currentStatus, workerId, log } = context;
+  const { job, jobId, currentStatus, workerId, log } = context;
   const outcome = classify(error);
 
   switch (outcome) {
@@ -423,10 +435,16 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
     }
 
     case "retryable": {
-      // Back to `queued` with the lease cleared, then rethrow so BullMQ applies
-      // its own exponential backoff. On the final attempt BullMQ gives up and
-      // the row is still sitting in `queued` - which is precisely the state the
-      // sweeper exists to reconcile.
+      // A transient error gets the normal release-and-rethrow path while
+      // BullMQ still has another delivery available. Once the message has
+      // spent its last attempt, leaving the row in `queued` would lose the
+      // category that explains why it never completed and make the sweeper
+      // guess `lease_expired` later. Persist the error we actually observed.
+      if (isLastBullAttempt(job)) {
+        await finishBadly(jobId, currentStatus, "failed", workerId, error, log);
+        throw new UnrecoverableError(describeError(error));
+      }
+
       await releaseJob(jobId, workerId, {
         reason: `Retrying after a transient failure: ${describeError(error)}`,
         type: "job.retry_scheduled",
@@ -440,6 +458,16 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       throw new UnrecoverableError(describeError(error));
     }
   }
+}
+
+/**
+ * BullMQ counts attempts from zero in `attemptsMade`, while the configured
+ * `attempts` value is the total number of deliveries. The final retryable
+ * failure is terminal from Rivet's point of view so its real category is not
+ * replaced by the sweeper's generic `lease_expired` category.
+ */
+function isLastBullAttempt(job: Job<JobRunsMessage>): boolean {
+  return job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
 }
 
 /** The shared write for cancelled, timed out and failed: one terminal status. */

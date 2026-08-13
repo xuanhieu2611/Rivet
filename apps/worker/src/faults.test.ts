@@ -1,4 +1,11 @@
-import { type Phase, RetryableJobError, TerminalJobError } from "@rivet/core";
+import {
+  type ExecRequest,
+  type Phase,
+  type SandboxSpec,
+  RetryableJobError,
+  TerminalJobError,
+} from "@rivet/core";
+import { FakeSandboxProvider } from "@rivet/sandbox";
 import { pino } from "pino";
 import { describe, expect, it } from "vitest";
 
@@ -7,7 +14,27 @@ import { createFaultInjection } from "./faults";
 const log = pino({ level: "silent" });
 
 const TESTING: Phase = { status: "testing", label: "Run tests", durationMs: 10 };
+const SANDBOX_TESTING: Phase = {
+  status: "testing",
+  label: "Run tests",
+  durationMs: 10,
+  run: () => Promise.resolve(),
+};
 const PLANNING: Phase = { status: "planning", label: "Create plan", durationMs: 10 };
+const SPEC: SandboxSpec = {
+  jobId: "11111111-1111-4111-8111-111111111111",
+  image: "node@sha256:test",
+  workdir: "/workspace",
+  memoryBytes: 512 * 1_024 * 1_024,
+  nanoCpus: 1_000_000_000,
+  pidsLimit: 128,
+  env: {},
+  labels: {},
+};
+
+function request(argv: string[], signal = new AbortController().signal): ExecRequest {
+  return { argv, cwd: "/workspace", timeoutMs: 10, signal };
+}
 
 describe("createFaultInjection", () => {
   it("injects nothing when no fault is configured", () => {
@@ -50,5 +77,55 @@ describe("createFaultInjection", () => {
       new Promise((resolve) => setTimeout(() => resolve("still hanging"), 20)),
     ]);
     expect(raced).toBe("still hanging");
+  });
+
+  it("makes no-daemon fail sandbox creation with a retryable category", async () => {
+    const provider = new FakeSandboxProvider();
+    const injection = createFaultInjection(
+      { phase: "provisioning", mode: "no-daemon" },
+      log,
+      provider,
+    );
+
+    injection.fault?.({ status: "provisioning", label: "Provision", durationMs: 1 });
+    await expect(
+      injection.sandbox?.create(SPEC, new AbortController().signal),
+    ).rejects.toMatchObject({ category: "sandbox_unavailable" });
+  });
+
+  it("makes slow-command exceed the command timeout inside a real phase", async () => {
+    const provider = new FakeSandboxProvider({ script: [{ match: "sleep", hang: true }] });
+    const injection = createFaultInjection(
+      { phase: "testing", mode: "slow-command" },
+      log,
+      provider,
+    );
+    const sandbox = await injection.sandbox?.create(SPEC, new AbortController().signal);
+    injection.fault?.(SANDBOX_TESTING);
+
+    const result = await sandbox?.exec(request(["echo", "not-the-fault"]));
+    expect(result?.argv[0]).toBe("sleep");
+    expect(result?.timedOut).toBe(true);
+    expect(result?.oomKilled).toBe(false);
+  });
+
+  it("makes oom run an allocation command and report an OOM kill", async () => {
+    const provider = new FakeSandboxProvider({
+      script: [
+        {
+          match: (argv) => argv[0] === "node" && argv[1] === "-e",
+          hang: true,
+          oomKilled: true,
+        },
+      ],
+    });
+    const injection = createFaultInjection({ phase: "testing", mode: "oom" }, log, provider);
+    const sandbox = await injection.sandbox?.create(SPEC, new AbortController().signal);
+    injection.fault?.(SANDBOX_TESTING);
+
+    const result = await sandbox?.exec(request(["echo", "not-the-fault"]));
+    expect(result?.argv[0]).toBe("node");
+    expect(result?.oomKilled).toBe(true);
+    expect(result?.timedOut).toBe(false);
   });
 });

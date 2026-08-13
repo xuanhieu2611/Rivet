@@ -23,8 +23,8 @@ gives `provisioning` and `testing` real bodies - create a container, clone the r
 the commit, install dependencies, then run the repository's own test suite and record the result -
 and `apps/worker` calls it, selected by `RIVET_SANDBOX` (`docker` by default, `off` for the
 simulated pipeline). The processor owns the container and destroys it on every exit; the sweeper
-reaps whatever a `kill -9` left behind. What remains is failure-classification coverage for the new
-categories, the fault modes, the UI, the `*.sbx.test.ts` suite and its CI job, and the docs.
+reaps whatever a `kill -9` left behind. What remains is the UI, the `*.sbx.test.ts` suite and its CI
+job, and the docs.
 
 **A red baseline is not a failed job.** The `testing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
@@ -69,7 +69,7 @@ Turbo caches aggressively. Add `--force` when you need to prove something from c
 
 ### Running the integration suite locally
 
-27 tests in `apps/worker/tests/integration/*.int.test.ts`, about 14 seconds, against real Postgres,
+34 tests in `apps/worker/tests/integration/*.int.test.ts`, about 15 seconds, against real Postgres,
 real Redis, and real BullMQ workers. They need both services on localhost. On this machine that is
 Homebrew's `postgresql@17` and `redis`:
 

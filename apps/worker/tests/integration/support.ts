@@ -59,7 +59,7 @@ export const TEST_CONFIG: WorkerConfig = {
   pipelineSpeed: 0,
   shutdownGraceMs: 5_000,
   logLevel: "fatal",
-  // `off`, and the whole suite depends on it: these 27 tests are about the
+  // `off`, and the whole suite depends on it: these integration tests are about the
   // lease, the queue and the recovery paths, and they run in CI against
   // Postgres and Redis service containers with no Docker daemon anywhere. A
   // test that wants a real sandbox belongs in the `*.sbx.test.ts` suite.
@@ -122,6 +122,7 @@ export interface TestWorkerOptions {
   workerId?: string;
   config?: Partial<WorkerConfig>;
   phases?: Parameters<typeof createProcessor>[0]["phases"];
+  phaseFactory?: Parameters<typeof createProcessor>[0]["phaseFactory"];
   faults?: () => FaultInjection;
   /** Wires the real sweep runner into this worker's `sweep` messages. */
   withSweeper?: boolean;
@@ -153,6 +154,7 @@ export function startTestWorker(options: TestWorkerOptions): TestWorker {
       log,
       runs: new RunRegistry(),
       ...(options.phases ? { phases: options.phases } : {}),
+      ...(options.phaseFactory ? { phaseFactory: options.phaseFactory } : {}),
       ...(options.faults ? { faults: options.faults } : {}),
       ...(options.withSweeper
         ? { sweep: createSweepRunner({ queue: options.queue, config, log }) }

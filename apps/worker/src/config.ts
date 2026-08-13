@@ -23,12 +23,12 @@ export const LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"] a
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
 /**
- * The four ways a run can be made to go wrong on demand.
+ * The ways a run can be made to go wrong on demand.
  *
- * Milestone 1's pipeline is simulated, so without these the recovery machinery
- * would have nothing to recover from and the interesting paths would only ever
- * be exercised by unit tests with hand-thrown errors. Each mode maps to one
- * claim the milestone makes:
+ * The original four modes exercise the lifecycle machinery. The sandbox modes
+ * exercise the real command and provider failure categories without requiring a
+ * caller to damage the host manually. Each mode maps to one claim the
+ * milestone makes:
  *
  * - `throw` - a retryable error. Proves backoff and retry, and that
  *   `attempt_count` survives across attempts.
@@ -39,10 +39,20 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
  * - `exit` - `process.exit(1)` mid-phase, with no cleanup whatsoever. This is
  *   `kill -9` on demand: the lease expires and the sweeper reclaims the job.
  *   It is the Milestone 6 demo, available five milestones early.
- *
- * All of it is deleted when the sandbox lands in Milestone 2.
+ * - `no-daemon` - sandbox creation raises `sandbox_unavailable`, which retries.
+ * - `oom` - a sandbox command allocates until the memory limit kills it.
+ * - `slow-command` - a sandbox command outlives its own timeout, distinct from
+ *   the whole job deadline.
  */
-export const FAULT_MODES = ["throw", "fatal", "hang", "exit"] as const;
+export const FAULT_MODES = [
+  "throw",
+  "fatal",
+  "hang",
+  "exit",
+  "no-daemon",
+  "oom",
+  "slow-command",
+] as const;
 export type FaultMode = (typeof FAULT_MODES)[number];
 
 export interface FaultConfig {
@@ -54,8 +64,8 @@ export interface FaultConfig {
 /**
  * Whether a job's phases do real work or pretend to.
  *
- * `off` selects `simulatedPipeline()` - seven sleeps, no Docker - which is what
- * the 27-test integration suite runs under, so that suite still needs only
+ * `off` selects `simulatedPipeline()` - seven phases with no Docker - which is what
+ * the integration suite runs under, so that suite still needs only
  * Postgres and Redis. It is a legitimate configuration for a machine with no
  * daemon and an illegitimate one for a deployment, which is why
  * `parseWorkerConfig` refuses it when `NODE_ENV=production` rather than merely

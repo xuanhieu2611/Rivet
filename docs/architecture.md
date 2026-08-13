@@ -193,18 +193,20 @@ matters is a Postgres write guarded by the lease. A lost message, a duplicated m
 for a job that finished ten minutes ago are all harmless, because the claim is what grants the right
 to act and the claim is a compare-and-swap.
 
-The pipeline itself is seven simulated phases - provision, analyze, plan, implement, test, review,
-finalize - totalling about 21 seconds, which is roughly the right length to watch a job cross the
-dashboard. Milestone 2 replaces the body of each phase with sandbox work and touches nothing else.
-That is the entire reason `runPipeline` takes its clock, its sleep, its callbacks and its fault
-injector as arguments rather than importing them: the same runner drives the demo at `speed: 1` and
-the unit tests at `speed: 0`.
+The pipeline itself is seven phases - provision, analyze, plan, implement, test, review, finalize.
+Milestone 2 made provisioning and testing real sandbox work; analyzing, planning, implementing,
+reviewing and finalizing remain simulated until later milestones. The five simulated phases total
+about 15 seconds, which is still roughly the right length to watch a job cross the dashboard. That
+is the entire reason `runPipeline` takes its clock, its sleep, its callbacks and its fault injector
+as arguments rather than importing them: the same runner drives the demo at `speed: 1` and the unit
+tests at `speed: 0`.
 
-Four fault-injection modes exist so the recovery machinery has something to recover from while the
-work is fake: `throw` (retryable), `fatal` (terminal), `hang` (ignores the abort signal, proving the
-timeout is a real deadline rather than a polite request), and `exit` (`process.exit(1)` mid-phase,
-which is `kill -9` on demand). They are configured by `RIVET_FAULT_PHASE` and `RIVET_FAULT_MODE`,
-read in the worker and nowhere else, and both are deleted when the sandbox lands.
+Seven fault-injection modes exist so the recovery machinery and the sandbox failure taxonomy have
+something to recover from on demand: `throw` (retryable), `fatal` (terminal), `hang` (ignores the
+job deadline), and `exit` (`process.exit(1)` mid-phase, which is `kill -9` on demand), plus
+`no-daemon`, `oom`, and `slow-command` for sandbox-specific failures. They are configured by
+`RIVET_FAULT_PHASE` and `RIVET_FAULT_MODE`, read in the worker and nowhere else. The
+sandbox-specific modes wrap a provider for one attempt, so concurrent jobs do not share fault state.
 
 ### Two counters, and which one is true
 
@@ -232,7 +234,9 @@ entire retry policy:
 The default is the important one: **an unrecognised error is terminal, not retryable.** Retrying an
 error nobody has reasoned about is how one bug becomes three identical bugs, a tripled bill, and a
 timeline three times as hard to read. Retryability is a claim about an error and has to be made
-deliberately, by throwing `RetryableJobError`.
+deliberately, by throwing `RetryableJobError`. On the final BullMQ delivery, a retryable error is
+recorded as `failed` with the category it carries rather than being left in `queued` for the sweeper
+to guess at later.
 
 `lease_lost` writing nothing is the other one worth pausing on. If a worker discovers mid-run that
 it no longer owns its job, another worker is already running it. Not a status, not an event, not
@@ -468,7 +472,7 @@ needs no environment, which is in turn what makes CI cheap and a fork's pull req
 It covers the guard table, the failure classification, the phase list against the guard table, the
 pipeline runner at `speed: 0`, the config invariant, the in-memory queue and the job service.
 
-`pnpm test:integration` runs 27 tests in about 14 seconds against real Postgres, real Redis and real
+`pnpm test:integration` runs 34 tests in about 15 seconds against real Postgres, real Redis and real
 BullMQ workers - `postgres:17` and `redis:8` service containers in CI, local services on a dev
 machine. It is a separate vitest config with no file pattern in common with the default suite, so
 `pnpm test` cannot pick it up by accident. What it proves is the list of claims this document makes:
@@ -487,19 +491,19 @@ every dev machine points at the real Neon database.
 
 Named so their absence reads as a decision rather than an oversight: no authentication or `user_id`
 (Milestone 9 brings GitHub identity), no `repository_id` foreign key (there is no Repository table
-to point at, so the job stores a plain `repo_url`), no sandbox (M2), no event stream - the timeline
-is polled, not pushed (M3), no model call of any kind (M4), no checkpoints or resumable jobs (M6),
-no transactional outbox (see the dual-write section for why), and no deployment: both processes run
-locally, because Milestone 2's Docker sandboxes will constrain the worker's host anyway and
-deploying twice is wasted work.
+to point at, so the job stores a plain `repo_url`), no event stream - the timeline is polled, not
+pushed (M3), no model call of any kind (M4), no checkpoints or resumable jobs (M6), no transactional
+outbox (see the dual-write section for why), and no deployment: both processes run locally, because
+Milestone 2's Docker sandboxes will constrain the worker's host anyway and deploying twice is wasted
+work.
 
 The one piece of scaffolding left in the codebase is `apps/web/components/job-status-poller.tsx`, a
 client component calling `router.refresh()` every two seconds while a job is non-terminal. It exists
 because the detail page is server-rendered and nothing else asks for an update, so without it the
 demo needs manual refreshing. It carries a `TODO(M3)` marker and is deleted when SSE lands.
 
-Milestone 1's simulation knobs go the milestone after: the phase durations, `RIVET_PIPELINE_SPEED`,
-the four fault modes, and the `simulated_failure` failure category all disappear when the sandbox
-replaces the phase bodies in Milestone 2. Everything around them - claiming, leasing, heartbeating,
-transitioning, retrying, cancelling, recovering - is designed to survive that unchanged, which is
-the actual deliverable of the milestone.
+Milestone 1's simulation knobs now have a narrower job: phase durations and `RIVET_PIPELINE_SPEED`
+remain for the five phases that are still simulated, while the fault modes also exercise real
+sandbox failure categories. The `simulated_failure` category is gone. Everything around them -
+claiming, leasing, heartbeating, transitioning, retrying, cancelling, recovering - is designed to
+survive the real phase bodies unchanged, which is the actual deliverable of the milestone.

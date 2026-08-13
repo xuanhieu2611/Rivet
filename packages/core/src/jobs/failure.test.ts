@@ -12,6 +12,16 @@ import {
   WorkerShuttingDownError,
 } from "./failure";
 
+import {
+  CommandTimedOutError,
+  DependencyInstallFailedError,
+  OutOfMemoryError,
+  RepoUnavailableError,
+  SandboxCreateFailedError,
+  SandboxUnavailableError,
+  UnsupportedProjectError,
+} from "../sandbox/errors";
+
 describe("classify", () => {
   it("maps each error type to its outcome", () => {
     expect(classify(new LeaseLostError("gone"))).toBe("lease_lost");
@@ -41,6 +51,25 @@ describe("classify", () => {
     const cause = new Error("socket hang up");
     expect(new RetryableJobError("wrapped", "unknown", { cause }).cause).toBe(cause);
     expect(new TerminalJobError("wrapped", "unknown", { cause }).cause).toBe(cause);
+  });
+});
+
+describe("sandbox failure classification", () => {
+  const cases = [
+    [SandboxUnavailableError, "retryable", "sandbox_unavailable"],
+    [SandboxCreateFailedError, "retryable", "sandbox_create_failed"],
+    [RepoUnavailableError, "terminal", "repo_unavailable"],
+    [UnsupportedProjectError, "terminal", "unsupported_project"],
+    [DependencyInstallFailedError, "terminal", "dependency_install_failed"],
+    [CommandTimedOutError, "terminal", "command_timed_out"],
+    [OutOfMemoryError, "terminal", "oom_killed"],
+  ] as const;
+
+  it.each(cases)("classifies %s as %s with category %s", (ErrorType, expectedClass, category) => {
+    const error = new ErrorType("injected");
+
+    expect(classify(error)).toBe(expectedClass);
+    expect(failureCategoryFor(error)).toBe(category);
   });
 });
 

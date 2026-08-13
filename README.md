@@ -83,15 +83,16 @@ and finalization - about 21 seconds in total. Cancel it partway through and it s
 The dashboard shows the same transitions in the list.
 
 To watch the recovery machinery instead, break a job on purpose. Set `RIVET_FAULT_PHASE=testing`
-with one of four `RIVET_FAULT_MODE` values and restart the worker: `throw` retries the job with
-backoff and completes it, `fatal` fails it once with a recorded category, `hang` runs it past its
-budget into `timed_out`, and `exit` kills the worker mid-phase with no cleanup at all - the lease
-expires, the sweeper reclaims the job, and the next worker finishes it. `.env.example` documents all
-four.
+with one of the `RIVET_FAULT_MODE` values and restart the worker: `throw` retries the job with
+backoff, `fatal` fails it once with a recorded `repo_unavailable` category, `hang` runs it past the
+job budget into `timed_out`, and `exit` kills the worker mid-phase with no cleanup at all - the
+lease expires, the sweeper reclaims the job, and the next worker finishes it. With the Docker
+sandbox, `no-daemon`, `oom`, and `slow-command` exercise daemon outages, memory kills, and
+command-level timeouts. `.env.example` documents all seven.
 
 ## Running the integration suite
 
-27 tests against real Postgres, real Redis and real BullMQ workers, in about 14 seconds. It needs
+34 tests against real Postgres, real Redis and real BullMQ workers, in about 15 seconds. It needs
 both services on localhost, because every case truncates `jobs` and `job_events` - which is also why
 it refuses to run against any host that is not plainly local, and why it deliberately does not read
 `.env.local`.
@@ -126,7 +127,7 @@ documents every worker tuning variable with the reasoning behind its default.
 | `DATABASE_URL_UNPOOLED` | yes for migrations | `pnpm db:migrate`, `pnpm db:studio` | Neon's **direct** endpoint. Migrations fall back to `DATABASE_URL` when it is unset, which is how CI passes a single URL |
 | `REDIS_URL`             | yes                | the app and the worker, at runtime  | Upstash, for BullMQ. `rediss://` (two s) is TLS, which Upstash requires                                                  |
 | `WORKER_*`              | no                 | the worker                          | Concurrency, lease, heartbeat, sweep interval, attempt ceiling, shutdown grace. Defaults are in `.env.example`           |
-| `RIVET_*`               | no                 | the worker                          | Milestone 1 simulation knobs: pipeline speed and fault injection. Deleted when the sandbox lands                         |
+| `RIVET_*`               | no                 | the worker                          | Pipeline speed for the five simulated phases and fault injection modes                                                   |
 
 DDL through Neon's PgBouncer endpoint in transaction pooling mode is unreliable, so migrations
 deliberately bypass the pooler while application queries go through it.

@@ -140,7 +140,7 @@ export function createPhaseContextFactory(
           {
             jobId: job.id,
             type: "command.completed",
-            message: `${input.argv.join(" ")} exited ${result.exitCode ?? "(killed)"}`,
+            message: `${result.argv.join(" ")} exited ${result.exitCode ?? "(killed)"}`,
             // Deliberately not the transcript. The timeline is read in full on
             // every render; the output is one join away in `job_commands`.
             data: {
