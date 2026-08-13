@@ -93,8 +93,14 @@ export function parseFailureCategory(value: string | null | undefined): FailureC
 // The implicit index signature described above is exactly what an interface lacks.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type JobEventData = {
-  /** Expected prior status, as the transition's compare-and-swap stated it. */
-  from?: JobStatus | readonly JobStatus[];
+  /**
+   * The status the job was actually in before the change.
+   *
+   * One concrete status, never the set of statuses a transition was willing to
+   * accept - `transitionJob` reads it off the locked row for exactly this
+   * reason. A timeline entry has to be a fact about this job.
+   */
+  from?: JobStatus;
   to?: JobStatus;
   phase?: string;
   durationMs?: number;

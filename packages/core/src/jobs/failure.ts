@@ -1,0 +1,100 @@
+import type { FailureCategory } from "@rivet/contracts";
+
+/**
+ * Why a run ended, and what should happen next.
+ *
+ * One classification function feeds two different systems, which is the reason
+ * it lives here rather than in the worker. Postgres needs a `failure_category`
+ * to persist and a status to move to; BullMQ needs to know whether to retry the
+ * message. Getting those two answers from a single `classify()` is what stops
+ * them drifting into disagreeing about the same error.
+ */
+
+/** A named error, so `classify` never has to match on message text. */
+abstract class JobRunError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = new.target.name;
+  }
+}
+
+/**
+ * Another worker owns this job now.
+ *
+ * Raised when a heartbeat comes back `null`: the lease was reclaimed while this
+ * worker was busy. The only correct response is to stop touching the job
+ * entirely - not to fail it, not to release it, not even to log an event
+ * against it. Its replacement is mid-flight and every write from here is a
+ * write into someone else's job.
+ */
+export class LeaseLostError extends JobRunError {}
+
+/** A cancel was requested and the worker noticed it between phases. */
+export class JobCancelledError extends JobRunError {}
+
+/** `maxDurationSeconds` elapsed. Not a failure of the code, a failure to finish. */
+export class JobTimedOutError extends JobRunError {}
+
+/** The worker is shutting down cleanly and is handing the job back. */
+export class WorkerShuttingDownError extends JobRunError {}
+
+/** Something went wrong that a fresh attempt might get past. */
+export class RetryableJobError extends JobRunError {}
+
+/** Something went wrong that a fresh attempt would hit again. */
+export class TerminalJobError extends JobRunError {
+  constructor(
+    message: string,
+    readonly category: FailureCategory = "unknown",
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+  }
+}
+
+export type FailureClass =
+  "retryable" | "terminal" | "cancelled" | "timed_out" | "lease_lost" | "shutting_down";
+
+/**
+ * Sorts an error into one of the six outcomes the processor knows how to handle.
+ *
+ * The default matters more than any of the explicit cases: **an unrecognised
+ * error is terminal, not retryable.** Retrying an error nobody has reasoned
+ * about is how a bug becomes three identical bugs, a tripled bill, and a
+ * timeline that is three times as hard to read. Retryability is a claim about an
+ * error, and a claim has to be made deliberately by throwing
+ * `RetryableJobError`.
+ */
+export function classify(error: unknown): FailureClass {
+  if (error instanceof LeaseLostError) return "lease_lost";
+  if (error instanceof WorkerShuttingDownError) return "shutting_down";
+  if (error instanceof JobCancelledError) return "cancelled";
+  if (error instanceof JobTimedOutError) return "timed_out";
+  if (error instanceof RetryableJobError) return "retryable";
+  return "terminal";
+}
+
+/**
+ * The `failure_category` column value for a classified error.
+ *
+ * `lease_lost` and `shutting_down` are absent on purpose: neither writes to the
+ * job at all, so neither has a category to persist.
+ */
+export function failureCategoryFor(error: unknown): FailureCategory {
+  switch (classify(error)) {
+    case "cancelled":
+      return "cancelled";
+    case "timed_out":
+      return "timed_out";
+    case "terminal":
+      return error instanceof TerminalJobError ? error.category : "unknown";
+    default:
+      return "unknown";
+  }
+}
+
+/** A one-line description safe to persist in `failure_reason`. */
+export function describeError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
+}

@@ -1,6 +1,6 @@
 import type { JobDetail, JobEventData, JobEventType, JobStatus } from "@rivet/contracts";
-import { db, type Database, type NewJob, jobs } from "@rivet/database";
-import { and, eq, inArray } from "drizzle-orm";
+import { db, type Database, type Job, type NewJob, jobs } from "@rivet/database";
+import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 
 import { appendEvent } from "../events/event-service";
 import { toJobDetail } from "./job-service";
@@ -67,10 +67,13 @@ export class TransitionConflictError extends Error {
     readonly expectedFrom: readonly JobStatus[],
     readonly to: JobStatus,
     readonly leaseOwner?: string,
+    /** What the row actually said, when it could be read. Absent if it is gone. */
+    readonly actualStatus?: JobStatus,
   ) {
     super(
       `Job ${jobId} was not in [${expectedFrom.join(", ")}]` +
         (leaseOwner === undefined ? "" : ` under lease ${leaseOwner}`) +
+        (actualStatus === undefined ? "" : ` (it is ${actualStatus})`) +
         `, so it was not moved to ${to}.`,
     );
     this.name = "TransitionConflictError";
@@ -99,6 +102,9 @@ export function assertTransitionAllowed(
   }
 }
 
+/** Columns a transition may set. `status` is excluded - see `transitionJob`. */
+export type TransitionPatch = Omit<Partial<NewJob>, "status">;
+
 export interface TransitionInput {
   jobId: string;
   /** Expected current status, or any of several. The compare-and-swap half. */
@@ -117,19 +123,51 @@ export interface TransitionInput {
   type?: JobEventType;
   data?: JobEventData;
   /**
-   * Extra columns to set in the same statement: `completedAt`, `failureReason`,
-   * lease bookkeeping. `status` is excluded from the type on purpose - this
-   * function is the only thing allowed to set it.
+   * An extra condition on the locked row, beyond status and lease ownership.
+   *
+   * A plain predicate rather than a SQL fragment, because by the time it runs
+   * the row is locked and fully in hand - see below. `claimJob` uses it to
+   * express "nobody holds a live lease on this", which is not a status and not
+   * an equality check and would otherwise have to be inlined SQL that only this
+   * module could read.
+   *
+   * `now` is the database's clock, not this process's.
    */
-  patch?: Omit<Partial<NewJob>, "status">;
+  precondition?: (current: Job, now: Date) => boolean;
+  /**
+   * Extra columns to set in the same statement: `completedAt`, `failureReason`,
+   * lease bookkeeping.
+   *
+   * The function form receives the locked row and the database's clock, which
+   * is how `claimJob` bumps `attempt_count` and computes a lease deadline
+   * without a `sql` fragment and without trusting the worker's own clock.
+   */
+  patch?: TransitionPatch | ((current: Job, now: Date) => TransitionPatch);
 }
 
 /**
  * Moves a job to `to`, atomically with the event that records the move.
  *
- * The update carries its own preconditions, so there is no read-then-write race
- * to lose: `status IN (from)` is the compare-and-swap and `lease_owner = ...`
- * is the fence. Zero rows updated means one of them did not hold.
+ * The shape is lock, check, write, all inside one transaction:
+ *
+ * 1. `SELECT ... FOR UPDATE` takes the row lock and reads the job as it really
+ *    is, along with the database's own `now()`.
+ * 2. The preconditions are checked against that row: the status is in `from`
+ *    (the compare-and-swap), the lease is still this caller's (the fence), and
+ *    any caller-supplied `precondition` holds.
+ * 3. The update and the event row go in together.
+ *
+ * The row lock is what makes step 2 safe to do in TypeScript instead of in the
+ * `WHERE` clause: no other writer can slip between the read and the write,
+ * because they all come through here and they all take the same lock. The
+ * update keeps its own `status IN (from)` predicate anyway, so the guarantee
+ * does not quietly depend on nobody ever deleting the `FOR UPDATE`.
+ *
+ * Doing it this way buys two things a single self-predicating UPDATE cannot:
+ * the conflict error can say what the status actually was, and the event can
+ * record the one concrete status the job moved away from rather than the set of
+ * statuses the caller was willing to accept. A timeline entry reading
+ * `from: ["testing", "reviewing", "revising"]` is not a fact about this job.
  *
  * Interactive transactions are the reason Milestone 0 chose the `pg` driver
  * over Neon's HTTP driver, and this function is what needs them.
@@ -142,22 +180,51 @@ export async function transitionJob(
   assertTransitionAllowed(expectedFrom, input.to);
 
   return database.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({
+        job: getTableColumns(jobs),
+        // `.mapWith` is load-bearing, not decoration. A bare `sql` fragment
+        // hands back whatever the driver produced - a string, here - and
+        // `sql<Date>` is only an assertion, so without this the first thing to
+        // call `.getTime()` on it fails at runtime. Borrowing a real column's
+        // mapper means this timestamp is decoded exactly like every other
+        // timestamptz in the schema.
+        now: sql`now()`.mapWith(jobs.createdAt),
+      })
+      .from(jobs)
+      .where(eq(jobs.id, input.jobId))
+      .limit(1)
+      .for("update");
+
+    const conflict = (actual?: JobStatus) =>
+      new TransitionConflictError(input.jobId, expectedFrom, input.to, input.leaseOwner, actual);
+
+    // No row at all: the job was deleted, or the id is a fiction. Either way
+    // there is nothing to move, and the caller stands down the same as for any
+    // other conflict.
+    if (!locked) throw conflict();
+
+    const { job: current, now } = locked;
+
+    if (!expectedFrom.includes(current.status)) throw conflict(current.status);
+    if (input.leaseOwner !== undefined && current.leaseOwner !== input.leaseOwner) {
+      throw conflict(current.status);
+    }
+    if (input.precondition && !input.precondition(current, now)) throw conflict(current.status);
+
+    const patch =
+      typeof input.patch === "function" ? input.patch(current, now) : (input.patch ?? {});
+
     const [row] = await tx
       .update(jobs)
-      .set({ ...input.patch, status: input.to })
-      .where(
-        and(
-          eq(jobs.id, input.jobId),
-          inArray(jobs.status, [...expectedFrom]),
-          input.leaseOwner === undefined ? undefined : eq(jobs.leaseOwner, input.leaseOwner),
-        ),
-      )
+      .set({ ...patch, status: input.to })
+      .where(and(eq(jobs.id, input.jobId), inArray(jobs.status, [...expectedFrom])))
       .returning();
 
     if (!row) {
-      // Rolls the transaction back, so no event is written for a move that did
-      // not happen.
-      throw new TransitionConflictError(input.jobId, expectedFrom, input.to, input.leaseOwner);
+      // Unreachable while the lock above is held. Kept so that the correctness
+      // of this function does not rest on a comment.
+      throw conflict(current.status);
     }
 
     await appendEvent(
@@ -165,7 +232,9 @@ export async function transitionJob(
         jobId: input.jobId,
         type: input.type ?? "job.status_changed",
         message: input.message,
-        data: { ...input.data, from: input.from, to: input.to },
+        // `current.status`, not `input.from`: the timeline records the status
+        // the job was actually in, never the set the caller would have accepted.
+        data: { ...input.data, from: current.status, to: input.to },
       },
       tx,
     );
