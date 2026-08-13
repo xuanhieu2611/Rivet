@@ -2,6 +2,7 @@ import type { JobStatus } from "@rivet/contracts";
 
 import type { SandboxProvider } from "../sandbox/sandbox";
 import type { PhaseContext } from "./phase-context";
+import { provisioningPhase } from "./provisioning-phase";
 
 /**
  * What a job actually does, as a list.
@@ -107,9 +108,10 @@ export function simulatedPipeline(): readonly Phase[] {
  * clever about their sleeps in the meantime.
  */
 export function buildPipeline(options: PipelineOptions): readonly Phase[] {
-  // TODO(M2 step 5): `provisioning` gets its body here. TODO(M2 step 6): `testing`.
-  const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {};
-  void options;
+  const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {
+    provisioning: provisioningPhase(options),
+    // TODO(M2 step 6): `testing` becomes the baseline run.
+  };
 
   return PHASE_TEMPLATE.map((phase) => {
     const run = bodies[phase.status];

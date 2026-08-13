@@ -73,6 +73,48 @@ export class OutOfMemoryError extends TerminalJobError {
 }
 
 /**
+ * The clone did not produce a repository.
+ *
+ * Terminal, and this is the one place where "terminal" is easy to argue with:
+ * a clone failure can be a network blip. It is far more often a 404, a private
+ * repository, or a branch that does not exist, and none of those improve on the
+ * third attempt. Rivet only clones public HTTPS repositories at Milestone 2, so
+ * anything needing credentials lands here too.
+ */
+export class RepoUnavailableError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "repo_unavailable", options);
+  }
+}
+
+/**
+ * The repository is not something this milestone knows how to build.
+ *
+ * No `package.json`, or a lockfile nothing here can drive. Terminal by
+ * definition: the repository is what it is, and a retry clones the same tree.
+ */
+export class UnsupportedProjectError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "unsupported_project", options);
+  }
+}
+
+/**
+ * The dependency install exited non-zero.
+ *
+ * Terminal, and it is a judgment call rather than a deduction. An install
+ * failure is sometimes a transient registry blip, which argues for a retry, but
+ * it is just as often a lockfile that disagrees with its `package.json` - which
+ * would fail identically three times while burning three attempts and three
+ * containers. Revisit if the demo says otherwise.
+ */
+export class DependencyInstallFailedError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "dependency_install_failed", options);
+  }
+}
+
+/**
  * Raises the right error for a command that did not exit on its own.
  *
  * OOM is checked first: a container killed for memory also reports as killed

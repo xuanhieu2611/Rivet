@@ -109,11 +109,18 @@ describe("simulatedPipeline", () => {
 });
 
 describe("buildPipeline", () => {
-  it("has no bodies yet, and every phase it will get is checked above", () => {
-    // The bodies arrive in the next two steps of this milestone. What is
-    // already true is the structure: whatever gets a `run`, it walks the same
-    // seven statuses the guard table allows.
-    expect(PIPELINES.sandbox!.filter((phase) => phase.run)).toEqual([]);
+  it("makes provisioning real and leaves the rest simulated", () => {
+    const real = PIPELINES.sandbox!.filter((phase) => phase.run).map((phase) => phase.status);
+    // `testing` joins this list when the baseline run lands; the other five
+    // wait for Milestones 4 and 5.
+    expect(real).toEqual(["provisioning"]);
+  });
+
+  it("does not share phase objects with the simulated pipeline", () => {
+    const sandboxProvisioning = PIPELINES.sandbox![0];
+    const simulatedProvisioning = simulatedPipeline()[0];
+    expect(sandboxProvisioning?.run).toBeDefined();
+    expect(simulatedProvisioning?.run).toBeUndefined();
   });
 });
 

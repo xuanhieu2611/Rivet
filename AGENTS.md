@@ -16,7 +16,13 @@ exists today and is the best starting point for any structural question.
 it under a Postgres lease, walks it through a **simulated** seven-phase pipeline, heartbeats while
 it runs, and lands it in a terminal status. Retries, cancellation, timeouts, and crash recovery all
 work and are covered by an integration suite. What is still fake is the work itself: the phases are
-sleeps. There is no sandbox (M2), no event stream (M3), and no model call (M4).
+sleeps. There is no event stream (M3) and no model call (M4).
+
+Milestone 2 is in progress. `packages/sandbox` is real, and so is the `provisioning` phase that
+`buildPipeline()` returns - it creates a container, clones the repository, resolves the commit and
+installs dependencies. The worker does not call `buildPipeline()` yet; it still runs
+`simulatedPipeline()`, and wiring the two together is the milestone's remaining work along with the
+baseline test run and container cleanup.
 
 ## Commands
 
@@ -104,13 +110,26 @@ The sandbox base image is pinned by digest as well as tag, so an upstream retag 
 change what a job runs:
 
 ```text
-node:24-bookworm-slim
-node@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+node:24-bookworm
+node@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584
 ```
 
 That digest is an OCI image index covering `arm64` and `amd64`, so the same pin resolves on Apple
 silicon and on CI's amd64 runners. Node 24 rather than 22 because `.nvmrc` pins 24 and a sandbox
 running a different major than the host is a confusing thing to explain.
+
+**Not `-slim`, and it is not a preference.** The slim image has no `git`, so the first thing
+`provisioning` does fails with `exec: "git": executable file not found in $PATH` - reported as
+`repo_unavailable`, which blames the repository for something that is entirely Rivet's fault. The
+container runs as uid 1000 with `no-new-privileges`, so installing git on the way in is not an
+option either. The full image is 400MB against the slim image's 80MB, pulled once per host, and that
+is the price until Milestone 4 builds a `rivet-sandbox` image and can pick exactly what goes in it.
+
+`pnpm` and `yarn` are not in the image and are not meant to be: corepack ships with Node and fetches
+the one the repository's lockfile asks for. It needs `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`, which the
+install command sets - without it corepack stops on an interactive confirmation inside a container
+with no terminal, and the symptom is an install that hangs until its timeout rather than one that
+says what it wanted.
 
 ## Architecture
 
@@ -156,9 +175,13 @@ top level next to `index.ts` is the first sign the package is becoming a junk dr
 
 **`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
 merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, so a caller cannot
-sneak a status through the patch. There are exactly three `.update(jobs)` sites in `packages/`, and
-the other two touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
-`cancel_requested_at`. Stamping a cancel is deliberately not a status change; the job reaches
+sneak a status through the patch. There are exactly four `.update(jobs)` sites in `packages/`, and
+the other three touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
+`cancel_requested_at`, and `jobs/provisioning.ts` writes `sandbox_id`, `base_commit_sha` and
+`env_fingerprint` fenced on `lease_owner`. That fourth one takes the same patch type, so it cannot
+touch `status` either; it exists because those columns become true when a command answers, not when
+the job later changes phase, and a fact recorded at a moment that has nothing to do with the fact is
+how a timeline starts lying. Stamping a cancel is deliberately not a status change; the job reaches
 `cancelled` through the worker's own transition under its own lease. Every status change is a
 compare-and-swap on the expected `from` status, optionally fenced on `lease_owner`, and writes its
 event row in the same transaction. Adding a fourth status writer breaks all of that at once.
