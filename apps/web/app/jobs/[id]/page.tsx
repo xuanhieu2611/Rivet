@@ -1,10 +1,12 @@
 import "server-only";
 
+import { isTerminal } from "@rivet/contracts";
 import { getJob, listEvents } from "@rivet/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { CancelJobButton } from "@/components/cancel-job-button";
 import { ExecutionTimeline } from "@/components/execution-timeline";
 import { JobStatusPoller } from "@/components/job-status-poller";
 import { StatusBadge } from "@/components/status-badge";
@@ -33,6 +35,7 @@ export default async function JobDetailPage({ params }: PageProps) {
   // Two round trips rather than a join. They are independent reads of the same
   // job and the page needs both in full, so there is nothing for a join to save.
   const events = await listEvents(job.id);
+  const finished = isTerminal(job.status);
 
   return (
     <div className="space-y-8">
@@ -89,6 +92,18 @@ export default async function JobDetailPage({ params }: PageProps) {
                   ],
                 ]}
               />
+
+              {finished ? null : (
+                <div className="mt-5 space-y-2">
+                  {job.cancelRequestedAt ? (
+                    <p className="text-muted-foreground text-xs">
+                      Cancellation requested at {formatDateTime(job.cancelRequestedAt)}. The worker
+                      stops between phases, so this can take a heartbeat interval.
+                    </p>
+                  ) : null}
+                  <CancelJobButton jobId={job.id} />
+                </div>
+              )}
             </CardContent>
           </Card>
 

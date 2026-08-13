@@ -23,6 +23,19 @@ export function notFound(error = "Not found.") {
 }
 
 /**
+ * The request was well formed but the resource is in the wrong state for it.
+ *
+ * `details` is merged into the body so the client can act on the state it lost
+ * the race to - cancelling a job that just completed comes back with the status
+ * that made the request moot, which is more useful than the sentence explaining
+ * it.
+ */
+export function conflict(error: string, details?: Record<string, unknown>) {
+  const body: ApiErrorBody & Record<string, unknown> = { error, ...details };
+  return NextResponse.json(body, { status: 409 });
+}
+
+/**
  * Turns a Zod failure into a 400 with per-field messages.
  *
  * Walks `issues` rather than using `z.flattenError`, because the flattened type

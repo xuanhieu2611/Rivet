@@ -48,7 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           <footer className="border-border/60 text-muted-foreground border-t">
             <div className="mx-auto w-full max-w-5xl px-6 py-4 text-xs">
-              Jobs are persisted but not executed yet. Execution arrives in Milestone 1.
+              Jobs run end to end on a simulated pipeline. The coding agent arrives in Milestone 4.
             </div>
           </footer>
         </div>

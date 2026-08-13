@@ -16,6 +16,7 @@
  */
 
 export * from "./events/event-service";
+export * from "./jobs/cancel";
 export * from "./jobs/claims";
 export * from "./jobs/enqueue";
 export * from "./jobs/failure";
