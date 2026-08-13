@@ -15,4 +15,6 @@
  *   turning into a junk drawer.
  */
 
+export * from "./events/event-service";
 export * from "./jobs/job-service";
+export * from "./jobs/transitions";

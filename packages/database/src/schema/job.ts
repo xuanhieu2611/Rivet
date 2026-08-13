@@ -77,10 +77,52 @@ export const jobs = pgTable(
     finalBranch: text("final_branch"),
     pullRequestUrl: text("pull_request_url"),
     failureReason: text("failure_reason"),
+
+    // --- worker lease (PRD §16) ------------------------------------------
+    // Postgres is the source of truth for who owns a job; Redis only delivers
+    // the message. These three columns are what make that true.
+    /** Worker that currently owns this job. Null when nothing holds it. */
+    leaseOwner: text("lease_owner"),
+    /** Lease deadline. Past due with a non-terminal status means orphaned. */
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    /** Last heartbeat, for observability. The lease is what enforces anything. */
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+
+    // --- retry accounting -------------------------------------------------
+    /**
+     * Incremented on every claim, including reclaims after a crash.
+     *
+     * Distinct from BullMQ's `attemptsMade`, which only counts retries of a
+     * message it knows about. A worker killed with `kill -9` never reports
+     * back, so this counter is the one that is true.
+     */
+    attemptCount: integer("attempt_count").notNull().default(0),
+
+    // --- cancellation -----------------------------------------------------
+    /**
+     * Set by the API. The worker notices on its next heartbeat and aborts
+     * between phases, so cancellation needs no pub/sub channel of its own.
+     */
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+
+    // --- failure detail (PRD §23) ----------------------------------------
+    /**
+     * Machine-readable category from `FAILURE_CATEGORIES` in `@rivet/contracts`.
+     *
+     * Text rather than a pgEnum on purpose: unlike `status`, this is not a
+     * closed state machine and the taxonomy churns every milestone. Zod
+     * validates it; a new category costs nothing.
+     */
+    failureCategory: text("failure_category"),
   },
   (table) => [
     // Dashboard list query: filter by status, newest first.
     index("jobs_status_created_at_idx").on(table.status, table.createdAt.desc()),
+    // The sweeper's hot query: everything whose lease has run out. A partial
+    // index excluding terminal statuses would be tighter, but that needs a
+    // fourteen-value NOT IN inside `.where()` for a table this small. Revisit
+    // if the sweeper ever shows up in a slow query log.
+    index("jobs_lease_expires_at_idx").on(table.leaseExpiresAt),
   ],
 );
 

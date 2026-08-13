@@ -37,6 +37,12 @@ const row: Job = {
   finalBranch: null,
   pullRequestUrl: null,
   failureReason: null,
+  leaseOwner: null,
+  leaseExpiresAt: null,
+  heartbeatAt: null,
+  attemptCount: 0,
+  cancelRequestedAt: null,
+  failureCategory: null,
 };
 
 describe("isJobId", () => {
@@ -100,5 +106,26 @@ describe("row mapping", () => {
     expect(detail.startedAt).toBeNull();
     expect(detail.pullRequestUrl).toBeNull();
     expect(detail.createdAt).toBeInstanceOf(Date);
+    expect(detail.attemptCount).toBe(0);
+    expect(detail.failureCategory).toBeNull();
+    expect(detail.leaseExpiresAt).toBeNull();
+  });
+
+  it("keeps the lease columns off the summary", () => {
+    // `JobSummary` stays narrow: the dashboard renders hundreds of these.
+    const summary = toJobSummary(row);
+    expect(summary).not.toHaveProperty("attemptCount");
+    expect(summary).not.toHaveProperty("leaseExpiresAt");
+  });
+
+  it("degrades an unrecognised failure category rather than dropping it", () => {
+    // A newer build could write a category this one does not know. "we do not
+    // recognise this failure" and "this did not fail" must not look alike.
+    expect(toJobDetail({ ...row, failureCategory: "simulated_failure" }).failureCategory).toBe(
+      "simulated_failure",
+    );
+    expect(toJobDetail({ ...row, failureCategory: "from_the_future" }).failureCategory).toBe(
+      "unknown",
+    );
   });
 });

@@ -5,6 +5,19 @@ import * as schema from "./schema";
 
 export type Database = NodePgDatabase<typeof schema>;
 
+/** The handle `db.transaction(async (tx) => ...)` hands its callback. */
+export type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+/**
+ * Anything that can run a query: the pooled client, or an open transaction.
+ *
+ * Service functions take this rather than `Database` so a caller inside a
+ * transaction can pass `tx` and have the write join that transaction instead of
+ * silently landing on a separate connection. That is what lets `transitionJob`
+ * reuse `appendEvent` while still writing both rows atomically.
+ */
+export type Executor = Database | Transaction;
+
 let pool: Pool | undefined;
 let database: Database | undefined;
 

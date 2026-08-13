@@ -1,6 +1,8 @@
 import type { JobStatus as DrizzleJobStatus } from "@rivet/database";
 import { z } from "zod";
 
+import type { FailureCategory } from "./job-event";
+
 /**
  * The job lifecycle, mirroring the `job_status` Postgres enum.
  *
@@ -85,7 +87,13 @@ export interface JobSummary {
   updatedAt: Date;
 }
 
-/** The full job detail page payload. */
+/**
+ * The full job detail page payload.
+ *
+ * The execution columns below are deliberately NOT on `JobSummary`. The
+ * dashboard does not render them, and keeping the list payload narrow matters
+ * more once there are hundreds of jobs.
+ */
 export interface JobDetail extends JobSummary {
   description: string;
   baseCommitSha: string | null;
@@ -99,6 +107,15 @@ export interface JobDetail extends JobSummary {
   finalBranch: string | null;
   pullRequestUrl: string | null;
   failureReason: string | null;
+
+  /** How many times any worker has claimed this job, reclaims included. */
+  attemptCount: number;
+  /** Machine-readable cause, paired with the human-readable `failureReason`. */
+  failureCategory: FailureCategory | null;
+  /** Non-null once a cancel has been asked for, before the worker acts on it. */
+  cancelRequestedAt: Date | null;
+  /** When the current worker's ownership lapses. Null when nothing holds it. */
+  leaseExpiresAt: Date | null;
 }
 
 /**

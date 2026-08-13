@@ -1,4 +1,10 @@
-import type { CreateJob, JobDetail, JobStatus, JobSummary } from "@rivet/contracts";
+import {
+  type CreateJob,
+  type JobDetail,
+  type JobStatus,
+  type JobSummary,
+  parseFailureCategory,
+} from "@rivet/contracts";
 import { db, type Job, jobs } from "@rivet/database";
 import { desc, eq } from "drizzle-orm";
 
@@ -72,6 +78,12 @@ export function toJobDetail(row: Job): JobDetail {
     finalBranch: row.finalBranch,
     pullRequestUrl: row.pullRequestUrl,
     failureReason: row.failureReason,
+    attemptCount: row.attemptCount,
+    // `failure_category` is a plain text column, so a value written by a newer
+    // build could be outside the enum. Coerced rather than trusted.
+    failureCategory: parseFailureCategory(row.failureCategory),
+    cancelRequestedAt: row.cancelRequestedAt,
+    leaseExpiresAt: row.leaseExpiresAt,
   };
 }
 
