@@ -73,6 +73,45 @@ plainly local, because every case truncates `jobs` and `job_events` and `.env.lo
 machine points at the real Neon database. `RIVET_ALLOW_REMOTE_INTEGRATION=1` is the escape hatch and
 exists only so overriding the guard has to be deliberate.
 
+### Docker
+
+Milestone 2 makes a job's sandbox a real container, so Docker Desktop is a prerequisite alongside
+Postgres and Redis - but only for running jobs for real. `pnpm build`, `pnpm test`, `pnpm lint` and
+`pnpm typecheck` still run with no database, no Redis **and no Docker daemon**, which is the
+property CI's `verify` job exists to protect. `RIVET_SANDBOX=off` selects the simulated pipeline and
+is what the integration suite runs under, so that suite still needs only Postgres and Redis.
+
+```bash
+brew install --cask docker-desktop   # needs sudo, so run it from a terminal that can prompt
+open -a Docker                       # once; installs the privileged helper
+docker version                       # must print a Server section, not just a Client one
+```
+
+Two things that cost time on this machine and will cost it again on a fresh one:
+
+- On Apple silicon the first launch prompts for Rosetta. Until it is installed the Linux VM never
+  boots - the engine sits in `starting` forever and every `docker` command returns HTTP 500 from
+  `_ping`. `~/Library/Containers/com.docker.docker/Data/log/host/com.docker.backend.log` is where
+  that is visible; an empty `Data/vms/0` with no disk image is the same symptom.
+- `brew install --cask docker-desktop` needs sudo to link `docker-credential-osxkeychain` into
+  `/usr/local/bin`, and rolls the entire cask back if it cannot prompt. An agent shell cannot supply
+  that password; ask the user to run it.
+
+The socket is at `~/.docker/run/docker.sock`, symlinked to `/var/run/docker.sock`. `DOCKER_HOST`
+overrides both and is read explicitly rather than relying on dockerode's default.
+
+The sandbox base image is pinned by digest as well as tag, so an upstream retag cannot silently
+change what a job runs:
+
+```text
+node:24-bookworm-slim
+node@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+```
+
+That digest is an OCI image index covering `arm64` and `amd64`, so the same pin resolves on Apple
+silicon and on CI's amd64 runners. Node 24 rather than 22 because `.nvmrc` pins 24 and a sandbox
+running a different major than the host is a confusing thing to explain.
+
 ## Architecture
 
 ```

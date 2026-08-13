@@ -15,6 +15,13 @@
       "when": 1786603390316,
       "tag": "0001_heavy_vin_gonzales",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786647732243,
+      "tag": "0002_clean_smasher",
+      "breakpoints": true
     }
   ]
 }

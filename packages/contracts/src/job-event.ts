@@ -35,6 +35,29 @@ export const JOB_EVENT_TYPES = [
   "job.lease_lost",
   "job.failed",
   "job.completed",
+
+  // --- sandbox execution (M2) ------------------------------------------
+  /** A container exists and the job now owns something that has to be destroyed. */
+  "sandbox.created",
+  "sandbox.destroyed",
+  "repo.cloned",
+  "deps.installed",
+  /**
+   * One command finished inside the sandbox.
+   *
+   * Carries `argv`, `exitCode`, `durationMs` and `commandId` and nothing else:
+   * the transcript lives in `job_commands`, one join away, because the timeline
+   * is read in full on every render and a `pnpm install` transcript is neither
+   * small nor a fact.
+   */
+  "command.completed",
+  /**
+   * The repository's own test suite was run before anything was modified.
+   *
+   * A non-zero exit here is a recorded property of the repository, not a failed
+   * job - see PRD §11 C.
+   */
+  "baseline.recorded",
 ] as const;
 
 export const jobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
@@ -51,11 +74,44 @@ export type JobEventType = z.infer<typeof jobEventTypeSchema>;
 export const FAILURE_CATEGORIES = [
   "worker_crash",
   "lease_expired",
-  /** Milestone 1 only, from the fault injector. Deleted when the sandbox lands. */
-  "simulated_failure",
   "timed_out",
   "budget_exceeded",
   "cancelled",
+
+  // --- sandbox execution (M2) ------------------------------------------
+  // Retryable and terminal are not a property of this list - `classify()` in
+  // `packages/core/src/jobs/failure.ts` is what decides, through the error class
+  // each one is carried by. The comments here record the reasoning so the two
+  // cannot drift silently.
+  /** The Docker daemon is not reachable. Retryable: the daemon may come back. */
+  "sandbox_unavailable",
+  /** Image pull or container create failed. Retryable. */
+  "sandbox_create_failed",
+  /** Clone failed: 404, auth required, no such branch. Terminal - a 404 does not improve on retry. */
+  "repo_unavailable",
+  /** No `package.json`, no recognisable lockfile. Terminal. */
+  "unsupported_project",
+  /**
+   * The install command exited non-zero. Terminal.
+   *
+   * A judgment call: an install failure is sometimes a transient registry blip,
+   * but just as often a lockfile that disagrees with its `package.json`, which
+   * would fail identically three times while burning three attempts and three
+   * containers.
+   */
+  "dependency_install_failed",
+  /** One command blew its own timeout. Distinct from the job blowing `max_duration_seconds`. */
+  "command_timed_out",
+  /** The container hit its memory limit. Terminal, and told apart from a generic 137 by `State.OOMKilled`. */
+  "oom_killed",
+  /**
+   * The reaper found a container whose job is no longer live.
+   *
+   * Not a job outcome - nothing ever writes this to `jobs.failure_category`. It
+   * exists so the reaper's log line names the same taxonomy everything else does.
+   */
+  "sandbox_leaked",
+
   "unknown",
 ] as const;
 
@@ -110,6 +166,18 @@ export type JobEventData = {
   error?: string;
   /** The lease owner involved, for reclaim and fencing events. */
   leaseOwner?: string;
+
+  // --- sandbox execution (M2) ------------------------------------------
+  /** The container id, on `sandbox.created` / `sandbox.destroyed`. */
+  containerId?: string;
+  /** Null when the command was killed before it could exit. */
+  exitCode?: number | null;
+  /** Points at the `job_commands` row holding the transcript. */
+  commandId?: number;
+  /** The command as it was actually run. Never a shell string. */
+  argv?: string[];
+  /** The commit the clone resolved to, on `repo.cloned`. */
+  commitSha?: string;
 };
 
 /** One row of the job timeline. */

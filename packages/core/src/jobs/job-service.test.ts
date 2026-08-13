@@ -43,6 +43,8 @@ const row: Job = {
   attemptCount: 0,
   cancelRequestedAt: null,
   failureCategory: null,
+  sandboxId: null,
+  envFingerprint: null,
 };
 
 describe("isJobId", () => {
@@ -121,8 +123,8 @@ describe("row mapping", () => {
   it("degrades an unrecognised failure category rather than dropping it", () => {
     // A newer build could write a category this one does not know. "we do not
     // recognise this failure" and "this did not fail" must not look alike.
-    expect(toJobDetail({ ...row, failureCategory: "simulated_failure" }).failureCategory).toBe(
-      "simulated_failure",
+    expect(toJobDetail({ ...row, failureCategory: "repo_unavailable" }).failureCategory).toBe(
+      "repo_unavailable",
     );
     expect(toJobDetail({ ...row, failureCategory: "from_the_future" }).failureCategory).toBe(
       "unknown",

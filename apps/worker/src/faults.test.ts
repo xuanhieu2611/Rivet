@@ -23,12 +23,12 @@ describe("createFaultInjection", () => {
     expect(injection.fault?.(TESTING)).toBeInstanceOf(RetryableJobError);
   });
 
-  it("returns a terminal error carrying the simulated_failure category", () => {
+  it("returns a terminal error carrying a real failure category", () => {
     const injection = createFaultInjection({ phase: "testing", mode: "fatal" }, log);
 
     const error = injection.fault?.(TESTING);
     expect(error).toBeInstanceOf(TerminalJobError);
-    expect((error as TerminalJobError).category).toBe("simulated_failure");
+    expect((error as TerminalJobError).category).toBe("repo_unavailable");
   });
 
   it("makes only the faulted phase deaf to its abort signal", async () => {

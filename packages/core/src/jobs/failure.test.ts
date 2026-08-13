@@ -45,8 +45,8 @@ describe("classify", () => {
 
 describe("failureCategoryFor", () => {
   it("persists the category a terminal error carries", () => {
-    expect(failureCategoryFor(new TerminalJobError("boom", "simulated_failure"))).toBe(
-      "simulated_failure",
+    expect(failureCategoryFor(new TerminalJobError("boom", "repo_unavailable"))).toBe(
+      "repo_unavailable",
     );
   });
 

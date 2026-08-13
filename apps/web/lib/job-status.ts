@@ -91,10 +91,17 @@ export function statusLabel(status: JobStatus): string {
 export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
   worker_crash: "Worker crash",
   lease_expired: "Lease expired",
-  simulated_failure: "Simulated failure",
   timed_out: "Timed out",
   budget_exceeded: "Budget exceeded",
   cancelled: "Cancelled",
+  sandbox_unavailable: "Sandbox unavailable",
+  sandbox_create_failed: "Sandbox could not start",
+  repo_unavailable: "Repository unavailable",
+  unsupported_project: "Unsupported project",
+  dependency_install_failed: "Dependency install failed",
+  command_timed_out: "Command timed out",
+  oom_killed: "Out of memory",
+  sandbox_leaked: "Sandbox leaked",
   unknown: "Unknown",
 };
 
@@ -122,4 +129,10 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "job.lease_lost": "bg-amber-500",
   "job.failed": "bg-red-500",
   "job.completed": "bg-emerald-500",
+  "sandbox.created": "bg-violet-500",
+  "sandbox.destroyed": "bg-muted-foreground/40",
+  "repo.cloned": "bg-sky-500",
+  "deps.installed": "bg-sky-500",
+  "command.completed": "bg-sky-500/40",
+  "baseline.recorded": "bg-sky-500",
 };

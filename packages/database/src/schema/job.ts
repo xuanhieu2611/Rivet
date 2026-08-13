@@ -1,6 +1,7 @@
 import {
   index,
   integer,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
@@ -114,6 +115,27 @@ export const jobs = pgTable(
      * validates it; a new category costs nothing.
      */
     failureCategory: text("failure_category"),
+
+    // --- sandbox execution (PRD §15, M2) ---------------------------------
+    /**
+     * The container currently running this job, null when none exists.
+     *
+     * Written by `recordProvisioning()`, which is why this milestone adds a
+     * fourth `.update(jobs)` site. It cannot touch `status` - the patch type is
+     * the same `Omit<Partial<NewJob>, "status">` every other writer takes.
+     *
+     * Not the reaper's handle: a crashed worker may never have written it. The
+     * `rivet.job-id` container label is what survives `kill -9`.
+     */
+    sandboxId: text("sandbox_id"),
+    /**
+     * What the run actually executed in: image digest, node version, package
+     * manager and version, lockfile hash, resolved commit, resource limits.
+     *
+     * PRD §11 B asks for it; §24.2 (reproducibility) is what will eventually
+     * read it back.
+     */
+    envFingerprint: jsonb("env_fingerprint").$type<Record<string, unknown>>(),
   },
   (table) => [
     // Dashboard list query: filter by status, newest first.

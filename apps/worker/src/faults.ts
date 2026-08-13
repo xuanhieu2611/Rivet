@@ -65,9 +65,12 @@ export function createFaultInjection(config: FaultConfig | undefined, log: Logge
 
       case "fatal":
         log.warn({ phase: phase.status }, "injecting a terminal fault");
+        // `simulated_failure` is gone; the fault injector now raises a category
+        // a real run can actually produce. Step 8 of the milestone repoints
+        // these modes properly and adds sandbox-specific ones alongside them.
         return new TerminalJobError(
           `Injected terminal fault at ${phase.status}.`,
-          "simulated_failure",
+          "repo_unavailable",
         );
 
       case "hang":

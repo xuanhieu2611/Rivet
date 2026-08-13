@@ -38,10 +38,27 @@ to move as later milestones land.
 | pnpm        | 10.32.0             | `corepack enable` uses the `packageManager` field in `package.json` |
 | Neon        | free tier is plenty | A serverless Postgres project; branching is used by CI              |
 | Upstash     | free tier is plenty | A serverless Redis database, for the BullMQ queue                   |
+| Docker      | Desktop 4.86+       | Only for running jobs for real. See below                           |
 
-There is no Docker requirement and no local Postgres for ordinary development - it runs against a
-real Neon database and a real Upstash Redis. The integration suite is the exception and needs both
-services on localhost; see below.
+No local Postgres for ordinary development - it runs against a real Neon database and a real Upstash
+Redis. The integration suite is the exception and needs both services on localhost; see below.
+
+Docker is what a job's sandbox is made of, so it is needed to run a job for real and to run
+`pnpm test:sandbox`. It is deliberately **not** needed for `pnpm build`, `pnpm test`, `pnpm lint` or
+`pnpm typecheck`, which run with no database, no Redis and no Docker daemon - that property is what
+CI's `verify` job exists to keep honest. Without Docker, set `RIVET_SANDBOX=off` and the worker runs
+the simulated pipeline Milestone 1 shipped.
+
+```bash
+brew install --cask docker-desktop   # or download Docker Desktop from docker.com
+open -a Docker                       # once, to install the privileged helper
+docker version                       # must print a Server section, not just a Client one
+```
+
+On Apple silicon the first launch asks to install Rosetta; accept it, or the Linux VM never boots
+and every command hangs on a daemon that is permanently "starting". The socket lands at
+`~/.docker/run/docker.sock`, which Docker Desktop symlinks to `/var/run/docker.sock`; `DOCKER_HOST`
+overrides both if yours is somewhere else.
 
 ## Setup
 

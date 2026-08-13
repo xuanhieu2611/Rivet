@@ -157,14 +157,14 @@ describe("terminal failure", () => {
       sleep: abortableSleep,
       fault: (phase: Phase) =>
         phase.status === "implementing"
-          ? new TerminalJobError("Injected terminal failure.", "simulated_failure")
+          ? new TerminalJobError("Injected terminal failure.", "repo_unavailable")
           : undefined,
     });
 
     worker = startTestWorker({ queue: testQueue.queue, faults });
 
     const finished = await waitForStatus(job.id, "failed");
-    expect(finished.failureCategory).toBe("simulated_failure");
+    expect(finished.failureCategory).toBe("repo_unavailable");
     expect(finished.failureReason).toContain("Injected terminal failure");
     expect(finished.attemptCount).toBe(1);
     expect(finished.leaseOwner).toBeNull();
