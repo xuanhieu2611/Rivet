@@ -1,5 +1,6 @@
 import type { JobCommand, JobCommandSummary, JobStatus } from "@rivet/contracts";
 import { db, type Executor, type JobCommandRow, jobCommands } from "@rivet/database";
+import { and, asc, eq, gt } from "drizzle-orm";
 
 import type { ExecResult } from "./sandbox";
 
@@ -127,6 +128,81 @@ function charByteLength(byte: number | undefined): number {
   return 1;
 }
 
+export const DEFAULT_COMMAND_LIMIT = 200;
+
+type JobCommandSummaryRow = Pick<
+  JobCommandRow,
+  | "id"
+  | "jobId"
+  | "phase"
+  | "argv"
+  | "cwd"
+  | "exitCode"
+  | "durationMs"
+  | "truncated"
+  | "timedOut"
+  | "oomKilled"
+  | "createdAt"
+>;
+
+const commandSummaryColumns = {
+  id: jobCommands.id,
+  jobId: jobCommands.jobId,
+  phase: jobCommands.phase,
+  argv: jobCommands.argv,
+  cwd: jobCommands.cwd,
+  exitCode: jobCommands.exitCode,
+  durationMs: jobCommands.durationMs,
+  truncated: jobCommands.truncated,
+  timedOut: jobCommands.timedOut,
+  oomKilled: jobCommands.oomKilled,
+  createdAt: jobCommands.createdAt,
+};
+
+export interface ListCommandsOptions {
+  /** Return only commands with an id greater than this cursor. */
+  after?: number;
+  limit?: number;
+}
+
+/** One job's commands in execution order, without stdout or stderr. */
+export async function listCommands(
+  jobId: string,
+  options: ListCommandsOptions = {},
+  executor: Executor = db,
+): Promise<JobCommandSummary[]> {
+  const rows = await executor
+    .select(commandSummaryColumns)
+    .from(jobCommands)
+    .where(
+      and(
+        eq(jobCommands.jobId, jobId),
+        options.after === undefined ? undefined : gt(jobCommands.id, options.after),
+      ),
+    )
+    .orderBy(asc(jobCommands.id))
+    .limit(options.limit ?? DEFAULT_COMMAND_LIMIT);
+
+  return rows.map(toJobCommandSummary);
+}
+
+/** One command and its transcript, or null when it is not part of the job. */
+export async function getCommand(
+  jobId: string,
+  commandId: number,
+  executor: Executor = db,
+): Promise<JobCommand | null> {
+  if (!Number.isSafeInteger(commandId) || commandId < 1) return null;
+
+  const [row] = await executor
+    .select()
+    .from(jobCommands)
+    .where(and(eq(jobCommands.jobId, jobId), eq(jobCommands.id, commandId)))
+    .limit(1);
+
+  return row ? toJobCommand(row) : null;
+}
+
 export interface RecordCommandInput {
   jobId: string;
   /** The status the job was in while the command ran. */
@@ -175,7 +251,7 @@ export function toJobCommand(row: JobCommandRow): JobCommand {
 }
 
 /** The same, without the transcript, for list queries. */
-export function toJobCommandSummary(row: JobCommandRow): JobCommandSummary {
+export function toJobCommandSummary(row: JobCommandSummaryRow): JobCommandSummary {
   return {
     id: row.id,
     jobId: row.jobId,

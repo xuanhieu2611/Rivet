@@ -97,6 +97,8 @@ export interface JobSummary {
 export interface JobDetail extends JobSummary {
   description: string;
   baseCommitSha: string | null;
+  /** The environment recorded by provisioning, for reproducibility. */
+  envFingerprint: Record<string, unknown> | null;
   priority: number;
   maxDurationSeconds: number;
   maxCostUsd: string;

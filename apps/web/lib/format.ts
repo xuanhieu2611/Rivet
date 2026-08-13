@@ -69,6 +69,13 @@ export function formatElapsed(
   return completedAt ? formatDuration(seconds) : `${formatDuration(seconds)} so far`;
 }
 
+/** `850` -> `"850ms"`, `1500` -> `"1.5s"`. */
+export function formatCommandDuration(milliseconds: number): string {
+  if (milliseconds < 1_000) return `${String(milliseconds)}ms`;
+  const seconds = milliseconds / 1_000;
+  return `${seconds.toFixed(seconds >= 10 ? 0 : 1)}s`;
+}
+
 /** `https://github.com/acme/widgets` -> `github.com/acme/widgets`, for dense table cells. */
 export function shortenRepoUrl(url: string): string {
   try {

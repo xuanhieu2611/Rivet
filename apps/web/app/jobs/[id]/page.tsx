@@ -1,12 +1,13 @@
 import "server-only";
 
-import { isTerminal } from "@rivet/contracts";
-import { getJob, listEvents } from "@rivet/core";
+import { isTerminal, type JobCommand } from "@rivet/contracts";
+import { getCommand, getJob, listCommands, listEvents } from "@rivet/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { CancelJobButton } from "@/components/cancel-job-button";
+import { CommandList } from "@/components/command-list";
 import { ExecutionTimeline } from "@/components/execution-timeline";
 import { JobStatusPoller } from "@/components/job-status-poller";
 import { StatusBadge } from "@/components/status-badge";
@@ -32,9 +33,12 @@ export default async function JobDetailPage({ params }: PageProps) {
   const job = await getJob(id);
   if (!job) notFound();
 
-  // Two round trips rather than a join. They are independent reads of the same
-  // job and the page needs both in full, so there is nothing for a join to save.
-  const events = await listEvents(job.id);
+  // The timeline and command metadata are independent reads. Fetch them together,
+  // then fetch each bounded transcript in parallel for the server-rendered disclosure.
+  const [events, commandSummaries] = await Promise.all([listEvents(job.id), listCommands(job.id)]);
+  const commands = (
+    await Promise.all(commandSummaries.map((command) => getCommand(job.id, command.id)))
+  ).filter((command): command is JobCommand => command !== null);
   const finished = isTerminal(job.status);
 
   return (
@@ -70,6 +74,15 @@ export default async function JobDetailPage({ params }: PageProps) {
             </CardHeader>
             <CardContent>
               <ExecutionTimeline events={events} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Sandbox commands</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CommandList commands={commands} />
             </CardContent>
           </Card>
         </div>
@@ -121,6 +134,21 @@ export default async function JobDetailPage({ params }: PageProps) {
                   ["Pull request", job.pullRequestUrl ?? "not yet", "break-all font-mono text-xs"],
                 ]}
               />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Environment fingerprint</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {job.envFingerprint ? (
+                <pre className="max-h-96 overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
+                  {JSON.stringify(job.envFingerprint, null, 2)}
+                </pre>
+              ) : (
+                <p className="text-muted-foreground text-sm">Not recorded yet.</p>
+              )}
             </CardContent>
           </Card>
 

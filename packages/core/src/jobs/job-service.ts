@@ -69,6 +69,7 @@ export function toJobDetail(row: Job): JobDetail {
     ...toJobSummary(row),
     description: row.description,
     baseCommitSha: row.baseCommitSha,
+    envFingerprint: row.envFingerprint,
     priority: row.priority,
     maxDurationSeconds: row.maxDurationSeconds,
     maxCostUsd: row.maxCostUsd,

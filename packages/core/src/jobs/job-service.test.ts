@@ -110,6 +110,7 @@ describe("row mapping", () => {
     expect(detail.createdAt).toBeInstanceOf(Date);
     expect(detail.attemptCount).toBe(0);
     expect(detail.failureCategory).toBeNull();
+    expect(detail.envFingerprint).toBeNull();
     expect(detail.leaseExpiresAt).toBeNull();
   });
 

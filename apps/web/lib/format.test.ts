@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { formatElapsed } from "./format";
+import { formatCommandDuration, formatElapsed } from "./format";
 
 const started = new Date("2026-01-01T00:00:00.000Z");
+
+describe("formatCommandDuration", () => {
+  it("keeps short commands in milliseconds", () => {
+    expect(formatCommandDuration(850)).toBe("850ms");
+  });
+
+  it("uses compact seconds for longer commands", () => {
+    expect(formatCommandDuration(1_500)).toBe("1.5s");
+    expect(formatCommandDuration(12_000)).toBe("12s");
+  });
+});
 
 describe("formatElapsed", () => {
   it("says so when the job has not started", () => {
