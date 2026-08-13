@@ -2,7 +2,7 @@ import {
   claimJob,
   requestJobCancellation,
   requestJobRun,
-  SIMULATED_PIPELINE,
+  simulatedPipeline,
   transitionJob,
 } from "@rivet/core";
 import { getPool } from "@rivet/database";
@@ -140,7 +140,7 @@ describe("cancelling a job a worker is holding", () => {
     // And it genuinely stopped short rather than racing to the end and being
     // relabelled: fewer phases ran than the pipeline has.
     expect(types.filter((type) => type === "phase.started").length).toBeLessThan(
-      SIMULATED_PIPELINE.length,
+      simulatedPipeline().length,
     );
   });
 

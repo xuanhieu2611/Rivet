@@ -1,3 +1,4 @@
+import type { PhaseContext } from "./phase-context";
 import type { Phase } from "./phases";
 
 /**
@@ -25,6 +26,16 @@ export interface PipelineDeps {
 
   /** Must reject with `signal.reason` when the signal aborts mid-sleep. */
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+
+  /**
+   * Builds the context a phase with a body runs against.
+   *
+   * Per phase rather than per run because a command row is stamped with the
+   * phase that produced it. Required only when some phase actually has a `run`;
+   * a fully simulated pipeline never asks for one, which is what keeps the
+   * Milestone 1 tests and the `RIVET_SANDBOX=off` path free of any of this.
+   */
+  context?: (phase: Phase) => PhaseContext;
 
   /**
    * Called before the phase's work, and the place the status transition goes.
@@ -75,7 +86,19 @@ export async function runPipeline(deps: PipelineDeps): Promise<void> {
     const fault = deps.fault?.(phase);
     if (fault) throw fault;
 
-    await deps.sleep(scaleDuration(phase.durationMs, deps.speed), deps.signal);
+    // The whole of Milestone 2's change to the runner. A phase either does its
+    // work or pretends to, and which one it is belongs to the phase rather than
+    // to the thing walking the list.
+    if (phase.run) {
+      if (!deps.context) {
+        throw new Error(
+          `Phase "${phase.label}" has a body but the pipeline was built without a context factory.`,
+        );
+      }
+      await phase.run(deps.context(phase));
+    } else {
+      await deps.sleep(scaleDuration(phase.durationMs, deps.speed), deps.signal);
+    }
     deps.signal.throwIfAborted();
 
     await deps.onPhaseComplete(phase, now() - startedAt);

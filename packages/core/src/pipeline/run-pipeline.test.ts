@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { JobCancelledError } from "../jobs/failure";
+import type { PhaseContext } from "./phase-context";
 import type { Phase } from "./phases";
 import { abortableSleep, type PipelineDeps, runPipeline, scaleDuration } from "./run-pipeline";
 
@@ -143,6 +144,69 @@ describe("runPipeline", () => {
     const { deps, started } = harness({ phases: [] });
     await expect(runPipeline(deps)).resolves.toBeUndefined();
     expect(started).toEqual([]);
+  });
+
+  /**
+   * The Milestone 2 half. Everything above still passes unchanged, which is the
+   * check that giving phases a body did not turn into a rewrite of the runner.
+   */
+  describe("phases with a body", () => {
+    const withBody = (run: (ctx: PhaseContext) => Promise<void>): readonly Phase[] => [
+      { status: "provisioning", label: "one", durationMs: 1_000, run },
+      { status: "analyzing", label: "two", durationMs: 2_000 },
+    ];
+
+    /** The runner only ever passes the context through, so a cast is honest here. */
+    const contextFor = (phase: Phase) => ({ phase }) as PhaseContext;
+
+    it("runs the body instead of sleeping", async () => {
+      const seen: string[] = [];
+      const { deps, slept } = harness({
+        phases: withBody((ctx) => {
+          seen.push(ctx.phase.label);
+          return Promise.resolve();
+        }),
+        context: contextFor,
+      });
+
+      await runPipeline(deps);
+
+      expect(seen).toEqual(["one"]);
+      // Only the simulated phase slept. A real phase takes as long as the work
+      // takes, and `speed` has nothing to say about it.
+      expect(slept).toEqual([0]);
+    });
+
+    it("still reports the phase complete, with the time the work took", async () => {
+      const { deps, completed } = harness({
+        phases: withBody(() => Promise.resolve()),
+        context: contextFor,
+      });
+
+      await runPipeline(deps);
+
+      expect(completed.map((entry) => entry.label)).toEqual(["one", "two"]);
+    });
+
+    it("throws whatever the body throws, and stops there", async () => {
+      const boom = new Error("clone failed");
+      const { deps, started, completed } = harness({
+        phases: withBody(() => Promise.reject(boom)),
+        context: contextFor,
+      });
+
+      await expect(runPipeline(deps)).rejects.toBe(boom);
+      expect(started).toEqual(["one"]);
+      expect(completed).toEqual([]);
+    });
+
+    it("refuses to run a body with no context rather than inventing one", async () => {
+      const { deps } = harness({ phases: withBody(() => Promise.resolve()) });
+
+      // A wiring mistake, and the only way to notice it is loudly. A phase
+      // silently skipped would look exactly like a phase that did its work.
+      await expect(runPipeline(deps)).rejects.toThrow(/context factory/);
+    });
   });
 });
 

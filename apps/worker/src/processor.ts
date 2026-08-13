@@ -10,7 +10,7 @@ import {
   type Phase,
   releaseJob,
   runPipeline,
-  SIMULATED_PIPELINE,
+  simulatedPipeline,
   transitionJob,
   TransitionConflictError,
   WorkerShuttingDownError,
@@ -101,7 +101,7 @@ export interface ProcessorDeps {
 
 export function createProcessor(deps: ProcessorDeps) {
   const { config, workerId, runs } = deps;
-  const phases = deps.phases ?? SIMULATED_PIPELINE;
+  const phases = deps.phases ?? simulatedPipeline();
   const faults: () => FaultInjection = deps.faults ?? (() => ({ sleep: abortableSleep }));
 
   return async function processMessage(job: Job<JobRunsMessage>, token?: string): Promise<void> {

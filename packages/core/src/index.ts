@@ -25,10 +25,12 @@ export * from "./jobs/failure";
 export * from "./jobs/job-service";
 export * from "./jobs/sweeper";
 export * from "./jobs/transitions";
+export * from "./pipeline/phase-context";
 export * from "./pipeline/phases";
 export * from "./pipeline/run-pipeline";
 export * from "./sandbox/command-log";
 export * from "./sandbox/errors";
+export * from "./sandbox/sandbox-holder";
 // Types only: the port is an interface, and the adapter that implements it
 // lives in `@rivet/queue`. That is the whole point of the split.
 export type * from "./queue/job-queue";

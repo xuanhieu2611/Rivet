@@ -3,7 +3,7 @@ import {
   type Phase,
   requestJobRun,
   RetryableJobError,
-  SIMULATED_PIPELINE,
+  simulatedPipeline,
   TerminalJobError,
 } from "@rivet/core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -80,9 +80,9 @@ describe("happy path", () => {
     const phaseLabels = events
       .filter((event) => event.type === "phase.started")
       .map((event) => event.data?.phase);
-    expect(phaseLabels).toEqual(SIMULATED_PIPELINE.map((phase) => phase.label));
+    expect(phaseLabels).toEqual(simulatedPipeline().map((phase) => phase.label));
     expect(events.filter((event) => event.type === "phase.completed")).toHaveLength(
-      SIMULATED_PIPELINE.length,
+      simulatedPipeline().length,
     );
 
     // The status the job passed through, in the order the timeline recorded.
@@ -112,7 +112,7 @@ describe("idempotent enqueue", () => {
     const types = await eventTypes(job.id);
     expect(types.filter((type) => type === "job.claimed")).toHaveLength(1);
     expect(types.filter((type) => type === "phase.started")).toHaveLength(
-      SIMULATED_PIPELINE.length,
+      simulatedPipeline().length,
     );
     expect((await readJob(job.id)).attemptCount).toBe(1);
   });
