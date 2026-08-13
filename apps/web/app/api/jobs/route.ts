@@ -1,7 +1,8 @@
 import "server-only";
 
 import { createJobSchema } from "@rivet/contracts";
-import { createJob, listJobs, resolveListLimit } from "@rivet/core";
+import { createJob, listJobs, requestJobRun, resolveListLimit } from "@rivet/core";
+import { getJobQueue } from "@rivet/queue";
 import { NextResponse } from "next/server";
 
 import { badRequest, readJsonBody, serverError, validationFailed } from "@/lib/api/responses";
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
   }
 }
 
-/** `POST /api/jobs` - validate, persist, return 201 with the created job. */
+/** `POST /api/jobs` - validate, persist, enqueue, return 201 with the created job. */
 export async function POST(request: Request) {
   const body = await readJsonBody(request);
   if (!body) {
@@ -36,13 +37,25 @@ export async function POST(request: Request) {
     return validationFailed(parsed.error);
   }
 
+  let job;
   try {
-    const job = await createJob(parsed.data);
-    return NextResponse.json(job, {
-      status: 201,
-      headers: { Location: `/api/jobs/${job.id}` },
-    });
+    job = await createJob(parsed.data);
   } catch (cause) {
     return serverError("POST /api/jobs", cause);
   }
+
+  // Deliberately outside the try above, and deliberately not able to fail the
+  // request. The row is committed; the job exists. Returning 500 because Redis
+  // is unreachable would be a lie the client could not act on, and it would
+  // tempt a retry that creates a second job. A `queued` row with no message is
+  // exactly what the sweeper reconciles, within a minute.
+  const outcome = await requestJobRun(job.id, getJobQueue());
+  if (outcome.error) {
+    console.error(`POST /api/jobs: enqueue failed for ${job.id}`, outcome.error);
+  }
+
+  return NextResponse.json(job, {
+    status: 201,
+    headers: { Location: `/api/jobs/${job.id}` },
+  });
 }

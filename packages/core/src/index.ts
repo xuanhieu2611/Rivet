@@ -16,5 +16,9 @@
  */
 
 export * from "./events/event-service";
+export * from "./jobs/enqueue";
 export * from "./jobs/job-service";
 export * from "./jobs/transitions";
+// Types only: the port is an interface, and the adapter that implements it
+// lives in `@rivet/queue`. That is the whole point of the split.
+export type * from "./queue/job-queue";

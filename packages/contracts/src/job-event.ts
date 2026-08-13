@@ -15,6 +15,14 @@ import type { JobStatus } from "./job";
 export const JOB_EVENT_TYPES = [
   "job.created",
   "job.enqueued",
+  /**
+   * The row committed but the message did not land.
+   *
+   * The one visible symptom of the dual-write gap between Postgres and Redis.
+   * It is not a failure of the job - the sweeper re-enqueues orphaned `queued`
+   * rows - but it is worth seeing on the timeline when it happens.
+   */
+  "job.enqueue_failed",
   "job.claimed",
   "job.status_changed",
   "phase.started",

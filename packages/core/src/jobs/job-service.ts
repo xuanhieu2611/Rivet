@@ -5,8 +5,10 @@ import {
   type JobSummary,
   parseFailureCategory,
 } from "@rivet/contracts";
-import { db, type Job, jobs } from "@rivet/database";
+import { db, type Database, type Job, jobs } from "@rivet/database";
 import { desc, eq } from "drizzle-orm";
+
+import { appendEvent } from "../events/event-service";
 
 /**
  * All of Rivet's job business logic, in one framework-agnostic module.
@@ -88,27 +90,38 @@ export function toJobDetail(row: Job): JobDetail {
 }
 
 /**
- * Persists a new job.
+ * Persists a new job and opens its timeline.
  *
- * Milestone 0 stops here: nothing is enqueued and nothing executes, so the row
- * sits at `queued` until something moves it. The column defaults supply status,
- * priority and every budget value.
+ * The `job.created` event is written in the same transaction as the row, so the
+ * history a job carries starts at the same instant the job does. Enqueueing is
+ * deliberately NOT part of this: it cannot join the transaction, and pretending
+ * otherwise would hide the dual-write gap that `requestJobRun` documents.
+ *
+ * The column defaults supply status, priority and every budget value.
  */
-export async function createJob(input: CreateJob): Promise<JobDetail> {
-  const [row] = await db
-    .insert(jobs)
-    .values({
-      title: input.title,
-      description: input.description,
-      repoUrl: input.repoUrl,
-      baseBranch: input.baseBranch,
-    })
-    .returning();
+export async function createJob(input: CreateJob, database: Database = db): Promise<JobDetail> {
+  return database.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(jobs)
+      .values({
+        title: input.title,
+        description: input.description,
+        repoUrl: input.repoUrl,
+        baseBranch: input.baseBranch,
+      })
+      .returning();
 
-  if (!row) {
-    throw new Error("Insert into jobs returned no row.");
-  }
-  return toJobDetail(row);
+    if (!row) {
+      throw new Error("Insert into jobs returned no row.");
+    }
+
+    await appendEvent(
+      { jobId: row.id, type: "job.created", message: `Job created: ${row.title}` },
+      tx,
+    );
+
+    return toJobDetail(row);
+  });
 }
 
 /** Newest jobs first, capped at `MAX_JOB_LIST_LIMIT`. */
