@@ -1,15 +1,16 @@
 import "server-only";
 
-import { getJob } from "@rivet/core";
+import { getJob, listEvents } from "@rivet/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { AdvanceStatusControl } from "@/components/advance-status-control";
+import { ExecutionTimeline } from "@/components/execution-timeline";
+import { JobStatusPoller } from "@/components/job-status-poller";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { formatDateTime, formatDuration, formatUsd } from "@/lib/format";
+import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/format";
+import { FAILURE_CATEGORY_LABELS } from "@/lib/job-status";
 
 /** Reads Postgres per request; `next build` must not need a database. */
 export const dynamic = "force-dynamic";
@@ -29,10 +30,15 @@ export default async function JobDetailPage({ params }: PageProps) {
   const job = await getJob(id);
   if (!job) notFound();
 
-  const isDevelopment = process.env.NODE_ENV !== "production";
+  // Two round trips rather than a join. They are independent reads of the same
+  // job and the page needs both in full, so there is nothing for a join to save.
+  const events = await listEvents(job.id);
 
   return (
     <div className="space-y-8">
+      {/* TODO(M3): delete when SSE lands. */}
+      <JobStatusPoller status={job.status} />
+
       <div className="space-y-3">
         <Link href="/" className="text-muted-foreground text-xs hover:underline">
           Back to jobs
@@ -59,27 +65,33 @@ export default async function JobDetailPage({ params }: PageProps) {
             <CardHeader>
               <CardTitle>Execution timeline</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-muted-foreground text-sm">
-                Steps, tool calls and model calls stream in here once the agent runs.{" "}
-                <span className="text-foreground font-medium">Arriving in Milestone 3.</span>
-              </p>
-              <div aria-hidden className="space-y-3 opacity-50">
-                {[0, 1, 2].map((row) => (
-                  <div key={row} className="flex items-center gap-3">
-                    <Skeleton className="size-6 rounded-full" />
-                    <div className="flex-1 space-y-2">
-                      <Skeleton className="h-3 w-1/3" />
-                      <Skeleton className="h-3 w-2/3" />
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <CardContent>
+              <ExecutionTimeline events={events} />
             </CardContent>
           </Card>
         </div>
 
         <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Execution</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DetailList
+                rows={[
+                  // Postgres's counter, not BullMQ's: this includes reclaims
+                  // after a crash that the queue never learned about.
+                  ["Attempts", String(job.attemptCount)],
+                  ["Duration", formatElapsed(job.startedAt, job.completedAt)],
+                  [
+                    "Failure category",
+                    job.failureCategory ? FAILURE_CATEGORY_LABELS[job.failureCategory] : "none",
+                  ],
+                ]}
+              />
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Target</CardTitle>
@@ -116,7 +128,7 @@ export default async function JobDetailPage({ params }: PageProps) {
 
           <Card>
             <CardHeader>
-              <CardTitle>Timeline</CardTitle>
+              <CardTitle>Timestamps</CardTitle>
             </CardHeader>
             <CardContent>
               <DetailList
@@ -140,9 +152,6 @@ export default async function JobDetailPage({ params }: PageProps) {
               </CardContent>
             </Card>
           ) : null}
-
-          {/* TODO(M1): delete when the worker drives transitions. */}
-          {isDevelopment ? <AdvanceStatusControl jobId={job.id} status={job.status} /> : null}
         </div>
       </div>
     </div>

@@ -17,6 +17,17 @@ export function formatDateTime(value: Date | null): string {
   return `${dateTimeFormatter.format(value)} UTC`;
 }
 
+const timeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeStyle: "medium",
+  timeZone: "UTC",
+  hour12: false,
+});
+
+/** Second precision, no date: the timeline is always one job on one day. */
+export function formatTimeOfDay(value: Date): string {
+  return timeFormatter.format(value);
+}
+
 const usdFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 export function formatUsd(value: string): string {
@@ -37,6 +48,25 @@ export function formatDuration(seconds: number): string {
   return remainderMinutes === 0
     ? `${String(hours)}h`
     : `${String(hours)}h ${String(remainderMinutes)}m`;
+}
+
+/**
+ * How long a run has taken so far, or took in total.
+ *
+ * `now` is passed in rather than read, because this renders on the server: a
+ * running job's elapsed time is a snapshot taken when the page was built, and
+ * the poller is what makes it advance. Taking the clock as an argument keeps
+ * that visible at the call site and keeps the function testable.
+ */
+export function formatElapsed(
+  startedAt: Date | null,
+  completedAt: Date | null,
+  now: Date = new Date(),
+): string {
+  if (!startedAt) return "not started";
+  const end = completedAt ?? now;
+  const seconds = Math.max(0, Math.round((end.getTime() - startedAt.getTime()) / 1_000));
+  return completedAt ? formatDuration(seconds) : `${formatDuration(seconds)} so far`;
 }
 
 /** `https://github.com/acme/widgets` -> `github.com/acme/widgets`, for dense table cells. */

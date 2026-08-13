@@ -1,4 +1,4 @@
-import { isTerminal, JOB_STATUSES, type JobStatus } from "@rivet/contracts";
+import type { FailureCategory, JobEventType, JobStatus } from "@rivet/contracts";
 
 /**
  * Presentation metadata for the job lifecycle.
@@ -82,36 +82,44 @@ export function statusLabel(status: JobStatus): string {
 }
 
 /**
- * The happy-path lifecycle, in order.
+ * The failure taxonomy, in words rather than in column values.
  *
- * TODO(M1): delete when the worker drives transitions. This exists only so the
- * dev-only "Advance status" control has something honest to walk through.
+ * `failure_category` is a `text` column read back through
+ * `parseFailureCategory`, so anything unrecognised has already degraded to
+ * `unknown` before it reaches here and this record is total by construction.
  */
-export const HAPPY_PATH_SEQUENCE = [
-  "queued",
-  "provisioning",
-  "analyzing",
-  "planning",
-  "implementing",
-  "testing",
-  "reviewing",
-  "revising",
-  "finalizing",
-  "completed",
-] as const satisfies readonly JobStatus[];
+export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
+  worker_crash: "Worker crash",
+  lease_expired: "Lease expired",
+  simulated_failure: "Simulated failure",
+  timed_out: "Timed out",
+  budget_exceeded: "Budget exceeded",
+  cancelled: "Cancelled",
+  unknown: "Unknown",
+};
 
 /**
- * The next status the dev control should move a job to, or `null` when there is
- * nowhere left to go (terminal statuses, and any status off the happy path).
+ * Marker colour for each kind of timeline entry.
  *
- * TODO(M1): delete when the worker drives transitions.
+ * Same enforcement mechanism as the status table above, for the same reason:
+ * `JOB_EVENT_TYPES` grows every milestone, and a total `Record` means a new
+ * event type breaks `pnpm typecheck` here until someone has decided how it
+ * should read. The grouping is by what the reader needs to notice - an ending,
+ * something going wrong, something being retried, or ordinary progress - not by
+ * which subsystem emitted it.
  */
-export function nextStatus(status: JobStatus): JobStatus | null {
-  if (isTerminal(status)) return null;
-  const index = (HAPPY_PATH_SEQUENCE as readonly JobStatus[]).indexOf(status);
-  if (index === -1) return null;
-  return HAPPY_PATH_SEQUENCE[index + 1] ?? null;
-}
-
-/** Every status has presentation metadata - asserted by the tests, not just by types. */
-export const ALL_JOB_STATUSES: readonly JobStatus[] = JOB_STATUSES;
+export const JOB_EVENT_TONE: Record<JobEventType, string> = {
+  "job.created": "bg-muted-foreground/40",
+  "job.enqueued": "bg-muted-foreground/40",
+  "job.enqueue_failed": "bg-amber-500",
+  "job.claimed": "bg-violet-500",
+  "job.status_changed": "bg-sky-500",
+  "phase.started": "bg-sky-500",
+  "phase.completed": "bg-sky-500/40",
+  "job.cancel_requested": "bg-amber-500",
+  "job.retry_scheduled": "bg-amber-500",
+  "job.reclaimed": "bg-amber-500",
+  "job.lease_lost": "bg-amber-500",
+  "job.failed": "bg-red-500",
+  "job.completed": "bg-emerald-500",
+};

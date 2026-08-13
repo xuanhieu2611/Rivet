@@ -45,8 +45,8 @@ export default async function DashboardPage() {
         <div className="border-border rounded-xl border border-dashed px-6 py-16 text-center">
           <h2 className="text-base font-medium">Nothing queued</h2>
           <p className="text-muted-foreground mx-auto mt-2 max-w-md text-sm">
-            Describe a change and point Rivet at a repository. Milestone 0 persists the job and
-            renders its status; execution arrives in Milestone 1.
+            Describe a change and point Rivet at a repository. A worker picks it up and walks it
+            through the pipeline; the coding agent itself arrives in Milestone 4.
           </p>
           <Button asChild className="mt-6">
             <Link href="/jobs/new">Create the first job</Link>

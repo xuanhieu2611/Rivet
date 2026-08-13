@@ -1,12 +1,7 @@
-import { isTerminal, JOB_STATUSES, TERMINAL_STATUSES } from "@rivet/contracts";
+import { JOB_EVENT_TYPES, JOB_STATUSES } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
-import {
-  HAPPY_PATH_SEQUENCE,
-  JOB_STATUS_PRESENTATION,
-  nextStatus,
-  statusLabel,
-} from "./job-status";
+import { JOB_EVENT_TONE, JOB_STATUS_PRESENTATION, statusLabel } from "./job-status";
 
 describe("JOB_STATUS_PRESENTATION", () => {
   it("covers every status in the contract", () => {
@@ -28,26 +23,14 @@ describe("JOB_STATUS_PRESENTATION", () => {
   });
 });
 
-describe("nextStatus", () => {
-  it("walks the happy path in order and stops at completed", () => {
-    const walked = ["queued"];
-    let current = nextStatus("queued");
-    while (current) {
-      walked.push(current);
-      current = nextStatus(current);
-    }
-    expect(walked).toEqual([...HAPPY_PATH_SEQUENCE]);
+describe("JOB_EVENT_TONE", () => {
+  it("covers every event type in the contract", () => {
+    expect(Object.keys(JOB_EVENT_TONE).sort()).toEqual([...JOB_EVENT_TYPES].sort());
   });
 
-  it("returns null for every terminal status", () => {
-    for (const status of TERMINAL_STATUSES) {
-      expect(isTerminal(status)).toBe(true);
-      expect(nextStatus(status)).toBeNull();
+  it("gives every event type a non-empty marker colour", () => {
+    for (const type of JOB_EVENT_TYPES) {
+      expect(JOB_EVENT_TONE[type].length).toBeGreaterThan(0);
     }
-  });
-
-  it("never advances past a terminal status", () => {
-    expect(nextStatus("finalizing")).toBe("completed");
-    expect(nextStatus("completed")).toBeNull();
   });
 });

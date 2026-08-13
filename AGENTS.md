@@ -124,9 +124,14 @@ insert with no remapping.
 
 ### Scaffolding to delete
 
-`PATCH /api/jobs/:id`, `nextStatus()` in `apps/web/lib/job-status.ts`, and the "Advance status"
-control exist only to exercise the status pipeline while nothing can move a job. They are guarded by
-`NODE_ENV !== "production"` and carry `TODO(M1)` markers. Delete them when the worker lands.
+Milestone 0's scaffolding (`PATCH /api/jobs/:id`, `nextStatus()`, `AdvanceStatusControl`,
+`updateJobStatus()`) is gone, which is what makes "nothing outside `transitions.ts` writes
+`jobs.status`" literally true. Do not reintroduce a status writer.
+
+What is left is `apps/web/components/job-status-poller.tsx`: a client component calling
+`router.refresh()` every two seconds while a job is non-terminal, because the detail page is
+server-rendered and nothing else asks for an update. It carries a `TODO(M3)` marker and is deleted
+when SSE lands.
 
 ## CI
 

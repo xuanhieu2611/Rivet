@@ -1,7 +1,6 @@
 import {
   type CreateJob,
   type JobDetail,
-  type JobStatus,
   type JobSummary,
   parseFailureCategory,
 } from "@rivet/contracts";
@@ -140,20 +139,5 @@ export async function getJob(id: string): Promise<JobDetail | null> {
   if (!isJobId(id)) return null;
 
   const [row] = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
-  return row ? toJobDetail(row) : null;
-}
-
-/**
- * Moves a job to `status`, returning the updated job or `null` when absent.
- *
- * Milestone 0 only reaches this through the dev-only `PATCH /api/jobs/:id`. In
- * Milestone 1 the worker becomes the caller and the transition gains a guard
- * table plus a transactional step record; the signature is already the right
- * shape for that.
- */
-export async function updateJobStatus(id: string, status: JobStatus): Promise<JobDetail | null> {
-  if (!isJobId(id)) return null;
-
-  const [row] = await db.update(jobs).set({ status }).where(eq(jobs.id, id)).returning();
   return row ? toJobDetail(row) : null;
 }
