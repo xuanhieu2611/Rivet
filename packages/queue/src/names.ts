@@ -15,6 +15,19 @@ export const QUEUE_NAMES = {
 export const JOB_NAMES = {
   /** Payload: `{ jobId }`. Everything else is read from Postgres. */
   runJob: "run-job",
+  /** Payload: nothing. Produced by the recurring sweep scheduler. */
+  sweep: "sweep",
+} as const;
+
+/**
+ * The id of the recurring sweep in BullMQ's job-scheduler registry.
+ *
+ * Stable and shared by every worker: `upsertJobScheduler` is keyed on it, so N
+ * workers starting up produce one schedule rather than N. Renaming it leaves
+ * the old schedule running in Redis until something removes it.
+ */
+export const SCHEDULER_IDS = {
+  sweep: "sweep-expired-leases",
 } as const;
 
 /**
@@ -27,3 +40,17 @@ export const JOB_NAMES = {
 export interface JobRunPayload {
   jobId: string;
 }
+
+/**
+ * The sweep message carries nothing at all.
+ *
+ * `jobId?: never` rather than an empty object so the two payloads form a
+ * discriminable union: a processor can read `job.data.jobId` on either without
+ * a cast, and gets `undefined` for a sweep.
+ */
+export interface SweepPayload {
+  jobId?: never;
+}
+
+/** Everything that can arrive on the `job-runs` queue. */
+export type JobRunsMessage = JobRunPayload | SweepPayload;

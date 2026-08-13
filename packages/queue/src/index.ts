@@ -22,9 +22,17 @@ export {
   createBullJobQueue,
   createJobRunQueue,
   DEFAULT_JOB_OPTIONS,
+  SWEEP_JOB_OPTIONS,
 } from "./bull-queue";
 export { InMemoryJobQueue, type RecordedEnqueue } from "./memory-queue";
-export { JOB_NAMES, type JobRunPayload, QUEUE_NAMES } from "./names";
+export {
+  JOB_NAMES,
+  type JobRunPayload,
+  type JobRunsMessage,
+  QUEUE_NAMES,
+  SCHEDULER_IDS,
+  type SweepPayload,
+} from "./names";
 
 /**
  * The shared queue handle, created on first use.
@@ -38,6 +46,17 @@ const globalForQueue = globalThis as unknown as { __rivetJobQueue?: BullJobQueue
 let queue: BullJobQueue | undefined;
 
 export function getJobQueue(): JobQueue {
+  return getBullJobQueue();
+}
+
+/**
+ * The same handle, typed as the adapter rather than the port.
+ *
+ * Only the worker needs this, and only to register the sweep scheduler - which
+ * is a BullMQ concept with no place on the `JobQueue` interface. Everything
+ * else, including every caller in `apps/web`, takes the port.
+ */
+export function getBullJobQueue(): BullJobQueue {
   queue ??= globalForQueue.__rivetJobQueue ?? createBullJobQueue();
   if (process.env.NODE_ENV !== "production") {
     globalForQueue.__rivetJobQueue = queue;

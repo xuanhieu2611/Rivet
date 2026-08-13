@@ -15,10 +15,11 @@ import {
   TransitionConflictError,
   WorkerShuttingDownError,
 } from "@rivet/core";
-import type { JobRunPayload } from "@rivet/queue";
+import { JOB_NAMES, type JobRunsMessage } from "@rivet/queue";
 import { DelayedError, type Job, UnrecoverableError } from "bullmq";
 
 import type { WorkerConfig } from "./config";
+import type { FaultInjection } from "./faults";
 import { startHeartbeat } from "./heartbeat";
 import type { Logger } from "./logger";
 
@@ -80,14 +81,46 @@ export interface ProcessorDeps {
   runs: RunRegistry;
   /** Overridable so a test can drive a two-phase pipeline. */
   phases?: readonly Phase[];
+  /**
+   * Fault injection and the sleep that goes with it.
+   *
+   * A factory rather than a value because `hang` is per-run state: two jobs
+   * running concurrently on this worker must not share the flag that decides
+   * whether the current phase ignores its abort signal.
+   */
+  faults?: () => FaultInjection;
+  /**
+   * Runs one reconciliation pass. Invoked for `sweep` messages.
+   *
+   * Optional so a test can build a processor that only runs jobs. A sweep
+   * message arriving without one is logged and dropped rather than failed:
+   * there is nothing to retry, and the schedule will fire again shortly.
+   */
+  sweep?: () => Promise<void>;
 }
 
 export function createProcessor(deps: ProcessorDeps) {
   const { config, workerId, runs } = deps;
   const phases = deps.phases ?? SIMULATED_PIPELINE;
+  const faults: () => FaultInjection = deps.faults ?? (() => ({ sleep: abortableSleep }));
 
-  return async function processJob(job: Job<JobRunPayload>, token?: string): Promise<void> {
+  return async function processMessage(job: Job<JobRunsMessage>, token?: string): Promise<void> {
+    // Two kinds of message share the `job-runs` queue, and they are told apart
+    // by name rather than by payload shape. A sweep carries no data at all.
+    if (job.name === JOB_NAMES.sweep) {
+      if (!deps.sweep) {
+        deps.log.warn("received a sweep message but no sweeper is wired up");
+        return;
+      }
+      return deps.sweep();
+    }
+
     const { jobId } = job.data;
+    if (!jobId) {
+      // A `run-job` message with no job id cannot be repaired by retrying it.
+      throw new UnrecoverableError(`Message ${job.id ?? "(no id)"} carries no jobId.`);
+    }
+
     const log = deps.log.child({ jobId, bullAttempt: job.attemptsMade + 1 });
 
     // Already draining when this arrived. Do not start work that shutdown is
@@ -114,14 +147,18 @@ export function createProcessor(deps: ProcessorDeps) {
     // The whole-run budget. Separate from the lease: the lease asks "is this
     // worker alive", this asks "has this job taken too long", and a wedged job
     // can very much answer yes to both.
-    const timeout = setTimeout(
-      () =>
-        controller.abort(
-          new JobTimedOutError(`Job exceeded its ${claimed.maxDurationSeconds}s budget.`),
-        ),
+    //
+    // It is also the one deadline that does not merely *ask* the run to stop.
+    // Everything else - cancellation, lease loss, shutdown - is cooperative,
+    // and cooperative is the right default because a phase that is interrupted
+    // between its own writes is worse than one that finishes its sentence. A
+    // budget cannot be cooperative, though, because the thing it exists to
+    // catch is precisely a phase that has stopped listening.
+    const deadline = createDeadline(
       claimed.maxDurationSeconds * 1_000,
+      () => new JobTimedOutError(`Job exceeded its ${claimed.maxDurationSeconds}s budget.`),
+      controller,
     );
-    timeout.unref();
 
     const stopHeartbeat = startHeartbeat({
       jobId,
@@ -137,12 +174,15 @@ export function createProcessor(deps: ProcessorDeps) {
     // fails loudly instead of overwriting whatever is really there.
     let currentStatus: JobStatus = claimed.status;
 
+    const injection = faults();
+
     try {
-      await runPipeline({
+      const pipeline = runPipeline({
         phases,
         signal: controller.signal,
         speed: config.pipelineSpeed,
-        sleep: abortableSleep,
+        sleep: injection.sleep,
+        ...(injection.fault ? { fault: injection.fault } : {}),
 
         onPhaseStart: async (phase) => {
           if (phase.status === currentStatus) {
@@ -182,6 +222,17 @@ export function createProcessor(deps: ProcessorDeps) {
         },
       });
 
+      // A hung phase is abandoned rather than waited for. Its promise keeps
+      // running with nobody listening, so it gets a catch of its own: every
+      // write it might still attempt is a compare-and-swap under a lease this
+      // run is about to give up, and will simply fail - but an unhandled
+      // rejection would take the whole worker down with it.
+      //
+      // Milestone 2 has a harder version of this problem, because an abandoned
+      // phase will own a container rather than a `setTimeout`.
+      pipeline.catch(() => undefined);
+      await Promise.race([pipeline, deadline.expiry]);
+
       await transitionJob({
         jobId,
         from: currentStatus,
@@ -198,15 +249,46 @@ export function createProcessor(deps: ProcessorDeps) {
     } catch (error) {
       await handleFailure(error, { job, token, jobId, currentStatus, workerId, log });
     } finally {
-      clearTimeout(timeout);
+      deadline.cancel();
       await stopHeartbeat();
       runs.release(jobId);
     }
   };
 }
 
+/**
+ * A promise that rejects when the budget runs out, and never otherwise.
+ *
+ * It aborts the controller too, so a run that *is* still listening stops at its
+ * next phase boundary instead of being abandoned mid-phase. The rejection is
+ * the backstop for the run that is not listening.
+ */
+function createDeadline(
+  ms: number,
+  error: () => Error,
+  controller: AbortController,
+): { expiry: Promise<never>; cancel: () => void } {
+  let timer: NodeJS.Timeout | undefined;
+
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const timedOut = error();
+      controller.abort(timedOut);
+      reject(timedOut);
+    }, ms);
+    // Never the reason this process stays alive.
+    timer.unref();
+  });
+
+  // Nothing awaits this promise once the run has finished normally, and a
+  // rejection nobody is listening to is an unhandled rejection.
+  expiry.catch(() => undefined);
+
+  return { expiry, cancel: () => clearTimeout(timer) };
+}
+
 interface FailureContext {
-  job: Job<JobRunPayload>;
+  job: Job<JobRunsMessage>;
   token: string | undefined;
   jobId: string;
   currentStatus: JobStatus;
@@ -328,7 +410,7 @@ async function finishBadly(
  * than a failure. Re-adding the job instead would deduplicate against its own
  * still-active id and quietly do nothing.
  */
-async function requeue(job: Job<JobRunPayload>, token?: string): Promise<void> {
+async function requeue(job: Job<JobRunsMessage>, token?: string): Promise<void> {
   await job.moveToDelayed(Date.now(), token);
   throw new DelayedError();
 }

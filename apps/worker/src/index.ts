@@ -1,11 +1,20 @@
 import { closeDb } from "@rivet/database";
-import { closeRedis, getRedis, type JobRunPayload, QUEUE_NAMES } from "@rivet/queue";
+import {
+  closeJobQueue,
+  closeRedis,
+  getBullJobQueue,
+  type JobRunsMessage,
+  QUEUE_NAMES,
+  getRedis,
+} from "@rivet/queue";
 import { Worker } from "bullmq";
 
 import { loadRootEnv, parseWorkerConfig, WorkerConfigError } from "./config";
+import { createFaultInjection } from "./faults";
 import { createWorkerId } from "./identity";
 import { createLogger } from "./logger";
 import { createProcessor, RunRegistry } from "./processor";
+import { createSweepRunner } from "./sweeper";
 
 /**
  * The worker entrypoint: config, wiring, and a shutdown that hands work back.
@@ -36,9 +45,24 @@ const workerId = createWorkerId();
 const log = createLogger(config.logLevel, workerId);
 const runs = new RunRegistry();
 
-const worker = new Worker<JobRunPayload>(
+// The worker needs a `Queue` as well as a `Worker`: the sweeper re-enqueues
+// what it reclaims, and the recurring sweep itself is registered through the
+// queue's scheduler.
+const queue = getBullJobQueue();
+const sweep = createSweepRunner({ queue, config, log });
+
+const worker = new Worker<JobRunsMessage>(
   QUEUE_NAMES.jobRuns,
-  createProcessor({ config, workerId, log, runs }),
+  createProcessor({
+    config,
+    workerId,
+    log,
+    runs,
+    sweep,
+    // One injection per run, because `hang` is per-run state. Without
+    // `RIVET_FAULT_*` set this is the plain abortable sleep and no fault at all.
+    faults: () => createFaultInjection(config.fault, log),
+  }),
   {
     connection: getRedis(),
     concurrency: config.concurrency,
@@ -67,12 +91,34 @@ worker.on("failed", (job, error) => {
   log.warn({ jobId: job?.data.jobId, err: error }, "message failed");
 });
 
+/**
+ * Registers the recurring sweep.
+ *
+ * Every worker upserts the same scheduler id, so the result is one sweep per
+ * interval no matter how many workers are running - and the schedule lives in
+ * Redis, so it survives every one of them restarting. A failure here is logged
+ * rather than fatal: a worker that cannot register the schedule can still run
+ * jobs perfectly well, and some other worker's schedule is very likely already
+ * there.
+ */
+queue.scheduleSweeps(config.sweepIntervalMs).then(
+  () => {
+    log.info({ everyMs: config.sweepIntervalMs }, "sweep scheduled");
+  },
+  (error: unknown) => {
+    log.error({ err: error }, "could not register the sweep scheduler");
+  },
+);
+
 log.info(
   {
     concurrency: config.concurrency,
     leaseSeconds: config.leaseSeconds,
     heartbeatSeconds: config.heartbeatSeconds,
+    sweepIntervalMs: config.sweepIntervalMs,
+    maxAttempts: config.maxAttempts,
     pipelineSpeed: config.pipelineSpeed,
+    fault: config.fault ?? null,
     queue: QUEUE_NAMES.jobRuns,
   },
   "worker started",
@@ -109,6 +155,10 @@ async function shutdown(signal: string): Promise<void> {
   try {
     runs.drain();
     await worker.close();
+    // The schedule is deliberately left in place: it belongs to the queue, not
+    // to this process, and the next worker to start would only have to upsert
+    // it again.
+    await closeJobQueue();
     await closeRedis();
     await closeDb();
     log.info("shutdown complete");

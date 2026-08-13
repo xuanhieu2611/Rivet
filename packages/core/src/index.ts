@@ -21,6 +21,7 @@ export * from "./jobs/claims";
 export * from "./jobs/enqueue";
 export * from "./jobs/failure";
 export * from "./jobs/job-service";
+export * from "./jobs/sweeper";
 export * from "./jobs/transitions";
 export * from "./pipeline/phases";
 export * from "./pipeline/run-pipeline";

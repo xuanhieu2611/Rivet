@@ -8,6 +8,8 @@ describe("parseWorkerConfig", () => {
       concurrency: 2,
       leaseSeconds: 30,
       heartbeatSeconds: 10,
+      sweepIntervalMs: 60_000,
+      maxAttempts: 3,
       pipelineSpeed: 1,
       shutdownGraceMs: 15_000,
       logLevel: "info",
@@ -65,6 +67,44 @@ describe("parseWorkerConfig", () => {
     expect(() => parseWorkerConfig({ WORKER_CONCURRENCY: "2.5" })).toThrow(WorkerConfigError);
     expect(() => parseWorkerConfig({ WORKER_CONCURRENCY: "0" })).toThrow(WorkerConfigError);
     expect(() => parseWorkerConfig({ WORKER_CONCURRENCY: "-1" })).toThrow(WorkerConfigError);
+  });
+
+  it("reads the sweeper's knobs", () => {
+    const config = parseWorkerConfig({
+      WORKER_SWEEP_INTERVAL_MS: "5000",
+      WORKER_MAX_ATTEMPTS: "5",
+    });
+
+    expect(config.sweepIntervalMs).toBe(5_000);
+    expect(config.maxAttempts).toBe(5);
+  });
+
+  it("reads a fault when both halves are set", () => {
+    const config = parseWorkerConfig({ RIVET_FAULT_PHASE: "testing", RIVET_FAULT_MODE: "throw" });
+
+    expect(config.fault).toEqual({ phase: "testing", mode: "throw" });
+  });
+
+  it("leaves the fault absent when neither half is set", () => {
+    expect(parseWorkerConfig({}).fault).toBeUndefined();
+    // Blank placeholders in a `.env` file are the normal way this arrives.
+    expect(
+      parseWorkerConfig({ RIVET_FAULT_PHASE: "", RIVET_FAULT_MODE: "" }).fault,
+    ).toBeUndefined();
+  });
+
+  it("rejects a half-configured fault", () => {
+    // Both single-variable mistakes are silent otherwise: a mode with no phase
+    // would break an unpredictable phase, and a phase with no mode would look
+    // armed while doing nothing.
+    expect(() => parseWorkerConfig({ RIVET_FAULT_PHASE: "testing" })).toThrow(WorkerConfigError);
+    expect(() => parseWorkerConfig({ RIVET_FAULT_MODE: "fatal" })).toThrow(/must be set together/);
+  });
+
+  it("rejects an unknown fault mode", () => {
+    expect(() =>
+      parseWorkerConfig({ RIVET_FAULT_PHASE: "testing", RIVET_FAULT_MODE: "explode" }),
+    ).toThrow(WorkerConfigError);
   });
 
   it("rejects an unknown log level", () => {

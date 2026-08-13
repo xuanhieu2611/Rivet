@@ -2,7 +2,13 @@ import type { EnqueueOptions, EnqueueResult, JobQueue } from "@rivet/core";
 import { type JobsOptions, Queue } from "bullmq";
 
 import { getRedis } from "./connection";
-import { JOB_NAMES, type JobRunPayload, QUEUE_NAMES } from "./names";
+import {
+  JOB_NAMES,
+  type JobRunsMessage,
+  QUEUE_NAMES,
+  SCHEDULER_IDS,
+  type SweepPayload,
+} from "./names";
 
 /**
  * The BullMQ adapter for the `JobQueue` port.
@@ -40,12 +46,54 @@ export const DEFAULT_JOB_OPTIONS: JobsOptions = {
 /** States in which a message is finished and its id may be reused. */
 const FINISHED_STATES = new Set(["completed", "failed", "unknown"]);
 
+/**
+ * Options for the recurring sweep messages.
+ *
+ * A sweep is pure reconciliation: everything it needs is in Postgres, and the
+ * next one is sixty seconds away. Retrying a failed sweep would pile passes on
+ * top of a database that is evidently having a bad minute, so `attempts: 1`.
+ * Retention is small for the same reason `removeOnComplete` is small on job
+ * runs - Redis is not the audit log.
+ */
+export const SWEEP_JOB_OPTIONS: JobsOptions = {
+  attempts: 1,
+  removeOnComplete: { age: 300, count: 10 },
+  removeOnFail: { age: 3_600, count: 50 },
+};
+
 export class BullJobQueue implements JobQueue {
-  constructor(private readonly queue: Queue<JobRunPayload>) {}
+  constructor(private readonly queue: Queue<JobRunsMessage>) {}
 
   /** The underlying BullMQ queue, for the worker's own bookkeeping. */
-  get bull(): Queue<JobRunPayload> {
+  get bull(): Queue<JobRunsMessage> {
     return this.queue;
+  }
+
+  /**
+   * Registers the recurring sweep, or updates it if the interval changed.
+   *
+   * **BullMQ v6 API.** The legacy repeatable-jobs API (`repeat` on
+   * `queue.add`, `getRepeatableJobs`, `removeRepeatable`) was removed in v6, so
+   * every v5-era example of this is wrong. Job Schedulers are the replacement,
+   * and `upsertJobScheduler` is keyed on the scheduler id: every worker calls
+   * this at startup and the result is one schedule, not one per worker.
+   *
+   * Living in Redis rather than in a `setInterval` is what makes the schedule
+   * survive a restart and stay single even when several workers are running.
+   * Each fired message is delivered to exactly one worker, and `SKIP LOCKED` in
+   * the reclaim query is what lets overlapping passes divide the work.
+   */
+  async scheduleSweeps(everyMs: number): Promise<void> {
+    await this.queue.upsertJobScheduler(
+      SCHEDULER_IDS.sweep,
+      { every: everyMs },
+      { name: JOB_NAMES.sweep, data: {} satisfies SweepPayload, opts: SWEEP_JOB_OPTIONS },
+    );
+  }
+
+  /** Removes the recurring sweep. Tests and scripts only. */
+  async unscheduleSweeps(): Promise<boolean> {
+    return this.queue.removeJobScheduler(SCHEDULER_IDS.sweep);
   }
 
   async enqueueJobRun(jobId: string, options: EnqueueOptions = {}): Promise<EnqueueResult> {
@@ -95,15 +143,20 @@ export class BullJobQueue implements JobQueue {
  * Builds the `job-runs` queue.
  *
  * Not memoized - `getJobQueue()` in `index.ts` is the shared handle. This exists
- * separately so tests and scripts can point a queue at a throwaway name.
+ * separately so tests and scripts can point a queue at a throwaway name, and so
+ * the integration suite can shrink the retry backoff from five seconds to
+ * something a test can wait for.
  */
-export function createJobRunQueue(name: string = QUEUE_NAMES.jobRuns): Queue<JobRunPayload> {
-  return new Queue<JobRunPayload>(name, {
+export function createJobRunQueue(
+  name: string = QUEUE_NAMES.jobRuns,
+  jobOptions: JobsOptions = {},
+): Queue<JobRunsMessage> {
+  return new Queue<JobRunsMessage>(name, {
     connection: getRedis(),
-    defaultJobOptions: DEFAULT_JOB_OPTIONS,
+    defaultJobOptions: { ...DEFAULT_JOB_OPTIONS, ...jobOptions },
   });
 }
 
-export function createBullJobQueue(name?: string): BullJobQueue {
-  return new BullJobQueue(createJobRunQueue(name));
+export function createBullJobQueue(name?: string, jobOptions?: JobsOptions): BullJobQueue {
+  return new BullJobQueue(createJobRunQueue(name, jobOptions));
 }
