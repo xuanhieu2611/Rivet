@@ -27,6 +27,18 @@
     "test": {
       "dependsOn": ["^build"],
       "outputs": []
+    },
+    "test:integration": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": [],
+      "env": [
+        "DATABASE_URL",
+        "DATABASE_URL_UNPOOLED",
+        "REDIS_URL",
+        "RIVET_ALLOW_REMOTE_INTEGRATION",
+        "RIVET_TEST_LOG_LEVEL"
+      ]
     }
   }
 }

@@ -54,3 +54,68 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    # Runs in parallel with `verify`, and deliberately does not share anything
+    # with it. `verify` proves the whole pipeline works with no database and no
+    # Redis at all; this job proves the queue, the lease protocol and the sweeper
+    # work against the real thing. Merging them would cost the first property,
+    # which is the one that keeps `pnpm build` honest.
+    services:
+      postgres:
+        # Match Neon's major version, so a migration that applies here applies
+        # there.
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rivet_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        # Plain Redis rather than Upstash: the protocol is identical, no secret
+        # has to reach a fork's pull request, and the suite does not spend the
+        # Upstash quota.
+        image: redis:8
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/rivet_test
+      # No pooler in front of a container, so migrations and queries share one
+      # endpoint. Set explicitly rather than left to fall back, so the migration
+      # cannot end up somewhere else.
+      DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@localhost:5432/rivet_test
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Migrations are applied by the suite's own global setup, from the same
+      # `drizzle/` folder and with the same migrator as `pnpm db:migrate`. There
+      # is deliberately no separate migrate step here: a schema built any other
+      # way would be a schema no deployment has.
+      - name: Integration tests
+        run: pnpm test:integration
