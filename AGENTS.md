@@ -12,19 +12,23 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 0 is complete.** Jobs are persisted and rendered, but nothing executes
-them. There is no queue, worker, sandbox, or model call. A new job sits at `queued` forever.
+**Current state: Milestone 1 is complete.** Jobs execute. Creating one enqueues it, a worker claims
+it under a Postgres lease, walks it through a **simulated** seven-phase pipeline, heartbeats while
+it runs, and lands it in a terminal status. Retries, cancellation, timeouts, and crash recovery all
+work and are covered by an integration suite. What is still fake is the work itself: the phases are
+sleeps. There is no sandbox (M2), no event stream (M3), and no model call (M4).
 
 ## Commands
 
 All root scripts fan out through Turborepo.
 
 ```bash
-pnpm dev                 # Next.js dev server on :3000
-pnpm build               # production build; must work with NO database (CI relies on this)
+pnpm dev                 # Next.js dev server on :3000 AND the worker, together
+pnpm build               # production build; must work with NO database and NO Redis (CI relies on this)
 pnpm lint                # eslint, type-aware
 pnpm typecheck           # tsc --noEmit across every workspace
-pnpm test                # vitest across every workspace
+pnpm test                # vitest across every workspace; no database, no Redis
+pnpm test:integration    # the *.int.test.ts suite; needs a LOCAL Postgres and Redis
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 
@@ -33,44 +37,126 @@ pnpm db:migrate          # apply migrations (uses DATABASE_URL_UNPOOLED)
 pnpm db:studio           # drizzle studio
 ```
 
+`pnpm dev` now starts two persistent processes, because `apps/worker` has a `dev` script and turbo's
+`dev` task is `persistent`. That is the whole local demo in one command: create a job in the UI and
+watch the worker move it.
+
 Scope to one package with `--filter`, which is also how you run a single test:
 
 ```bash
 pnpm --filter @rivet/web test lib/job-status.test.ts
 pnpm --filter @rivet/contracts test -t "rejects a non-https repo url"
+pnpm --filter @rivet/worker test:integration tests/integration/sweeper.int.test.ts
 pnpm --filter @rivet/web typecheck
 ```
 
 Turbo caches aggressively. Add `--force` when you need to prove something from cold.
 
+### Running the integration suite locally
+
+27 tests in `apps/worker/tests/integration/*.int.test.ts`, about 14 seconds, against real Postgres,
+real Redis, and real BullMQ workers. They need both services on localhost. On this machine that is
+Homebrew's `postgresql@17` and `redis`:
+
+```bash
+brew services start postgresql@17
+# Homebrew's redis service is broken by a bloom-module path, so start it directly:
+redis-server --port 6379 --daemonize yes --save "" --appendonly no
+
+pnpm test:integration
+```
+
+The suite defaults to `postgresql://postgres:postgres@localhost:5432/rivet_test` and
+`redis://localhost:6379`, matching CI's service containers, and reads `.env.test` if one exists. It
+deliberately does **not** load `.env.local`, and it refuses to run against any host that is not
+plainly local, because every case truncates `jobs` and `job_events` and `.env.local` on a dev
+machine points at the real Neon database. `RIVET_ALLOW_REMOTE_INTEGRATION=1` is the escape hatch and
+exists only so overriding the guard has to be deliberate.
+
 ## Architecture
 
 ```
-apps/web            Next.js 16 App Router. Pages, route handlers, and the service layer.
-packages/contracts  Zod schemas, the job status enum, JobSummary / JobDetail. No runtime deps on db.
+apps/web            Next.js 16 App Router. Pages and route handlers. No business logic.
+apps/worker         Long-running Node process. BullMQ Worker, heartbeat, sweeper, fault injection.
+packages/core       All domain logic: jobs/, events/, pipeline/, queue/ (the port). No framework.
+packages/queue      BullMQ adapter for the port, an in-memory fake, the lazy ioredis connection.
+packages/contracts  Zod schemas, the job status enum, JobSummary / JobDetail / JobEvent.
 packages/database   Drizzle schema, generated migrations, the pg Pool. Neon Postgres.
 packages/config     tsconfig + ESLint bases that every workspace extends.
 ```
 
 Workspace packages are consumed as **raw TypeScript** (`main` points at `src/index.ts`). There is no
-build step for `packages/*`, and `transpilePackages` is deliberately absent from `next.config.ts`.
+build step for `packages/*` and none for `apps/worker` either - it runs under `tsx` - which is what
+keeps `pnpm build` in CI meaning exactly what it meant in Milestone 0.
 
-A request has two entry points and one path underneath. Server components call the service layer
-directly; there is no HTTP hop from a page to the app's own route handler.
+Two deployables, one copy of the domain logic. Both call `@rivet/core` directly; there is no HTTP
+hop from a page to the app's own route handler, and none from the worker to the web app.
 
 ```
 browser ──page nav──▶ server component ─┐
-        ──fetch()───▶ route handler ────┴──▶ job-service ──▶ Drizzle ──▶ pg Pool ──▶ Neon
-                      (zod validate)          (all logic)
+        ──fetch()───▶ route handler ────┤
+                      (zod validate)    ├──▶ @rivet/core ──▶ Drizzle ──▶ pg Pool ──▶ Neon
+apps/worker ─────────▶ processor ───────┘        │
+   ▲                                             └──▶ JobQueue port ──▶ @rivet/queue ──▶ Redis
+   └────────────── BullMQ message ("run this job id") ──────────────────────────┘
 ```
+
+**Postgres holds job state; Redis holds nothing that matters.** A message is a job id and nothing
+else. Flush Redis and no job is lost: the sweeper finds every row Postgres says should be moving and
+re-enqueues it. Read `docs/architecture.md` before changing anything in that loop.
 
 ### Invariants that are easy to break
 
-**`apps/web/lib/services/job-service.ts` must have zero Next.js imports** - not `next/server`, not
-`next/cache`, not even `server-only`. It exists to be lifted into `apps/api` verbatim in
-Milestone 1. `server-only` guards belong in the pages and handlers that wrap it. Route handlers stay
-parse/validate/delegate/respond; if branching or orchestration starts accumulating in a `route.ts`,
-that is the signal to extract `apps/api` early.
+**`packages/core` imports no `next/*`, no `bullmq`, no `ioredis`, and reads no `process.env`.** All
+four rules exist for one reason: core is shared by two deployables and must not depend on either
+one's framework or on the delivery mechanism. Configuration arrives as function arguments, which is
+what lets the whole pipeline run in under a millisecond at `speed: 0` with no fake timers and no
+sleeping in CI. Core declares the `JobQueue` port; `packages/queue` is the only package that knows
+Redis exists. Every module lives under `jobs/`, `events/`, `pipeline/` or `queue/` - a file at the
+top level next to `index.ts` is the first sign the package is becoming a junk drawer.
+
+**`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
+merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, so a caller cannot
+sneak a status through the patch. There are exactly three `.update(jobs)` sites in `packages/`, and
+the other two touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
+`cancel_requested_at`. Stamping a cancel is deliberately not a status change; the job reaches
+`cancelled` through the worker's own transition under its own lease. Every status change is a
+compare-and-swap on the expected `from` status, optionally fenced on `lease_owner`, and writes its
+event row in the same transaction. Adding a fourth status writer breaks all of that at once.
+
+**`appendEvent()` is the only writer of `job_events`, and it takes an `Executor`.** Pass the
+transaction and the event lands atomically with the status change it describes; pass nothing and it
+runs on the pool. That is why interactive transactions are required, and therefore why the `pg`
+driver was chosen over Neon's HTTP driver. Nothing ever updates or deletes an event row.
+
+**Importing `@rivet/queue` must never open a connection or throw**, the same rule as
+`@rivet/database` and for the same reason: `pnpm build` runs in CI with no `DATABASE_URL` and no
+`REDIS_URL`. The ioredis client and the `Queue` are both built inside functions and memoized, and
+both are additionally cached on `globalThis` outside production, because Next.js re-evaluates server
+modules on every hot reload and a fresh client per edit leaks connections until Upstash refuses
+them.
+
+**`heartbeat * 3 <= lease`, asserted at worker startup.** A worker must be able to miss two
+heartbeats and still own its job. Violate it and the sweeper reclaims work from a perfectly healthy
+process, and the resulting duplicate execution is miserable to diagnose because nothing looks
+broken. `parseWorkerConfig` throws and the worker exits non-zero rather than booting.
+
+**Event types and failure categories are Zod-validated `text`, not pgEnums.** `JOB_EVENT_TYPES` and
+`FAILURE_CATEGORIES` in `packages/contracts/src/job-event.ts` are the validation. That vocabulary
+grows every milestone, and a migration per new entry buys nothing. The status enum is the exception
+and keeps its pgEnum plus drift assertion because it is a closed, indexed state machine.
+
+**`JobEventData` is a type alias, not an interface.** TypeScript gives object type aliases an
+implicit index signature, which is what makes it assignable to the loose `Record<string, unknown>`
+the Drizzle `jsonb` column is typed as - an interface is not. It carries an eslint-disable saying
+so. Do not "fix" it into an interface.
+
+**BullMQ is v6 and most material online is v5.** Four things that matter here: a completed message
+keeps its id reserved, and since the job's UUID _is_ the message id, `enqueueJobRun` looks the id up
+and removes a finished message before re-adding - every retry and every sweeper reclaim depends on
+that. `UnrecoverableError` replaced `job.discard()`. The legacy repeatable-jobs API is gone in
+favour of job schedulers (`upsertJobScheduler`), which is how the sweep is scheduled. `Queue#client`
+and `Worker#blockingClient` no longer exist. Pin the version and read the v6 docs, not blog posts.
 
 **Never add `export const runtime = "edge"`.** The database client is a `pg` Pool and requires the
 Node.js runtime. Every page and route handler that touches the database sets
@@ -91,12 +177,17 @@ move construction to module scope, and keep unit tests database-free.
 **TypeScript is pinned at 5.9.3.** typescript-eslint 8.x hard-throws on TS 7. Do not upgrade
 TypeScript until typescript-eslint supports it.
 
-### Database
+### Database and Redis
 
-Two connection strings, one root `.env.local` (copy from `.env.example`) that every workspace
+Three connection strings, one root `.env.local` (copy from `.env.example`) that every workspace
 shares. `next.config.ts` walks up to `pnpm-workspace.yaml` to load it, since Next only reads env
-from its own project directory.
+from its own project directory; `loadRootEnv()` in `apps/worker/src/config.ts` is the worker's half
+of the same trick, called from `index.ts` rather than at import time so `parseWorkerConfig` stays a
+pure function of an env object.
 
+- `REDIS_URL` - Upstash, used by BullMQ. `rediss://` is TLS. Redis is delivery only, so losing this
+  database loses no jobs. BullMQ polls even when idle and Upstash bills per command, so stop the
+  worker when you are not developing.
 - `DATABASE_URL` - Neon's **pooled** endpoint (PgBouncer). All application queries.
 - `DATABASE_URL_UNPOOLED` - the **direct** endpoint. Migrations only; DDL through PgBouncer in
   transaction pooling mode is unreliable. The migrate script falls back to `DATABASE_URL` when
@@ -119,14 +210,14 @@ insert with no remapping.
   imports must be written as `import type`.
 - Prettier formats Markdown too. Run `pnpm format` after editing docs or CI will fail on
   `format:check`.
-- Client components are the exception, not the rule: currently only the new-job form and the dev
-  status control.
+- Client components are the exception, not the rule: currently only the new-job form, the cancel
+  button, and the status poller.
 
 ### Scaffolding to delete
 
-Milestone 0's scaffolding (`PATCH /api/jobs/:id`, `nextStatus()`, `AdvanceStatusControl`,
-`updateJobStatus()`) is gone, which is what makes "nothing outside `transitions.ts` writes
-`jobs.status`" literally true. Do not reintroduce a status writer.
+Milestone 0's scaffolding (`PATCH /api/jobs/:id`, `nextStatus()`, `HAPPY_PATH_SEQUENCE`,
+`AdvanceStatusControl`, `updateJobStatus()`) is gone, which is what makes "nothing outside
+`transitions.ts` writes `jobs.status`" literally true. Do not reintroduce a status writer.
 
 What is left is `apps/web/components/job-status-poller.tsx`: a client component calling
 `router.refresh()` every two seconds while a job is non-terminal, because the detail page is
@@ -135,8 +226,15 @@ when SSE lands.
 
 ## CI
 
-`.github/workflows/ci.yml` runs typecheck, lint, format:check, test, build on every PR and on pushes
-to `main`, with no database. `.github/workflows/neon-branch.yml` creates a `preview/pr-<n>` Neon
-branch per PR and applies migrations to it. It skips cleanly when the `NEON_API_KEY` secret is
-missing (it is not yet set), so a skipped Neon run is expected rather than a failure. Never print a
-Neon connection string in a workflow; it embeds credentials.
+`.github/workflows/ci.yml` has two jobs that run in parallel and share nothing. **Verify** runs
+typecheck, lint, format:check, test, build with no database and no Redis - that is the property that
+keeps the lazy clients and `force-dynamic` honest, and merging the two jobs would cost it.
+**Integration** brings up `postgres:17` and `redis:8` service containers and runs
+`pnpm test:integration`. There is deliberately no separate migrate step: the suite's own
+`globalSetup` applies migrations from the same `drizzle/` folder with the same migrator as
+`pnpm db:migrate`, because a schema built any other way is a schema no deployment has.
+
+`.github/workflows/neon-branch.yml` creates a `preview/pr-<n>` Neon branch per PR and applies
+migrations to it. It skips cleanly when the `NEON_API_KEY` secret is missing (it is not yet set), so
+a skipped Neon run is expected rather than a failure. Never print a Neon connection string in a
+workflow; it embeds credentials.
