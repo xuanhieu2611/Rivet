@@ -39,7 +39,8 @@ describe("classify", () => {
 
   it("keeps the underlying cause", () => {
     const cause = new Error("socket hang up");
-    expect(new RetryableJobError("wrapped", { cause }).cause).toBe(cause);
+    expect(new RetryableJobError("wrapped", "unknown", { cause }).cause).toBe(cause);
+    expect(new TerminalJobError("wrapped", "unknown", { cause }).cause).toBe(cause);
   });
 });
 
@@ -50,8 +51,15 @@ describe("failureCategoryFor", () => {
     );
   });
 
-  it("falls back to unknown for a terminal error with no category", () => {
+  it("persists the category a retryable error carries", () => {
+    expect(failureCategoryFor(new RetryableJobError("blip", "sandbox_unavailable"))).toBe(
+      "sandbox_unavailable",
+    );
+  });
+
+  it("falls back to unknown for an error with no category", () => {
     expect(failureCategoryFor(new TerminalJobError("boom"))).toBe("unknown");
+    expect(failureCategoryFor(new RetryableJobError("blip"))).toBe("unknown");
     expect(failureCategoryFor(new Error("boom"))).toBe("unknown");
   });
 

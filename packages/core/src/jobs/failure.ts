@@ -38,8 +38,24 @@ export class JobTimedOutError extends JobRunError {}
 /** The worker is shutting down cleanly and is handing the job back. */
 export class WorkerShuttingDownError extends JobRunError {}
 
-/** Something went wrong that a fresh attempt might get past. */
-export class RetryableJobError extends JobRunError {}
+/**
+ * Something went wrong that a fresh attempt might get past.
+ *
+ * Carries a category for the same reason `TerminalJobError` does: the retry
+ * path releases the job rather than failing it, so the category is not written
+ * to `failure_category` at the moment it is raised - but the error still knows
+ * what kind of failure it is, and a retryable error whose attempts run out
+ * deserves better than `unknown`.
+ */
+export class RetryableJobError extends JobRunError {
+  constructor(
+    message: string,
+    readonly category: FailureCategory = "unknown",
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+  }
+}
 
 /** Something went wrong that a fresh attempt would hit again. */
 export class TerminalJobError extends JobRunError {
@@ -88,6 +104,8 @@ export function failureCategoryFor(error: unknown): FailureCategory {
       return "timed_out";
     case "terminal":
       return error instanceof TerminalJobError ? error.category : "unknown";
+    case "retryable":
+      return error instanceof RetryableJobError ? error.category : "unknown";
     default:
       return "unknown";
   }
