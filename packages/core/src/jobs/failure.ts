@@ -124,6 +124,20 @@ export class ValidationFailedError extends TerminalJobError {
   }
 }
 
+/** A checkpoint exceeded the complete-payload bound and cannot be truncated. */
+export class CheckpointTooLargeError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "checkpoint_too_large", options);
+  }
+}
+
+/** A checkpoint cannot be trusted because its durable representation is invalid. */
+export class CheckpointCorruptError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "checkpoint_corrupt", options);
+  }
+}
+
 export type FailureClass =
   | "retryable"
   | "terminal"

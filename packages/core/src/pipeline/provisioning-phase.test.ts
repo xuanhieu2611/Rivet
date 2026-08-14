@@ -126,6 +126,7 @@ function harness(options: { respond?: Responder; createFails?: Error } = {}) {
       return Promise.resolve();
     },
     recordAgentUsage: () => Promise.resolve(),
+    checkpoint: () => Promise.reject(new Error("the provisioning phase records no checkpoints")),
   };
 
   return {

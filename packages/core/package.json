@@ -16,7 +16,8 @@
   "dependencies": {
     "@rivet/contracts": "workspace:*",
     "@rivet/database": "workspace:*",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@rivet/config": "workspace:*",

@@ -240,6 +240,7 @@ function harness(
       usages.push(patch);
       return Promise.resolve();
     },
+    checkpoint: () => Promise.reject(new Error("the implementing phase records no checkpoints")),
   };
 
   return {

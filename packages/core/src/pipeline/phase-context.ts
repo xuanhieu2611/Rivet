@@ -1,9 +1,21 @@
 import { randomUUID } from "node:crypto";
 
-import type { ArtifactType, JobDetail, JobEventData, JobEventType } from "@rivet/contracts";
+import type {
+  ArtifactType,
+  CheckpointKind,
+  JobDetail,
+  JobEventData,
+  JobEventType,
+  JobStatus,
+} from "@rivet/contracts";
 import { db, type Database } from "@rivet/database";
 
 import { recordArtifact } from "../artifacts/artifact-store";
+import {
+  recordCheckpoint,
+  type JobCheckpoint,
+  type RecordCheckpointInput,
+} from "../checkpoints/checkpoint-store";
 import { type BaselineOutcome, readBaseline } from "../events/baseline-log";
 import { appendEvent } from "../events/event-service";
 import { readSummary } from "../events/session-log";
@@ -105,6 +117,16 @@ export interface PhaseContext {
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
   /** Records cumulative coding-agent usage. Throws `LeaseLostError` if the lease is gone. */
   recordAgentUsage(patch: AgentUsagePatch): Promise<void>;
+
+  /**
+   * Persists a complete workspace snapshot at a safe recovery boundary.
+   *
+   * The phase supplies the already-captured patch and small workflow references;
+   * the context supplies job identity, attempt, sandbox identity, environment
+   * fingerprint, the storage bound and the lease fence. Compression, checksum,
+   * validation and the `checkpoint.created` event stay in the checkpoint store.
+   */
+  checkpoint(input: PhaseCheckpointInput): Promise<JobCheckpoint>;
 }
 
 /** The slice of a pino logger a phase uses. Structured first, message second. */
@@ -157,6 +179,29 @@ export interface PhaseArtifactInput {
   message?: string;
 }
 
+/** The caller-facing slice of a checkpoint request. */
+export type PhaseCheckpointInput = Omit<
+  RecordCheckpointInput,
+  | "jobId"
+  | "attemptCount"
+  | "baseCommitSha"
+  | "sandboxId"
+  | "envFingerprint"
+  | "maxBytes"
+  | "leaseOwner"
+> & {
+  /** The phase doing the capture, when this is a phase-boundary checkpoint. */
+  completedPhase?: JobStatus | null;
+  /** The checkpoint kind is repeated here for discoverability at phase sites. */
+  kind: CheckpointKind;
+  /** Optional override for callers restoring a resolved commit explicitly. */
+  baseCommitSha?: string;
+  /** Optional override used by recovery-aware callers. */
+  sandboxId?: string;
+  /** Optional current environment fingerprint override. */
+  envFingerprint?: Record<string, unknown>;
+};
+
 export interface PhaseContextOptions {
   job: JobDetail;
   /** The fencing token. Every write this context makes carries it. */
@@ -175,6 +220,10 @@ export interface PhaseContextOptions {
    * thing the run exists to produce.
    */
   artifactMaxBytes: number;
+  /** Maximum complete checkpoint payload accepted by the store. */
+  checkpointMaxBytes: number;
+  /** Reserved for the bounded workspace-capture operation owned by the context. */
+  checkpointTimeoutMs: number;
   database?: Database;
 }
 
@@ -191,6 +240,8 @@ export function createPhaseContextFactory(
 ): (phase: Phase) => PhaseContext {
   const database = options.database ?? db;
   const { job, leaseOwner, sandboxes, signal, log } = options;
+  let currentBaseCommitSha = job.baseCommitSha;
+  let currentEnvFingerprint = job.envFingerprint;
   const appendOwnedEvent = (input: PhaseEventInput) =>
     database.transaction((tx) => appendEvent({ ...input, jobId: job.id, leaseOwner }, tx));
 
@@ -359,6 +410,16 @@ export function createPhaseContextFactory(
           `Job ${job.id} is no longer leased by ${leaseOwner}; provisioning stood down.`,
         );
       }
+
+      // The claimed job is an immutable snapshot. Keep the values that became
+      // durable during provisioning available to later checkpoint requests,
+      // without making the phase runner pass mutable state across a boundary.
+      if (patch.baseCommitSha !== undefined && patch.baseCommitSha !== null) {
+        currentBaseCommitSha = patch.baseCommitSha;
+      }
+      if (patch.envFingerprint !== undefined && patch.envFingerprint !== null) {
+        currentEnvFingerprint = patch.envFingerprint;
+      }
     },
 
     async recordAgentUsage(patch) {
@@ -368,6 +429,28 @@ export function createPhaseContextFactory(
           `Job ${job.id} is no longer leased by ${leaseOwner}; agent usage stood down.`,
         );
       }
+    },
+
+    checkpoint(input) {
+      const sandbox = sandboxes.require();
+      const baseCommitSha = input.baseCommitSha ?? currentBaseCommitSha;
+      if (!baseCommitSha) {
+        throw new Error(`Job ${job.id} has no resolved base commit for a checkpoint.`);
+      }
+
+      return recordCheckpoint(
+        {
+          ...input,
+          jobId: job.id,
+          attemptCount: job.attemptCount,
+          baseCommitSha,
+          sandboxId: input.sandboxId ?? sandbox.id,
+          envFingerprint: input.envFingerprint ?? currentEnvFingerprint ?? {},
+          maxBytes: options.checkpointMaxBytes,
+          leaseOwner,
+        },
+        database,
+      );
     },
   });
 }

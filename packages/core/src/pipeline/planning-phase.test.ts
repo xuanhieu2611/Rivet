@@ -38,6 +38,7 @@ function harness() {
     readValidation: () => Promise.reject(new Error("nothing has been validated yet")),
     recordProvisioning: () => Promise.reject(new Error("the planning phase writes no job columns")),
     recordAgentUsage: () => Promise.reject(new Error("the planning phase spends nothing")),
+    checkpoint: () => Promise.reject(new Error("the planning phase records no checkpoints")),
 
     event: (input) => {
       events.push(input);

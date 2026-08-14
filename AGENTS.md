@@ -233,9 +233,9 @@ under a millisecond at `speed: 0` with no fake timers and no sleeping in CI - an
 them here. A default limit in the package that is supposed to hold no policy is how a container ends
 up unbounded. Core declares the `JobQueue`, `Sandbox` and `CodingAgent` ports; `packages/queue`,
 `packages/sandbox` and `packages/agent` are the only packages that know Redis, Docker and Pi exist.
-Every module lives under `agent/`, `artifacts/`, `jobs/`, `events/`, `pipeline/`, `queue/` or
-`sandbox/` - a file at the top level next to `index.ts` is the first sign the package is becoming a
-junk drawer.
+Every module lives under `agent/`, `artifacts/`, `checkpoints/`, `jobs/`, `events/`, `pipeline/`,
+`queue/` or `sandbox/` - a file at the top level next to `index.ts` is the first sign the package is
+becoming a junk drawer.
 
 **The model key stays on the worker host, and the container never sees a credential.** The harness
 runs in the worker process; its four tools - `read`, `write`, `edit`, `bash` - end at

@@ -148,6 +148,7 @@ function harness(options: { respond?: Responder; baseline?: BaselineOutcome | nu
 
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: () => Promise.resolve(),
+    checkpoint: () => Promise.reject(new Error("the validation phase records no checkpoints")),
   };
 
   return {

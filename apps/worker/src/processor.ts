@@ -223,6 +223,8 @@ export function createProcessor(deps: ProcessorDeps) {
           log,
           maxOutputBytes: config.sandbox.maxOutputBytes,
           artifactMaxBytes: config.artifactMaxBytes,
+          checkpointMaxBytes: config.checkpointMaxBytes,
+          checkpointTimeoutMs: config.checkpointTimeoutMs,
         }),
 
         onPhaseStart: async (phase) => {

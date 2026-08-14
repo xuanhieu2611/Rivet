@@ -37,6 +37,8 @@ describe("parseWorkerConfig", () => {
       maxAttempts: 3,
       pipelineSpeed: 1,
       artifactMaxBytes: 262_144,
+      checkpointMaxBytes: 4_194_304,
+      checkpointTimeoutMs: 30_000,
       shutdownGraceMs: 15_000,
       logLevel: "info",
       sandbox: {

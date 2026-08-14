@@ -216,6 +216,10 @@ export interface WorkerConfig {
    * deployment and not another.
    */
   artifactMaxBytes: number;
+  /** Maximum complete compressed checkpoint payload stored in Postgres. */
+  checkpointMaxBytes: number;
+  /** Budget for capturing a workspace patch at a safe boundary. */
+  checkpointTimeoutMs: number;
   /** Fault injection, absent unless both env vars are set. */
   fault?: FaultConfig;
   /** What a phase with a real body runs in. */
@@ -242,6 +246,10 @@ const schema = z.object({
   // because `content` is a Postgres `text` column read back by a page render,
   // not object storage.
   RIVET_ARTIFACT_MAX_BYTES: z.coerce.number().int().min(1_024).max(8_388_608).default(262_144),
+  // Checkpoints are complete gzip payloads, never head/tail truncated. The
+  // bound is deliberately larger than a normal source diff but still finite.
+  RIVET_CHECKPOINT_MAX_BYTES: z.coerce.number().int().min(1_024).max(67_108_864).default(4_194_304),
+  RIVET_CHECKPOINT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(30_000),
   RIVET_FAULT_PHASE: z.string().min(1).optional(),
   RIVET_FAULT_MODE: z.enum(FAULT_MODES).optional(),
   WORKER_SHUTDOWN_GRACE_MS: z.coerce.number().int().min(1_000).max(300_000).default(15_000),
@@ -329,6 +337,8 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
     maxAttempts: parsed.data.WORKER_MAX_ATTEMPTS,
     pipelineSpeed: parsed.data.RIVET_PIPELINE_SPEED,
     artifactMaxBytes: parsed.data.RIVET_ARTIFACT_MAX_BYTES,
+    checkpointMaxBytes: parsed.data.RIVET_CHECKPOINT_MAX_BYTES,
+    checkpointTimeoutMs: parsed.data.RIVET_CHECKPOINT_TIMEOUT_MS,
     // `exactOptionalPropertyTypes` is on, so an absent fault has to be an
     // absent key rather than an explicit `undefined`.
     ...(fault ? { fault } : {}),

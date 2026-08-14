@@ -4,6 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RecordArtifactInput } from "../artifacts/artifact-store";
 import { recordArtifact } from "../artifacts/artifact-store";
+import {
+  recordCheckpoint,
+  type JobCheckpoint,
+  type RecordCheckpointInput,
+} from "../checkpoints/checkpoint-store";
 import type { AppendEventInput } from "../events/event-service";
 import { appendEvent } from "../events/event-service";
 import { recordCommand } from "../sandbox/command-log";
@@ -14,9 +19,13 @@ import { createPhaseContextFactory, type PhaseExecInput, type PhaseLogger } from
 vi.mock("../events/event-service", () => ({ appendEvent: vi.fn() }));
 vi.mock("../sandbox/command-log", () => ({ recordCommand: vi.fn() }));
 vi.mock("../artifacts/artifact-store", () => ({ recordArtifact: vi.fn() }));
+vi.mock("../checkpoints/checkpoint-store", () => ({ recordCheckpoint: vi.fn() }));
 
 const JOB = {
   id: "11111111-2222-3333-4444-555555555555",
+  attemptCount: 2,
+  baseCommitSha: "0123456789abcdef0123456789abcdef01234567",
+  envFingerprint: { image: "node@sha256:test" },
 } as unknown as JobDetail;
 
 const PHASE = {
@@ -54,6 +63,7 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
   const holder = new SandboxHolder();
   const events: AppendEventInput[] = [];
   const artifacts: RecordArtifactInput[] = [];
+  const checkpoints: RecordCheckpointInput[] = [];
   const sequence: string[] = [];
   const sandboxExec = vi.fn(() => {
     sequence.push("exec");
@@ -90,6 +100,11 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
       truncated: Buffer.byteLength(input.content, "utf8") > input.maxBytes,
     } as JobArtifact);
   });
+  vi.mocked(recordCheckpoint).mockImplementation((input) => {
+    checkpoints.push(input);
+    sequence.push("checkpoint");
+    return Promise.resolve({ id: 43 } as JobCheckpoint);
+  });
 
   const context = createPhaseContextFactory({
     job: JOB,
@@ -99,16 +114,28 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
     log: { debug: vi.fn(), info: vi.fn(), warn },
     maxOutputBytes: 1_024,
     artifactMaxBytes: 2_048,
+    checkpointMaxBytes: 4_096,
+    checkpointTimeoutMs: 30_000,
     database,
   })(PHASE);
 
-  return { context, events, artifacts, sequence, sandboxExec, transaction, warn };
+  return {
+    context,
+    events,
+    artifacts,
+    checkpoints,
+    sequence,
+    sandboxExec,
+    transaction,
+    warn,
+  };
 }
 
 describe("PhaseContext command lifecycle", () => {
   beforeEach(() => {
     vi.mocked(appendEvent).mockReset();
     vi.mocked(recordCommand).mockReset();
+    vi.mocked(recordCheckpoint).mockReset();
   });
 
   it("records a start before execution and pairs completion with the same id", async () => {
@@ -193,11 +220,40 @@ describe("PhaseContext command lifecycle", () => {
   });
 });
 
+describe("PhaseContext checkpoints", () => {
+  it("supplies job and sandbox identity to the lease-fenced store", async () => {
+    const test = harness();
+
+    await test.context.checkpoint({
+      kind: "agent_turn",
+      state: { version: 1 },
+      patch: Buffer.from("patch"),
+      agentTurn: 4,
+    });
+
+    expect(test.checkpoints[0]).toMatchObject({
+      jobId: JOB.id,
+      attemptCount: 2,
+      kind: "agent_turn",
+      baseCommitSha: JOB.baseCommitSha,
+      sandboxId: "sandbox-1",
+      envFingerprint: JOB.envFingerprint,
+      maxBytes: 4_096,
+      leaseOwner: "worker-1",
+      agentTurn: 4,
+    });
+    expect(test.checkpoints[0]?.patch).toEqual(Buffer.from("patch"));
+    expect(test.checkpoints[0]?.state).toEqual({ version: 1 });
+    expect(vi.mocked(recordCheckpoint)).toHaveBeenCalledOnce();
+  });
+});
+
 describe("PhaseContext artifacts", () => {
   beforeEach(() => {
     vi.mocked(appendEvent).mockReset();
     vi.mocked(recordCommand).mockReset();
     vi.mocked(recordArtifact).mockReset();
+    vi.mocked(recordCheckpoint).mockReset();
   });
 
   it("writes the row and the event that points at it in one transaction", async () => {
