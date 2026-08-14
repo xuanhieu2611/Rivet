@@ -7,8 +7,10 @@ import {
   JobCancelledError,
   JobTimedOutError,
   LeaseLostError,
+  NoChangesProducedError,
   RetryableJobError,
   TerminalJobError,
+  ValidationFailedError,
   WorkerShuttingDownError,
 } from "./failure";
 
@@ -69,6 +71,23 @@ describe("sandbox failure classification", () => {
     const error = new ErrorType("injected");
 
     expect(classify(error)).toBe(expectedClass);
+    expect(failureCategoryFor(error)).toBe(category);
+  });
+});
+
+describe("validation failure classification", () => {
+  const cases = [
+    [NoChangesProducedError, "no_changes_produced"],
+    [ValidationFailedError, "validation_failed"],
+  ] as const;
+
+  it.each(cases)("classifies %s as terminal with category %s", (ErrorType, category) => {
+    const error = new ErrorType("injected");
+
+    // Terminal on purpose. A session that changed nothing will change nothing
+    // again, and re-running one on the chance of better sampling costs another
+    // container and another bill to find out.
+    expect(classify(error)).toBe("terminal");
     expect(failureCategoryFor(error)).toBe(category);
   });
 });

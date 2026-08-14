@@ -127,3 +127,61 @@ describe("coding agent events", () => {
     expect(parseFailureCategory(null)).toBeNull();
   });
 });
+
+describe("validation and artifact events", () => {
+  it("round-trips every M5 field it claims to know about", () => {
+    const artifact: JobEvent = {
+      ...EVENT,
+      type: "artifact.recorded",
+      message: "Recorded a diff.",
+      data: {
+        phase: "testing",
+        artifactId: 42,
+        artifactType: "diff",
+        byteSize: 300_000,
+        truncated: true,
+      },
+    };
+    const validation: JobEvent = {
+      ...EVENT,
+      type: "validation.recorded",
+      message: "The suite passes and it did not before.",
+      data: {
+        phase: "testing",
+        validation: "fixed",
+        baseline: "failed",
+        exitCode: 0,
+        filesChanged: 2,
+        insertions: 7,
+        deletions: 3,
+      },
+    };
+    const deferred: JobEvent = {
+      ...EVENT,
+      type: "plan.deferred",
+      message: "Planning is deferred to Milestone 6.",
+      data: { phase: "planning", durationMs: 0 },
+    };
+
+    for (const event of [artifact, validation, deferred]) {
+      expect(parseSerializedJobEvent(serializeJobEvent(event))).toEqual(event);
+    }
+  });
+
+  it("rejects M5 fields of the wrong shape", () => {
+    const withData = (data: Record<string, unknown>) => ({
+      ...serializeJobEvent(EVENT),
+      data,
+    });
+
+    expect(() => parseSerializedJobEvent(withData({ artifactType: "screenshot" }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ validation: "green" }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ byteSize: -1 }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ filesChanged: 1.5 }))).toThrow();
+  });
+
+  it("recognises both validation failure categories", () => {
+    expect(parseFailureCategory("no_changes_produced")).toBe("no_changes_produced");
+    expect(parseFailureCategory("validation_failed")).toBe("validation_failed");
+  });
+});

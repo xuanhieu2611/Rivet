@@ -104,6 +104,8 @@ export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
   sandbox_leaked: "Sandbox leaked",
   agent_unavailable: "Agent provider unavailable",
   agent_failed: "Agent failed",
+  no_changes_produced: "No changes produced",
+  validation_failed: "Validation failed",
   unknown: "Unknown",
 };
 
@@ -151,4 +153,12 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "agent.usage": "bg-muted-foreground/40",
   "agent.session_ended": "bg-muted-foreground/40",
   "agent.budget_exceeded": "bg-amber-500",
+  // A deferred plan is deliberately quiet: it says a phase decided to do
+  // nothing, which is the opposite of something the reader needs to notice.
+  "plan.deferred": "bg-muted-foreground/40",
+  "artifact.recorded": "bg-violet-500",
+  // Neutral rather than green or red, because the outcome is in the payload:
+  // `regressed` and `fixed` are the same event type. Stage 7 colours the row
+  // by `data.validation`; the marker only says the comparison happened.
+  "validation.recorded": "bg-sky-500",
 };

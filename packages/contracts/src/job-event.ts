@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { jobStatusSchema, type JobStatus } from "./job";
+import { artifactTypeSchema, type ArtifactType } from "./job-artifact";
 
 /**
  * The vocabulary of the append-only job event log.
@@ -75,6 +76,27 @@ export const JOB_EVENT_TYPES = [
   "agent.session_ended",
   /** A ceiling in the job's budget was reached and the session was stopped. */
   "agent.budget_exceeded",
+
+  // --- validation and artifacts (M5) ------------------------------------
+  /**
+   * `planning` ran and deliberately produced nothing.
+   *
+   * The status stays in the walk because M6 fills this body with a real plan
+   * artifact; the event exists so the timeline says the phase was skipped rather
+   * than implying a plan was made. Better than a two-second sleep, which is a
+   * lie told to whoever is watching.
+   */
+  "plan.deferred",
+  /** A durable output was persisted: its id, type and true byte size. Never its content. */
+  "artifact.recorded",
+  /**
+   * The test suite was re-run after the session and compared with the baseline.
+   *
+   * The outcome, not the exit code, because the interesting fact is the
+   * comparison: a red suite that was already red before Rivet touched anything
+   * is `unresolved`, and a red suite that used to be green is `regressed`.
+   */
+  "validation.recorded",
 ] as const;
 
 export const jobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
@@ -145,6 +167,25 @@ export const FAILURE_CATEGORIES = [
    */
   "agent_failed",
 
+  // --- validation (M5) --------------------------------------------------
+  /**
+   * The session ended cleanly having changed nothing.
+   *
+   * Terminal, and the most interesting failure this milestone can surface: a
+   * model that believes it finished the task while the diff is empty did not do
+   * the task, and it will do the same thing again on a second attempt.
+   */
+  "no_changes_produced",
+  /**
+   * The suite disagrees with the session: a green suite went red, or a red one
+   * stayed red.
+   *
+   * Terminal. Re-running a whole model session on the chance of better sampling
+   * costs another container, another clone and another bill to find out, and M6
+   * is where resumption gets designed properly.
+   */
+  "validation_failed",
+
   "unknown",
 ] as const;
 
@@ -165,6 +206,38 @@ export function parseFailureCategory(value: string | null | undefined): FailureC
   const parsed = failureCategorySchema.safeParse(value);
   return parsed.success ? parsed.data : "unknown";
 }
+
+/**
+ * What re-running the suite after the session established, relative to the
+ * baseline.
+ *
+ * Five outcomes rather than a boolean, because the baseline is what gives the
+ * second run its meaning:
+ *
+ * | baseline  | after  | outcome      | job    |
+ * | --------- | ------ | ------------ | ------ |
+ * | `passed`  | passes | `verified`   | green  |
+ * | `passed`  | fails  | `regressed`  | failed |
+ * | `failed`  | passes | `fixed`      | green  |
+ * | `failed`  | fails  | `unresolved` | failed |
+ * | `skipped` | n/a    | `unverified` | green  |
+ *
+ * `unverified` stays green deliberately: a repository with no `test` script is
+ * not a broken job, and failing it would repeat exactly the mistake PRD §11 C
+ * exists to prevent. It is recorded rather than omitted so nobody reads a green
+ * badge as a claim that was never checked.
+ */
+export const VALIDATION_OUTCOMES = [
+  "verified",
+  "fixed",
+  "regressed",
+  "unresolved",
+  "unverified",
+] as const;
+
+export const validationOutcomeSchema = z.enum(VALIDATION_OUTCOMES);
+
+export type ValidationOutcome = z.infer<typeof validationOutcomeSchema>;
 
 /**
  * The structured half of an event, stored in the `data` jsonb column.
@@ -267,6 +340,33 @@ export type JobEventData = {
   /** What the value had reached, and what it was allowed to reach. */
   budgetValue?: number;
   budgetLimit?: number;
+
+  // --- validation and artifacts (M5) ------------------------------------
+  /** Points at the `job_artifacts` row holding the content, on `artifact.recorded`. */
+  artifactId?: number;
+  artifactType?: ArtifactType;
+  /**
+   * The artifact's true size before truncation.
+   *
+   * Deliberately not the length of what was stored: a 4MB diff kept as 256KB is
+   * a fact the timeline should be able to state without fetching either.
+   */
+  byteSize?: number;
+  /** Whether the stored content has a gap in the middle. Pairs with `byteSize`. */
+  truncated?: boolean;
+  /** The comparison outcome, on `validation.recorded`. */
+  validation?: ValidationOutcome;
+  /**
+   * Parsed `git diff --cached --numstat` totals.
+   *
+   * `filesChanged` counts every changed path, including binary ones;
+   * `insertions` and `deletions` sum only the countable rows, because
+   * `--numstat` reports `-` for a binary file rather than a number. A diff of
+   * one PNG is therefore one file and zero lines, which is the honest reading.
+   */
+  filesChanged?: number;
+  insertions?: number;
+  deletions?: number;
 };
 
 /** One row of the job timeline. */
@@ -334,6 +434,14 @@ const jobEventDataSchema = z
     budget: z.enum(["cost", "model_calls", "tool_calls", "turns"]).optional(),
     budgetValue: z.number().finite().optional(),
     budgetLimit: z.number().finite().optional(),
+    artifactId: safeEventIdSchema.optional(),
+    artifactType: artifactTypeSchema.optional(),
+    byteSize: z.number().int().nonnegative().optional(),
+    truncated: z.boolean().optional(),
+    validation: validationOutcomeSchema.optional(),
+    filesChanged: z.number().int().nonnegative().optional(),
+    insertions: z.number().int().nonnegative().optional(),
+    deletions: z.number().int().nonnegative().optional(),
   })
   .passthrough();
 
@@ -401,6 +509,14 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.budget === undefined ? {} : { budget: value.budget }),
     ...(value.budgetValue === undefined ? {} : { budgetValue: value.budgetValue }),
     ...(value.budgetLimit === undefined ? {} : { budgetLimit: value.budgetLimit }),
+    ...(value.artifactId === undefined ? {} : { artifactId: value.artifactId }),
+    ...(value.artifactType === undefined ? {} : { artifactType: value.artifactType }),
+    ...(value.byteSize === undefined ? {} : { byteSize: value.byteSize }),
+    ...(value.truncated === undefined ? {} : { truncated: value.truncated }),
+    ...(value.validation === undefined ? {} : { validation: value.validation }),
+    ...(value.filesChanged === undefined ? {} : { filesChanged: value.filesChanged }),
+    ...(value.insertions === undefined ? {} : { insertions: value.insertions }),
+    ...(value.deletions === undefined ? {} : { deletions: value.deletions }),
   };
   const knownKeys = new Set(Object.keys(known));
   const extras = Object.fromEntries(

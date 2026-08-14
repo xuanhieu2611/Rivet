@@ -98,6 +98,8 @@ directly. Zero dependencies, so `npm ci` resolves the lockfile and corepack neve
 
 ## Stage 1 - contracts, schema, taxonomy
 
+**Done.** Migration `0004_keen_celestials.sql`.
+
 The whole migration surface of the milestone, in one place.
 
 `packages/database/src/schema/job-artifact.ts`:
@@ -137,6 +139,20 @@ cleanly having touched nothing will do it again. `validation_failed` is terminal
 a whole model session on the chance of better sampling costs another container, another clone and
 another bill to find out - and M6, not M5, is where resumption gets designed properly. New error
 classes in `packages/core/src/jobs/failure.ts` plus their `classify()` arms.
+
+As built, with two additions the stage did not spell out. `VALIDATION_OUTCOMES` is declared in
+`job-event.ts` next to the other vocabularies rather than left implicit in the `validation` field,
+because Stage 5's comparison function needs the type before it has an event to put it in. And
+`insertions` / `deletions` are plain non-negative integers rather than nullable: `--numstat` reports
+`-` for a binary file, so `filesChanged` counts every path and the two line counts sum only the
+countable rows. A diff of one PNG is one file and zero lines, which is the honest reading of what
+git actually said.
+
+`no_changes_produced` and `validation_failed` are carried by `NoChangesProducedError` and
+`ValidationFailedError`, both extending `TerminalJobError`. That is the whole change: `classify()`
+gains no arm, because where an error sits in the hierarchy already _is_ the retry decision - the
+same property that let M2's seven sandbox errors and M4's three agent errors land without touching
+it either.
 
 The `jobs` table gains **no columns**. That falls out of the artifact decision and is worth keeping:
 one new table, one migration, no change to the five `.update(jobs)` sites.

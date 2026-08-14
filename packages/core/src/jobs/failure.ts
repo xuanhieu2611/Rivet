@@ -90,6 +90,40 @@ export class TerminalJobError extends JobRunError {
   }
 }
 
+/**
+ * The session ended cleanly and the diff is empty.
+ *
+ * Terminal, and it is the most interesting failure Milestone 5 can surface: a
+ * model that reported `completed` while changing nothing did not do the task
+ * while believing it had, and a second attempt starts from the same repository
+ * with the same prompt. Failing it loudly is the point - an M5 that can only
+ * report success has not validated anything.
+ *
+ * Terminal rather than retryable is also what keeps `no_changes_produced`
+ * readable on the dashboard: it names a bad session, not a bad ten minutes.
+ */
+export class NoChangesProducedError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "no_changes_produced", options);
+  }
+}
+
+/**
+ * The suite disagrees with the session: a green suite went red, or a red one
+ * stayed red.
+ *
+ * Terminal, and deliberately so at M5. Re-running a whole model session on the
+ * chance of better sampling costs another container, another clone and another
+ * bill to find out whether the sampling was the problem, and M6 is where
+ * resumption gets designed properly. Rivet checks the answer once; the
+ * debugging loop belongs to the session's own `bash` turns.
+ */
+export class ValidationFailedError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "validation_failed", options);
+  }
+}
+
 export type FailureClass =
   | "retryable"
   | "terminal"
