@@ -39,7 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </span>
               </Link>
               <span className="border-border text-muted-foreground rounded-full border px-2 py-0.5 text-[11px] font-medium">
-                Milestone 0
+                Milestone 3
               </span>
             </div>
           </header>
@@ -48,7 +48,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           <footer className="border-border/60 text-muted-foreground border-t">
             <div className="mx-auto w-full max-w-5xl px-6 py-4 text-xs">
-              Jobs run end to end on a simulated pipeline. The coding agent arrives in Milestone 4.
+              Jobs run end to end with real sandbox provisioning and baseline testing by default;
+              the coding agent arrives in Milestones 4 and 5.
             </div>
           </footer>
         </div>
