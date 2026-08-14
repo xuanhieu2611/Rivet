@@ -1,6 +1,6 @@
 import type { JobEventType } from "@rivet/contracts";
 import { db, type Executor, jobEvents } from "@rivet/database";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 /**
  * Reading the session's own account of its work back out of the event log.
@@ -29,6 +29,20 @@ import { and, asc, eq } from "drizzle-orm";
  */
 
 const MESSAGE_EVENT: JobEventType = "agent.message";
+/**
+ * The boundary that makes this reader session-aware.
+ *
+ * A job now runs several sessions - a planner before the implementation, and one
+ * more implementation session per recovered attempt - and "the last message in
+ * the whole job" stopped being the right answer the moment that became true. A
+ * recovered session that ends on a tool call would otherwise inherit the
+ * previous session's closing message and present it as its own account of work
+ * it did not do, which is exactly the kind of quiet lie the artifact exists to
+ * avoid. The planner is the same problem in a milder form: its messages precede
+ * every implementation message, so scoping to the newest session excludes them
+ * too, for free.
+ */
+const SESSION_START_EVENT: JobEventType = "agent.session_started";
 
 /** The narrowest shape `summaryFrom` needs, so callers can pass whole events. */
 export interface MessageEventLike {
@@ -51,13 +65,20 @@ export interface MessageEventLike {
  * nothing, and keeping that would replace a real summary from an earlier turn
  * with an empty one - the same rule `SessionAccounting` applies while the
  * session is still running.
+ *
+ * The scan stops at the newest `agent.session_started` rather than running off
+ * the front of the list, which is what keeps one session's silence from being
+ * filled in by an earlier one's summary. A list with no session marker at all -
+ * every caller before Milestone 6, and every focused test below - is scanned
+ * whole, because there is no boundary to respect.
  */
 export function summaryFrom(events: readonly MessageEventLike[]): string | null {
   // Last rather than first, and scanned backwards rather than filtered: a
-  // reclaimed attempt runs a second session, and the summary that matters is the
-  // one belonging to the attempt that got here.
+  // reclaimed attempt runs its own session, and the summary that matters is the
+  // one belonging to the session that got here.
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
+    if (event?.type === SESSION_START_EVENT) return null;
     if (event?.type !== MESSAGE_EVENT) continue;
     if (event.message.trim().length > 0) return event.message;
   }
@@ -73,12 +94,21 @@ export function summaryFrom(events: readonly MessageEventLike[]): string | null 
  * tens of these behind rather than thousands - Milestone 4 declined to write an
  * event per token for exactly this kind of reason - so there is nothing here
  * worth bounding.
+ *
+ * The session markers are selected alongside the messages rather than resolved
+ * with a second query for the newest session id, so the boundary and the rows it
+ * bounds come from one consistent read.
  */
 export async function readSummary(jobId: string, executor: Executor = db): Promise<string | null> {
   const rows = await executor
     .select({ type: jobEvents.type, message: jobEvents.message })
     .from(jobEvents)
-    .where(and(eq(jobEvents.jobId, jobId), eq(jobEvents.type, MESSAGE_EVENT)))
+    .where(
+      and(
+        eq(jobEvents.jobId, jobId),
+        inArray(jobEvents.type, [MESSAGE_EVENT, SESSION_START_EVENT]),
+      ),
+    )
     .orderBy(asc(jobEvents.id));
 
   return summaryFrom(rows);

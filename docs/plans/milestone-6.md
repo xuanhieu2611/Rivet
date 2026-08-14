@@ -589,6 +589,35 @@ the baseline continues to mean "before Rivet edited anything." `planning` is not
 artifact and checkpoint. `testing` and `finalizing` continue to read their inputs from durable rows,
 as they already do.
 
+**The suffix is real, and so is the boundary that makes it useful.** `planResume()` in
+`packages/core/src/pipeline/resume-plan.ts` maps a checkpoint onto `[provisioning, ...suffix]` and
+refuses - rather than silently starting over - a cursor this pipeline cannot honour. The processor
+reads the row after the claim and treats that read as **advisory**: `provisioning` performs the
+authoritative read, applies the patch and is where a bad checkpoint becomes `checkpoint.rejected`
+and a terminal failure, so a read that fails here falls back to the fresh walk and lets provisioning
+say why the run stops. `run.resumed` is written once, after the environment has been rebuilt and the
+patch verified, and before the resumed phase starts.
+
+Stage 7 also adds the `phase_boundary` writer that Stage 3 specified and no earlier stage supplied;
+without it the only durable cursor was `agent_turn` and every reclaim reran analysis and planning.
+The processor captures one at each completed phase in `BOUNDARY_CHECKPOINT_PHASES`, before the
+`phase.completed` event, so a crash between the two replays the phase rather than skipping it.
+`provisioning` and `finalizing` are deliberately excluded: recovery provisioning writing a boundary
+would replace a later cursor with "resume analyzing" and rerun the baseline over an edited tree, and
+`finalizing`'s lease-fenced transition to `completed` is already its acknowledgement. A run with no
+sandbox - `RIVET_SANDBOX=off` - has no workspace to snapshot and skips the capture entirely.
+
+The implementation prompt gains its recovery block when the newest checkpoint at prompt-build time
+is an `agent_turn` row, which can only have come from a previous attempt: this attempt's session has
+not started, so it has produced no turn checkpoints of its own. `readSummary()` is now session-aware
+
+- it stops at the newest `agent.session_started` - so a recovered session that says nothing cannot
+  inherit the interrupted session's closing message, and the planner's messages stop being
+  candidates for the implementation summary at the same time. Budgets in that block report
+  cumulative turns and spend from the job row and wall-clock remaining from `started_at`, which
+  `claimJob` coalesces across attempts; the model and tool ceilings are stated as the per-session
+  ceilings they currently are, and Stage 8 makes them cumulative.
+
 ## Stage 8 - cumulative budgets and recovery-safe completion
 
 Extend agent accounting so every planner and implementation event updates cumulative counters under

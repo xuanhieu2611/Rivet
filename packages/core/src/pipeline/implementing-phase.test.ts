@@ -154,6 +154,10 @@ function harness(
     /** What `analyzing` recorded, or an error to prove the builder survives one. */
     baseline?: BaselineOutcome | null | Error;
     implementationPlan?: ImplementationPlan | null;
+    /** The newest durable checkpoint, as recovery would find it. */
+    checkpoint?: JobCheckpoint | null | Error;
+    /** What the interrupted session said last, read back session-aware. */
+    summary?: string | null | Error;
   } = {},
 ) {
   const holder = new SandboxHolder();
@@ -240,9 +244,14 @@ function harness(
       ? {}
       : { readImplementationPlan: () => Promise.resolve(options.implementationPlan ?? null) }),
 
-    // The session is what produces both of these. Reading either one here would
-    // be this phase asking about its own output before it exists.
-    readSummary: () => Promise.reject(new Error("the session has not finished speaking")),
+    // The session is what produces the validation record, and its own summary
+    // is only readable before it starts because the reader is session-aware:
+    // what comes back then belongs to the session a previous worker was killed
+    // in the middle of, which is exactly what the recovery block wants.
+    readSummary: () =>
+      options.summary instanceof Error
+        ? Promise.reject(options.summary)
+        : Promise.resolve(options.summary ?? null),
     readValidation: () => Promise.reject(new Error("nothing has been validated yet")),
 
     recordProvisioning: () => Promise.resolve(),
@@ -250,7 +259,10 @@ function harness(
       usages.push(patch);
       return Promise.resolve();
     },
-    readLatestCheckpoint: () => Promise.resolve(null),
+    readLatestCheckpoint: () =>
+      options.checkpoint instanceof Error
+        ? Promise.reject(options.checkpoint)
+        : Promise.resolve(options.checkpoint ?? null),
     captureWorkspace: () =>
       Promise.reject(new Error("the phase asks for a checkpoint, not a diff")),
     checkpoint: (input) => {
@@ -503,6 +515,87 @@ describe("implementingPhase", () => {
     expect(context).toContain("# Persisted implementation plan");
     expect(context).toContain("The fixture has an off-by-one sum.");
     expect(context).toContain("- Correct the arithmetic.");
+  });
+
+  it("tells a resumed session what an interrupted attempt already earned", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({
+      agent,
+      checkpoint: turnCheckpoint(),
+      summary: "Corrected the addition in sum.ts; the test still needs updating.",
+      job: { totalTurns: 3, totalCostUsd: "1.2500", maxDurationSeconds: 3_600 },
+    });
+
+    await test.run();
+
+    const context = agent.specs[0]?.context ?? "";
+    expect(context).toContain("# You are continuing an interrupted attempt");
+    // The sequence, the turn and the attempt, so a reader of the prompt can find
+    // the exact row this workspace came from.
+    expect(context).toContain("checkpoint 4");
+    expect(context).toContain("turn 2 of attempt 1");
+    // The size of the restored work, computed from the patch rather than trusted
+    // from the event that announced it.
+    expect(context).toContain("1 file changed, +1/-1");
+    expect(context).toContain("> Corrected the addition in sum.ts");
+    // Cumulative budgets: a crash does not hand the replacement a fresh one.
+    expect(context).toContain("Turns already spent on this job: 3");
+    expect(context).toContain("$1.2500 of the job's $5.00 ceiling");
+    expect(context).toContain("git diff");
+    expect(context).toContain("do not begin the task again");
+  });
+
+  it("says nothing about recovery on a first attempt", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({ agent });
+
+    await test.run();
+
+    expect(agent.specs[0]?.context ?? "").not.toContain("interrupted attempt");
+  });
+
+  it("does not mistake a phase-boundary checkpoint for interrupted implementation", async () => {
+    // The newest row after `planning` is a boundary checkpoint, and it is on
+    // every ordinary run. Treating it as recovery would tell a first session
+    // that it was resuming work nobody had done.
+    const agent = new ScriptedAgent();
+    const test = harness({
+      agent,
+      checkpoint: {
+        ...turnCheckpoint(),
+        kind: "phase_boundary",
+        completedPhase: "planning",
+        agentTurn: null,
+      },
+    });
+
+    await test.run();
+
+    expect(agent.specs[0]?.context ?? "").not.toContain("interrupted attempt");
+  });
+
+  it("records the restored work even when the interrupted session said nothing", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({ agent, checkpoint: turnCheckpoint(), summary: null });
+
+    await test.run();
+
+    const context = agent.specs[0]?.context ?? "";
+    expect(context).toContain("# You are continuing an interrupted attempt");
+    expect(context).toContain("stopped before it described what it had done");
+  });
+
+  it("survives a checkpoint read that fails, because the workspace is already restored", async () => {
+    // `provisioning` applied and verified the patch before this phase ran. A
+    // database hiccup here costs the model a paragraph of orientation, and
+    // failing a job over that would be absurd.
+    const agent = new ScriptedAgent();
+    const test = harness({ agent, checkpoint: new Error("postgres is having a moment") });
+
+    await test.run();
+
+    expect(agent.specs[0]?.context ?? "").not.toContain("interrupted attempt");
+    expect(test.warnings.length).toBeGreaterThan(0);
   });
 
   it("passes the job's own ceilings into the session spec", async () => {
@@ -829,6 +922,51 @@ describe("deadlines", () => {
     await expect(running).rejects.toThrow(JobCancelledError);
   });
 });
+
+/**
+ * A checkpoint of one completed model turn, with a patch of one changed line.
+ *
+ * The patch is real Git output rather than a placeholder string, because the
+ * recovery block counts its files and lines back out of these exact bytes.
+ */
+function turnCheckpoint(): JobCheckpoint {
+  const patch = Buffer.from(
+    [
+      "diff --git a/src/sum.ts b/src/sum.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/sum.ts",
+      "+++ b/src/sum.ts",
+      "@@ -1 +1 @@",
+      "-export const sum = (a: number, b: number) => a + b - 1;",
+      "+export const sum = (a: number, b: number) => a + b;",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  return {
+    id: 41,
+    jobId: JOB.id,
+    sequence: 4,
+    attemptCount: 1,
+    kind: "agent_turn",
+    completedPhase: null,
+    resumePhase: "implementing",
+    agentTurn: 2,
+    baseCommitSha: "abc1234def5678",
+    sandboxId: "deadbeefdeadbeef",
+    envFingerprint: {},
+    state: { version: 1 },
+    patchFormat: "git_binary_full_index",
+    patchCompression: "gzip",
+    patchSha256: "0".repeat(64),
+    patchByteSize: patch.byteLength,
+    patchCompressedBytes: patch.byteLength,
+    patch,
+    restorePatch: patch,
+    createdAt: new Date("2026-08-14T10:00:00Z"),
+  };
+}
 
 /** Lets the phase get as far as starting a session before a test interferes. */
 function settle(): Promise<void> {

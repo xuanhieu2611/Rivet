@@ -370,8 +370,15 @@ describe("coding-agent execution through the worker", () => {
 
     const completed = await waitForStatus(job.id, "completed");
     expect(completed.attemptCount).toBe(2);
-    // Each attempt runs one planner and one implementation session.
-    expect(agent.starts).toHaveLength(4);
+    // Three sessions, not four: the first attempt planned before its
+    // implementation session hit the 429, and that plan was acknowledged by a
+    // phase-boundary checkpoint. The retry resumes at `implementing` and spends
+    // nothing on a second planner.
+    expect(agent.starts.map((start) => start.role)).toEqual([
+      "planner",
+      "implementer",
+      "implementer",
+    ]);
     expect(
       (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
     ).toHaveLength(1);

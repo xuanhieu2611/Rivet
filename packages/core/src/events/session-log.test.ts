@@ -11,6 +11,10 @@ import { type MessageEventLike, summaryFrom } from "./session-log";
  */
 
 const said = (message: string): MessageEventLike => ({ type: "agent.message", message });
+const started = (): MessageEventLike => ({
+  type: "agent.session_started",
+  message: "Started deepseek/deepseek-v4-flash on openrouter.",
+});
 
 describe("summaryFrom", () => {
   it("reads back the last thing the model said", () => {
@@ -51,5 +55,32 @@ describe("summaryFrom", () => {
 
   it("prefers the latest, because a reclaimed attempt runs its own session", () => {
     expect(summaryFrom([said("First attempt."), said("Second attempt.")])).toBe("Second attempt.");
+  });
+
+  it("stops at the newest session, so a silent one inherits nothing", () => {
+    // The Milestone 6 case. Worker A's session said something and was killed;
+    // worker B's replacement session ended on a tool call. Reporting A's closing
+    // message as B's account of the run would be a summary of work by a process
+    // that is no longer running, presented as if it were current.
+    expect(
+      summaryFrom([
+        started(),
+        said("Corrected the addition; the test still needs updating."),
+        started(),
+        { type: "agent.tool_completed", message: "bash finished." },
+      ]),
+    ).toBeNull();
+  });
+
+  it("reads the newest session's own summary when it has one", () => {
+    expect(
+      summaryFrom([started(), said("First attempt."), started(), said("Second attempt.")]),
+    ).toBe("Second attempt.");
+  });
+
+  it("ignores the planner's messages, which precede every implementation session", () => {
+    expect(summaryFrom([started(), said("Here is my plan."), started(), said("Fixed it.")])).toBe(
+      "Fixed it.",
+    );
   });
 });

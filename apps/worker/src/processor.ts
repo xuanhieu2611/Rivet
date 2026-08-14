@@ -7,9 +7,14 @@ import {
   createPhaseContextFactory,
   describeError,
   failureCategoryFor,
+  getLatestCheckpoint,
+  isBoundaryCheckpointPhase,
   JobTimedOutError,
   type Phase,
+  type PhaseContext,
+  planResume,
   releaseJob,
+  type ResumePlan,
   runPipeline,
   SandboxHolder,
   simulatedPipeline,
@@ -206,27 +211,53 @@ export function createProcessor(deps: ProcessorDeps) {
       // Build after the try begins so a faulty per-run factory follows the same
       // cleanup path as every other phase failure.
       const runPhases = deps.phaseFactory?.(injection) ?? phases;
-      const pipeline = runPipeline({
+
+      // One factory for the whole run, shared by the phase bodies and by the
+      // boundary capture below. It is not merely convenient: the factory
+      // remembers the base commit and environment fingerprint that provisioning
+      // made durable, and a second factory would checkpoint against the job row
+      // as it looked at claim time.
+      const contextFor = createPhaseContextFactory({
+        job: claimed,
+        // The fencing token. Every write a phase makes carries it, so a phase
+        // still running after the job was reclaimed writes nothing.
+        leaseOwner: workerId,
+        sandboxes,
+        signal: controller.signal,
+        log,
+        maxOutputBytes: config.sandbox.maxOutputBytes,
+        artifactMaxBytes: config.artifactMaxBytes,
+        checkpointMaxBytes: config.checkpointMaxBytes,
+        checkpointTimeoutMs: config.checkpointTimeoutMs,
+        repositoryDir: `${config.sandbox.workdir}/repo`,
+      });
+
+      const resume = await selectResumePlan({
+        jobId,
         phases: runPhases,
+        maxBytes: config.checkpointMaxBytes,
+        log,
+      });
+      if (resume.kind === "checkpoint") {
+        log.info(
+          {
+            checkpointSequence: resume.checkpoint.sequence,
+            checkpointKind: resume.checkpoint.kind,
+            resumePhase: resume.resumePhase,
+            fromAttempt: resume.checkpoint.attemptCount,
+          },
+          "resuming from a durable checkpoint",
+        );
+      }
+
+      const pipeline = runPipeline({
+        phases: resume.phases,
         signal: controller.signal,
         speed: config.pipelineSpeed,
         sleep: injection.sleep,
         ...(injection.fault ? { fault: injection.fault } : {}),
 
-        context: createPhaseContextFactory({
-          job: claimed,
-          // The fencing token. Every write a phase makes carries it, so a phase
-          // still running after the job was reclaimed writes nothing.
-          leaseOwner: workerId,
-          sandboxes,
-          signal: controller.signal,
-          log,
-          maxOutputBytes: config.sandbox.maxOutputBytes,
-          artifactMaxBytes: config.artifactMaxBytes,
-          checkpointMaxBytes: config.checkpointMaxBytes,
-          checkpointTimeoutMs: config.checkpointTimeoutMs,
-          repositoryDir: `${config.sandbox.workdir}/repo`,
-        }),
+        context: contextFor,
 
         onPhaseStart: async (phase) => {
           if (phase.status === currentStatus) {
@@ -258,6 +289,13 @@ export function createProcessor(deps: ProcessorDeps) {
 
         onPhaseComplete: async (phase, elapsedMs) => {
           log.debug({ phase: phase.label, elapsedMs }, "phase complete");
+
+          // The capture comes first, and the order is the acknowledgement. A
+          // phase is not safely complete until the workspace it produced is
+          // durable, so a crash between these two writes replays the phase
+          // rather than skipping it on the strength of an event.
+          await captureBoundary(contextFor, phase, sandboxes, jobId, log);
+
           await appendEvent({
             jobId,
             type: "phase.completed",
@@ -265,6 +303,33 @@ export function createProcessor(deps: ProcessorDeps) {
             data: { phase: phase.label, durationMs: elapsedMs },
             leaseOwner: workerId,
           });
+
+          // Said once, after the environment has been rebuilt and the patch
+          // verified, and before the resumed phase starts. `checkpoint.restored`
+          // states that a workspace came back; this states that the *run* is
+          // carrying on from a cursor rather than starting over.
+          if (resume.kind === "checkpoint" && phase.status === "provisioning") {
+            await appendEvent({
+              jobId,
+              type: "run.resumed",
+              message: `Resuming at ${resume.resumePhase} from checkpoint ${resume.checkpoint.sequence}.`,
+              data: {
+                checkpointId: resume.checkpoint.id,
+                checkpointSequence: resume.checkpoint.sequence,
+                checkpointKind: resume.checkpoint.kind,
+                ...(resume.checkpoint.completedPhase
+                  ? { completedPhase: resume.checkpoint.completedPhase }
+                  : {}),
+                ...(resume.checkpoint.agentTurn === null
+                  ? {}
+                  : { turn: resume.checkpoint.agentTurn }),
+                resumePhase: resume.resumePhase,
+                attempt: claimed.attemptCount,
+                dispatchGeneration,
+              },
+              leaseOwner: workerId,
+            });
+          }
         },
       });
 
@@ -321,6 +386,72 @@ export function createProcessor(deps: ProcessorDeps) {
       runs.release(jobId);
     }
   };
+}
+
+interface ResumeSelection {
+  jobId: string;
+  phases: readonly Phase[];
+  maxBytes: number;
+  log: Logger;
+}
+
+/**
+ * Which phases this claim runs, decided before the container exists.
+ *
+ * The read is deliberately **advisory**. `provisioning` performs the
+ * authoritative read of the same row - it is the phase that has to apply the
+ * patch and prove the checksum, and it is where a bad row becomes a
+ * `checkpoint.rejected` line and a terminal failure. Failing here instead would
+ * move that reporting into the processor and produce a job that ended with no
+ * explanation on its timeline, so a checkpoint that cannot be read or cannot be
+ * mapped onto this pipeline falls back to the fresh walk and lets provisioning
+ * say why the run stops. The fresh walk cannot silently discard the work either:
+ * provisioning is its first phase, and it will refuse before reaching a second.
+ */
+async function selectResumePlan(input: ResumeSelection): Promise<ResumePlan> {
+  const { jobId, phases, maxBytes, log } = input;
+  try {
+    const checkpoint = await getLatestCheckpoint(jobId, { maxBytes });
+    return planResume({ phases, checkpoint });
+  } catch (error) {
+    log.warn(
+      { err: error },
+      "could not select a resume plan; provisioning will report the checkpoint",
+    );
+    return { kind: "fresh", phases };
+  }
+}
+
+/**
+ * The durable workflow cursor, written when a phase's work is worth resuming.
+ *
+ * Skipped without complaint when there is no sandbox, which is what keeps the
+ * simulated pipeline free of any of this: `RIVET_SANDBOX=off` has no workspace
+ * to snapshot, and a phase that never created one has nothing whose absence is
+ * worth failing over. When there *is* a sandbox the failure is not swallowed -
+ * `PhaseContext.checkpoint` records `checkpoint.rejected` and raises, and the run
+ * fails with a checkpoint category rather than continuing under a durability
+ * promise it did not keep.
+ */
+async function captureBoundary(
+  contextFor: (phase: Phase) => PhaseContext,
+  phase: Phase,
+  sandboxes: SandboxHolder,
+  jobId: string,
+  log: Logger,
+): Promise<void> {
+  if (!isBoundaryCheckpointPhase(phase.status)) return;
+  if (!sandboxes.current) return;
+
+  const checkpoint = await contextFor(phase).checkpoint({
+    kind: "phase_boundary",
+    completedPhase: phase.status,
+    state: { version: 1 },
+  });
+  log.debug(
+    { jobId, phase: phase.label, checkpointSequence: checkpoint.sequence },
+    "captured a phase boundary checkpoint",
+  );
 }
 
 interface DestroyContext {

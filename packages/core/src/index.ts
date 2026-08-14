@@ -47,6 +47,7 @@ export * from "./pipeline/planning-phase";
 export * from "./pipeline/project";
 export * from "./pipeline/project-probe";
 export * from "./pipeline/provisioning-phase";
+export * from "./pipeline/resume-plan";
 export * from "./pipeline/run-pipeline";
 export * from "./pipeline/validation-phase";
 export * from "./sandbox/command-log";

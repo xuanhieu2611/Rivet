@@ -1,6 +1,11 @@
 import { renderImplementationPlanMarkdown, type ImplementationPlan } from "@rivet/contracts";
 
 import type { AgentToolbox, CodingAgentSpec } from "../agent/coding-agent";
+import type { JobCheckpoint } from "../checkpoints/checkpoint-store";
+import {
+  parseCheckpointPatchStats,
+  type CheckpointPatchStats,
+} from "../checkpoints/workspace-snapshot";
 import type { BaselineOutcome } from "../events/baseline-log";
 import { truncate } from "../sandbox/command-log";
 import { splitLines } from "./command-output";
@@ -65,6 +70,15 @@ const MANIFEST_CONTEXT_MAX_BYTES = 8_192;
  */
 const MANIFEST_MAX_BYTES = 1_048_576;
 
+/**
+ * How much of the interrupted session's closing message is carried forward.
+ *
+ * The row it comes from was already truncated to the session's preview bound, so
+ * this is a second, smaller bound rather than the only one: a recovery prompt is
+ * meant to orient a new session, not to replay the old one's prose at length.
+ */
+const RECOVERY_MESSAGE_MAX_BYTES = 2_048;
+
 /** The candidate root READMEs, in the order they are preferred. */
 const README_NAMES = ["README.md", "README.rst", "README.txt", "README"];
 
@@ -81,7 +95,7 @@ export function implementingPhase(
       role: "implementer",
       workdir: repoDir,
       task: { title: ctx.job.title, description: ctx.job.description },
-      context: await buildAgentContext(ctx, options, repoDir, "implementer"),
+      context: await buildAgentContext(ctx, options, repoDir, "implementer", agent),
       sessionTimeoutMs: agent.sessionTimeoutMs,
       commandTimeoutMs: options.commandTimeoutMs,
       previewMaxBytes: agent.previewMaxBytes,
@@ -152,6 +166,7 @@ export async function buildAgentContext(
   options: PipelineOptions,
   repoDir: string,
   role: AgentContextRole = "implementer",
+  agent?: AgentOptions,
 ): Promise<string> {
   const listing = await ctx.exec({
     argv: ["ls", "-1", "-a", repoDir],
@@ -174,6 +189,7 @@ export async function buildAgentContext(
   const scripts = await readScripts(ctx, options, repoDir, plan, role);
   const baseline = await readBaselineOutcome(ctx);
   const implementationPlan = role === "implementer" ? await readImplementationPlan(ctx) : null;
+  const recovery = role === "implementer" ? await readRecovery(ctx) : null;
 
   return [
     `# The repository you are working in`,
@@ -197,6 +213,7 @@ export async function buildAgentContext(
           ``,
           ...describeCompletion(testCommand(plan)),
           ...describeImplementationPlan(implementationPlan),
+          ...describeRecovery(ctx, recovery, testCommand(plan), agent),
         ]),
     ...readme,
     ...scripts,
@@ -314,6 +331,154 @@ function describeImplementationPlan(plan: ImplementationPlan | null): string[] {
   }
 
   return [`# Persisted implementation plan`, ``, renderImplementationPlanMarkdown(plan)];
+}
+
+/**
+ * What an earlier attempt already earned, or nothing on a first attempt.
+ *
+ * The one condition is an `agent_turn` checkpoint being the newest row *at the
+ * moment the implementation prompt is built*. That is a sound test rather than a
+ * convenient one: this attempt's own turn checkpoints do not exist yet - the
+ * session has not started - so a turn checkpoint here can only have come from a
+ * session that a previous worker was killed in the middle of. A phase-boundary
+ * checkpoint, by contrast, means implementation is either finished or has never
+ * started, and neither is a resumed session.
+ *
+ * Best effort, like everything else in this builder. A checkpoint that cannot be
+ * read is not a reason to fail a job whose workspace `provisioning` already
+ * restored and verified - it only costs the model the paragraph telling it where
+ * the edits came from.
+ */
+interface RecoveryContext {
+  checkpoint: JobCheckpoint;
+  stats: CheckpointPatchStats;
+  previousMessage: string | null;
+}
+
+async function readRecovery(ctx: PhaseContext): Promise<RecoveryContext | null> {
+  let checkpoint: JobCheckpoint | null;
+  try {
+    checkpoint = await ctx.readLatestCheckpoint();
+  } catch (error) {
+    ctx.log.warn({ err: error }, "could not read the latest checkpoint for recovery context");
+    return null;
+  }
+
+  if (checkpoint?.kind !== "agent_turn") return null;
+
+  let previousMessage: string | null = null;
+  try {
+    // The previous session's closing message: session-aware selection bounds
+    // this to the session that was interrupted, and no session of this attempt
+    // has started yet. See `events/session-log.ts`.
+    previousMessage = await ctx.readSummary();
+  } catch (error) {
+    ctx.log.warn({ err: error }, "could not read the interrupted session's last message");
+  }
+
+  return {
+    checkpoint,
+    // Recomputed from the restored patch rather than read from the event that
+    // announced it: the bytes are the authority, and they are already in hand.
+    stats: parseCheckpointPatchStats(checkpoint.restorePatch),
+    previousMessage,
+  };
+}
+
+/**
+ * The recovery block: what happened, what survived, and what is left to spend.
+ *
+ * Deliberately small. The whole event stream and every command transcript are
+ * still in Postgres for the UI to replay, and pasting them here would spend the
+ * context window re-litigating a session this model is not continuing so much as
+ * inheriting. What it needs is the state of the workspace, the fact that the
+ * work is real, and an instruction not to start over - the restored code and its
+ * tests are the authoritative record of everything else.
+ */
+function describeRecovery(
+  ctx: PhaseContext,
+  recovery: RecoveryContext | null,
+  command: string | null,
+  agent: AgentOptions | undefined,
+): string[] {
+  if (!recovery) return [];
+
+  const { checkpoint, stats, previousMessage } = recovery;
+  return [
+    ``,
+    `# You are continuing an interrupted attempt`,
+    ``,
+    `An earlier attempt at this task was interrupted - the worker running it stopped without`,
+    `finishing - and its work was not lost. It has been applied to this fresh checkout of`,
+    `${checkpoint.baseCommitSha.slice(0, 7)} and verified byte for byte. The changes already in this`,
+    `working tree are real work, not a mistake to undo.`,
+    ``,
+    `- Restored from checkpoint ${checkpoint.sequence}, taken after turn ${checkpoint.agentTurn ?? "?"} of attempt ${checkpoint.attemptCount}.`,
+    `- Restored: ${plural(stats.filesChanged, "file")} changed, +${stats.insertions}/-${stats.deletions}`,
+    `- The changes are unstaged, so \`git diff\` shows all of them.`,
+    ...describeRemainingBudget(ctx, agent),
+    ``,
+    ...(previousMessage
+      ? [
+          `The last thing the interrupted session said was:`,
+          ``,
+          ...quote(truncate(previousMessage, RECOVERY_MESSAGE_MAX_BYTES).text),
+          ``,
+        ]
+      : [`The interrupted session was stopped before it described what it had done.`, ``]),
+    `Start by reading \`git diff\` to see what is already done${command ? ` and running \`${command}\`` : ""},`,
+    `then carry on from there. Do not revert the restored changes and do not begin the task again`,
+    `from scratch: the work below counts, and redoing it spends budget this job has already spent.`,
+  ];
+}
+
+/**
+ * What is left of the job's ceilings, counted across every attempt.
+ *
+ * Turns and spend are cumulative job totals and survive a crash, which is the
+ * point: a worker dying does not hand the replacement a fresh budget. The
+ * wall-clock line is derived from `started_at`, which `claimJob` coalesces
+ * rather than overwrites, so it already counts recovery downtime. Model and
+ * tool calls are stated as this session's ceilings because that is what they
+ * currently are; Stage 8 makes them cumulative and this line becomes a
+ * subtraction like the others.
+ */
+function describeRemainingBudget(ctx: PhaseContext, agent: AgentOptions | undefined): string[] {
+  const job = ctx.job;
+  const spent = parseCostCeiling(job.totalCostUsd) ?? 0;
+  const ceiling = parseCostCeiling(job.maxCostUsd);
+  const minutesLeft = remainingMinutes(job.startedAt, job.maxDurationSeconds);
+
+  return [
+    `- Turns already spent on this job: ${job.totalTurns}${agent ? ` (this session may take ${agent.maxTurns})` : ""}`,
+    ...(ceiling === null
+      ? [`- Spend so far: $${spent.toFixed(4)}; no cost ceiling is configured.`]
+      : [`- Spend so far: $${spent.toFixed(4)} of the job's $${ceiling.toFixed(2)} ceiling.`]),
+    ...(minutesLeft === null
+      ? []
+      : [
+          `- Wall clock: about ${minutesLeft} minute${minutesLeft === 1 ? "" : "s"} of the job's` +
+            ` ${Math.round(job.maxDurationSeconds / 60)}-minute budget remain, and the time this job`,
+          `  spent waiting for a replacement worker counted against it.`,
+        ]),
+    `- This session may make at most ${job.maxModelCalls} model calls and ${job.maxToolCalls} tool calls.`,
+  ];
+}
+
+/** Whole minutes left, or null when the job has no recorded start. */
+function remainingMinutes(startedAt: Date | null, maxDurationSeconds: number): number | null {
+  if (!startedAt) return null;
+  const elapsedMs = Date.now() - startedAt.getTime();
+  if (!Number.isFinite(elapsedMs)) return null;
+  return Math.max(0, Math.round((maxDurationSeconds * 1_000 - elapsedMs) / 60_000));
+}
+
+function quote(text: string): string[] {
+  return text.split(/\r?\n/).map((line) => `> ${line}`);
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 /** Reads the latest complete plan through the context's durable artifact reader. */
