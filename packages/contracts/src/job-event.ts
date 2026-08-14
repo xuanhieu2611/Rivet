@@ -55,6 +55,26 @@ export const JOB_EVENT_TYPES = [
    * job - see PRD §11 C.
    */
   "baseline.recorded",
+
+  // --- coding agent (M4) -----------------------------------------------
+  // Deliberately coarse. There is no event here for a token delta or for a
+  // partial tool result, because Milestone 3's guarantee is at most one bounded
+  // event query per second per viewer, and a row per streamed token would cost
+  // that guarantee and produce a timeline nobody can read. A ten-minute session
+  // should leave tens of rows behind, not thousands.
+  /** A session exists: model, provider, and the tools it is actually holding. */
+  "agent.session_started",
+  "agent.turn_started",
+  /** One completed assistant message, truncated to a preview. Never a delta. */
+  "agent.message",
+  /** The model called a tool. Carries `commandExecutionId` when that tool was the shell. */
+  "agent.tool_started",
+  "agent.tool_completed",
+  /** One per turn, carrying what that turn cost. */
+  "agent.usage",
+  "agent.session_ended",
+  /** A ceiling in the job's budget was reached and the session was stopped. */
+  "agent.budget_exceeded",
 ] as const;
 
 export const jobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
@@ -108,6 +128,22 @@ export const FAILURE_CATEGORIES = [
    * exists so the reaper's log line names the same taxonomy everything else does.
    */
   "sandbox_leaked",
+
+  // --- coding agent (M4) -----------------------------------------------
+  /**
+   * The model provider could not be reached or refused for a reason that may
+   * pass: a 429, a 5xx, a dropped connection. Retryable, and the one failure in
+   * this system whose cause is a third party's bad ten minutes.
+   */
+  "agent_unavailable",
+  /**
+   * The session cannot run as configured: a rejected key, a model id the
+   * provider does not have, a harness that came up with the wrong tools.
+   *
+   * Terminal, because every one of those fails identically on the second
+   * attempt while spending another container and another clone to find out.
+   */
+  "agent_failed",
 
   "unknown",
 ] as const;
@@ -189,6 +225,48 @@ export type JobEventData = {
    * job - PRD §11 C.
    */
   baseline?: "passed" | "failed" | "skipped";
+
+  // --- coding agent (M4) -----------------------------------------------
+  /** The harness's session id, on every `agent.*` row, so one job's sessions stay separable. */
+  sessionId?: string;
+  /** The model id as configured, e.g. `deepseek/deepseek-v4-flash`. */
+  model?: string;
+  provider?: string;
+  /**
+   * The tools the session was actually holding, on `agent.session_started`.
+   *
+   * Recorded rather than assumed. The containment argument for running the
+   * harness on the worker host rests entirely on this list being Rivet's four,
+   * and a timeline that states what it was is the difference between believing
+   * that and being able to check it afterwards.
+   */
+  toolNames?: string[];
+  /** Which turn this belongs to, zero-based. */
+  turn?: number;
+  /** How many turns the session took, on `agent.session_ended`. */
+  turns?: number;
+  toolName?: string;
+  /** The harness's id for one tool call, pairing a start with its completion. */
+  toolCallId?: string;
+  /** Whether the tool reported an error. Not a job failure - the model reads it and reacts. */
+  toolError?: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
+  /**
+   * Null when the model has no rate table, which is a different fact from zero.
+   *
+   * Zero would mean a turn that cost nothing; null means spend for this model
+   * cannot be computed, which is also why a cost ceiling cannot be enforced
+   * against it.
+   */
+  costUsd?: number | null;
+  /** Why a session ended, on `agent.session_ended`. */
+  stopReason?: "completed" | "aborted" | "budget" | "timeout" | "error";
+  /** Which ceiling was hit, on `agent.budget_exceeded`. */
+  budget?: "cost" | "model_calls" | "tool_calls" | "turns";
+  /** What the value had reached, and what it was allowed to reach. */
+  budgetValue?: number;
+  budgetLimit?: number;
 };
 
 /** One row of the job timeline. */
@@ -236,6 +314,26 @@ const jobEventDataSchema = z
     cwd: z.string().optional(),
     commitSha: z.string().optional(),
     baseline: z.enum(["passed", "failed", "skipped"]).optional(),
+    sessionId: z.string().optional(),
+    model: z.string().optional(),
+    provider: z.string().optional(),
+    toolNames: z.array(z.string()).optional(),
+    turn: z.number().int().nonnegative().optional(),
+    turns: z.number().int().nonnegative().optional(),
+    toolName: z.string().optional(),
+    toolCallId: z.string().optional(),
+    toolError: z.boolean().optional(),
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+    // Nullable rather than merely optional: an absent cost and an
+    // uncomputable one are different facts and the UI renders them
+    // differently. Not an integer, obviously, and not constrained to be
+    // positive - a provider that reports a credit should round-trip.
+    costUsd: z.number().finite().nullable().optional(),
+    stopReason: z.enum(["completed", "aborted", "budget", "timeout", "error"]).optional(),
+    budget: z.enum(["cost", "model_calls", "tool_calls", "turns"]).optional(),
+    budgetValue: z.number().finite().optional(),
+    budgetLimit: z.number().finite().optional(),
   })
   .passthrough();
 
@@ -287,6 +385,22 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.cwd === undefined ? {} : { cwd: value.cwd }),
     ...(value.commitSha === undefined ? {} : { commitSha: value.commitSha }),
     ...(value.baseline === undefined ? {} : { baseline: value.baseline }),
+    ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId }),
+    ...(value.model === undefined ? {} : { model: value.model }),
+    ...(value.provider === undefined ? {} : { provider: value.provider }),
+    ...(value.toolNames === undefined ? {} : { toolNames: value.toolNames }),
+    ...(value.turn === undefined ? {} : { turn: value.turn }),
+    ...(value.turns === undefined ? {} : { turns: value.turns }),
+    ...(value.toolName === undefined ? {} : { toolName: value.toolName }),
+    ...(value.toolCallId === undefined ? {} : { toolCallId: value.toolCallId }),
+    ...(value.toolError === undefined ? {} : { toolError: value.toolError }),
+    ...(value.inputTokens === undefined ? {} : { inputTokens: value.inputTokens }),
+    ...(value.outputTokens === undefined ? {} : { outputTokens: value.outputTokens }),
+    ...(value.costUsd === undefined ? {} : { costUsd: value.costUsd }),
+    ...(value.stopReason === undefined ? {} : { stopReason: value.stopReason }),
+    ...(value.budget === undefined ? {} : { budget: value.budget }),
+    ...(value.budgetValue === undefined ? {} : { budgetValue: value.budgetValue }),
+    ...(value.budgetLimit === undefined ? {} : { budgetLimit: value.budgetLimit }),
   };
   const knownKeys = new Set(Object.keys(known));
   const extras = Object.fromEntries(
