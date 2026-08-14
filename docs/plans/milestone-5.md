@@ -1,6 +1,6 @@
 # Milestone 5: First autonomous coding job
 
-**Status: planned.**
+**Status: complete.**
 
 Milestone 4 proved the wiring: a model runs on the worker, its four tools reach into the job's
 container, and every turn it takes is on the timeline with a bill attached. What M4 deliberately did
@@ -409,6 +409,10 @@ presentations for the M5 events.
   without a second transport.
 
 ## Stage 8 - verification
+
+**Done.** Unit, integration, sandbox and streaming coverage now prove the M5 result without making
+CI depend on a model provider. The local `pnpm demo:job` command runs the same production worker
+against `rivet-fixture-node` with a real Pi session.
 
 Nothing here needs a model key, which is the property that keeps CI meaningful.
 

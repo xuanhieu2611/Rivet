@@ -237,6 +237,71 @@ describe("GET /api/jobs/:id/events against Postgres", () => {
     await reader.cancel();
   });
 
+  it("replays the M5 validation and artifact event types with their durable data", async () => {
+    const job = await createTestJob();
+    const [created] = await readAllEvents(job.id);
+    if (!created) throw new Error("Expected the job-created event.");
+
+    const expected = [
+      await appendEvent({
+        jobId: job.id,
+        type: "plan.deferred",
+        message: "No plan was produced.",
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "artifact.recorded",
+        message: "Recorded the diff.",
+        data: { artifactId: 1, artifactType: "diff", byteSize: 20, truncated: false },
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "validation.recorded",
+        message: "Fixed the baseline failure.",
+        data: {
+          validation: "fixed",
+          filesChanged: 1,
+          insertions: 2,
+          deletions: 1,
+        },
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "run.summarized",
+        message: "Run finished fixed.",
+        data: {
+          validation: "fixed",
+          filesChanged: 1,
+          insertions: 2,
+          deletions: 1,
+        },
+      }),
+    ];
+
+    const reader = await openStream(job.id, { after: created.id });
+    const received: WireJobEvent[] = [];
+    for (const _event of expected) received.push(await reader.nextJobEvent());
+
+    expect(received.map((event) => event.type)).toEqual([
+      "plan.deferred",
+      "artifact.recorded",
+      "validation.recorded",
+      "run.summarized",
+    ]);
+    expect(received[1]?.data).toMatchObject({
+      artifactType: "diff",
+      byteSize: 20,
+      truncated: false,
+    });
+    expect(received[2]?.data).toMatchObject({
+      validation: "fixed",
+      filesChanged: 1,
+      insertions: 2,
+      deletions: 1,
+    });
+    await reader.cancel();
+  });
+
   it("delivers an event appended after the stream is already live", async () => {
     const job = await createTestJob();
     const [created] = await readAllEvents(job.id);

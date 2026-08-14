@@ -528,4 +528,83 @@ describe("validation through the worker", () => {
       "diff_stat",
     ]);
   });
+
+  it("records a fixed outcome when a red baseline becomes green", async () => {
+    let suiteRuns = 0;
+    const sandbox = fixtureProvider([
+      {
+        match: (argv) => argv[0] === "npm" && argv[1] === "run" && suiteRuns++ === 0,
+        exitCode: 1,
+        stdout: "2 failed | 8 passed\n",
+      },
+    ]);
+    const agent = new FakeCodingAgent({ script: [successfulSession()] });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    await waitForStatus(job.id, "completed");
+    const events = await readEvents(job.id);
+    const artifacts = await listArtifacts(job.id);
+
+    expect(events.find((event) => event.type === "baseline.recorded")?.data).toMatchObject({
+      baseline: "failed",
+    });
+    expect(events.find((event) => event.type === "validation.recorded")?.data).toMatchObject({
+      validation: "fixed",
+    });
+    expect(artifacts.map((artifact) => artifact.type)).toEqual([
+      "diff",
+      "diff_stat",
+      "implementation_summary",
+    ]);
+  });
+
+  it("keeps the diff when cancellation arrives during validation", async () => {
+    let suiteRuns = 0;
+    const sandbox = fixtureProvider([
+      {
+        match: (argv) => argv[0] === "npm" && argv[1] === "run" && suiteRuns++ > 0,
+        hang: true,
+      },
+    ]);
+    const agent = new FakeCodingAgent({ script: [successfulSession()] });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    await waitFor(
+      async () => {
+        const events = await readEvents(job.id);
+        const diffRecorded = events.some(
+          (event) => event.type === "artifact.recorded" && event.data?.artifactType === "diff",
+        );
+        const validationStarted = events.some(
+          (event) =>
+            event.type === "command.started" &&
+            event.data?.phase === "Validate change" &&
+            event.data.argv?.[0] === "npm",
+        );
+        return diffRecorded && validationStarted ? true : null;
+      },
+      { label: "validation to start after the diff was persisted" },
+    );
+
+    await expect(requestJobCancellation(job.id, queue.queue)).resolves.toMatchObject({
+      outcome: "cancel_requested",
+    });
+
+    const cancelled = await waitForStatus(job.id, "cancelled");
+    expect(cancelled.failureCategory).toBe("cancelled");
+
+    const events = await readEvents(job.id);
+    expect(events.some((event) => event.type === "agent.session_ended")).toBe(true);
+    expect(events.some((event) => event.type === "validation.recorded")).toBe(false);
+    expect((await listArtifacts(job.id)).map((artifact) => artifact.type)).toEqual([
+      "diff",
+      "diff_stat",
+    ]);
+  });
 });

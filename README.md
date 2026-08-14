@@ -15,7 +15,7 @@ boundary is the point of the project, and it is what the architecture is organiz
 
 ## Status
 
-**Milestone 4 - coding-agent integration - is complete.** A Docker-backed job now provisions a
+**Milestone 5 - first autonomous coding job - is complete.** A Docker-backed job now provisions a
 repository, records its baseline, and gives the `implementing` phase to a Pi session running in the
 trusted worker. Pi has exactly four tools - `read`, `write`, `edit`, and `bash` - and every one is
 backed by the job's sandbox. The OpenRouter credential stays on the worker host; it never enters the
@@ -28,13 +28,16 @@ log as Rivet's own provisioning and test commands. Usage totals are persisted un
 lease, and cancellation, job deadlines, budget ceilings, retryable provider outages, and terminal
 provider configuration errors all follow the existing lifecycle machinery.
 
-Analysis, planning, review, and finalization remain simulated until their later milestones. The
-integration suite uses a scripted agent with real Postgres, Redis, BullMQ, and the production
-worker; the sandbox suite exercises the tool layer against Docker. `pnpm demo:agent` runs one real
-Pi session against a tiny fixture repository and prints its transcript locally.
+Analysis now establishes a pre-edit test baseline, planning records that no plan was produced yet,
+validation compares the post-session suite with that baseline, and finalization persists the diff
+stats and the session's own summary. Review remains simulated until Milestone 8, and branch, commit,
+push and pull request remain Milestone 9 work. The integration suite uses a scripted agent with real
+Postgres, Redis, BullMQ, and the production worker; the sandbox suite exercises the full pipeline
+against Docker. `pnpm demo:agent` runs one real Pi session against a tiny fixture repository, while
+`pnpm demo:job` runs the complete M5 job locally.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together and
-[docs/plans/milestone-4.md](docs/plans/milestone-4.md) for the committed M4 record.
+[docs/plans/milestone-5.md](docs/plans/milestone-5.md) for the committed M5 record.
 
 ## Prerequisites
 
@@ -102,6 +105,16 @@ pnpm demo:agent
 It creates a disposable Docker sandbox, asks Pi to fix a one-line `sum()` bug, runs the fixture
 test, and prints the session events and final usage. The command is local-only and is not part of
 CI.
+
+To run the complete fixture job locally, put `OPENROUTER_API_KEY` in `.env.local` and run:
+
+```bash
+pnpm demo:job
+```
+
+The command starts a worker child, creates a job against `rivet-fixture-node`, watches its durable
+event log, and prints the resulting diff and implementation summary. It needs the local database,
+Redis, Docker, and a model provider, and is not part of CI.
 
 To watch the recovery machinery instead, break a job on purpose. Set `RIVET_FAULT_PHASE=testing`
 with one of the `RIVET_FAULT_MODE` values and restart the worker: `throw` retries the job with
@@ -224,6 +237,7 @@ Every command is run from the repository root. Turborepo fans them out across th
 | ----------------------- | ------------------------------------------------------------------------------- |
 | `pnpm dev`              | Runs the Next.js dev server **and** the worker                                  |
 | `pnpm demo:agent`       | Runs one real Pi session against a disposable fixture in Docker                 |
+| `pnpm demo:job`         | Runs the full M5 job against `rivet-fixture-node` with a real Pi session        |
 | `pnpm build`            | Production build of every workspace. Needs no database and no Redis             |
 | `pnpm lint`             | ESLint across every workspace                                                   |
 | `pnpm typecheck`        | `tsc --noEmit` across every workspace                                           |
@@ -295,7 +309,7 @@ built before any agent behaviour.
 - [x] **M4 - Coding-agent integration.** A Pi session starts programmatically in the worker with
       exactly four sandbox-backed tools, durable agent events and usage, budget enforcement,
       cancellation and provider failure classification; `pnpm demo:agent` proves the live adapter.
-- [ ] **M5 - First autonomous coding job.** One implementation session solves a trivial fixture bug
+- [x] **M5 - First autonomous coding job.** One implementation session solves a trivial fixture bug
       unattended, with budget tracking and the final diff persisted.
 - [ ] **M6 - Planning, persistence and recovery.** Checkpoints, resumable jobs, and surviving a
       worker crash mid-run without duplicating external side effects.

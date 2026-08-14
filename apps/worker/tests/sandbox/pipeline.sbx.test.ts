@@ -1,4 +1,13 @@
-import { buildPipeline, createJob, listCommands, listEvents } from "@rivet/core";
+import { FakeCodingAgent } from "@rivet/agent";
+import {
+  buildPipeline,
+  createJob,
+  getArtifact,
+  listArtifacts,
+  listCommands,
+  listEvents,
+  type AgentOptions,
+} from "@rivet/core";
 import { DockerSandboxProvider } from "@rivet/sandbox";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -40,7 +49,10 @@ afterAll(async () => {
   await closeConnections();
 });
 
-function startRealWorker(suite: string): { queue: TestQueue; worker: TestWorker } {
+function startRealWorker(
+  suite: string,
+  options: { agent?: AgentOptions; artifactMaxBytes?: number } = {},
+): { queue: TestQueue; worker: TestWorker } {
   const testQueue = createTestQueue(suite, { attempts: 1 });
   const sandboxConfig = {
     mode: "docker" as const,
@@ -72,10 +84,18 @@ function startRealWorker(suite: string): { queue: TestQueue; worker: TestWorker 
     installTimeoutMs: sandboxConfig.installTimeoutMs,
     baselineTimeoutMs: sandboxConfig.baselineTimeoutMs,
     diffMaxBytes: sandboxConfig.diffMaxBytes,
+    ...(options.agent ? { agent: options.agent } : {}),
   });
   const testWorker = startTestWorker({
     queue: testQueue.queue,
-    config: { ...TEST_CONFIG, pipelineSpeed: 0, sandbox: sandboxConfig },
+    config: {
+      ...TEST_CONFIG,
+      pipelineSpeed: 0,
+      sandbox: sandboxConfig,
+      ...(options.artifactMaxBytes === undefined
+        ? {}
+        : { artifactMaxBytes: options.artifactMaxBytes }),
+    },
     phases,
   });
 
@@ -158,5 +178,78 @@ describe("real sandbox pipeline", () => {
     const failed = await waitForStatus(job.id, "failed", { timeoutMs: 45_000 });
     expect(failed.failureCategory).toBe("repo_unavailable");
     expect((await readJob(job.id)).attemptCount).toBe(1);
+  });
+
+  it("captures and truncates a real diff while preserving its true byte size", async () => {
+    const artifactMaxBytes = 1_024;
+    const generated = `${"const generated = true;\n".repeat(1_000)}\n`;
+    const agent = new FakeCodingAgent({
+      script: [
+        {
+          events: [
+            {
+              type: "session_started",
+              sessionId: "sandbox-diff-session",
+              model: "fixture-model",
+              provider: "fixture-provider",
+              toolNames: ["bash", "edit", "read", "write"],
+            },
+            {
+              type: "assistant_message",
+              turn: 0,
+              text: "Added a generated module and verified the repository tests.",
+            },
+            {
+              type: "session_ended",
+              reason: "completed",
+              turns: 1,
+              usage: {
+                inputTokens: 0,
+                outputTokens: 0,
+                cacheReadTokens: 0,
+                cacheWriteTokens: 0,
+                costUsd: 0,
+              },
+            },
+          ],
+          useTools: async (tools, signal) => {
+            await tools.writeFile("/home/node/workspace/repo/generated.js", generated, signal);
+          },
+        },
+      ],
+    });
+    const agentOptions: AgentOptions = {
+      coding: agent,
+      sessionTimeoutMs: 30_000,
+      maxTurns: 4,
+      previewMaxBytes: 512,
+      fileMaxBytes: 16_384,
+    };
+    const running = startRealWorker("sandbox-m5-diff", {
+      agent: agentOptions,
+      artifactMaxBytes,
+    });
+    const job = await createFixtureJob("green");
+    await enqueue(running.queue.queue, job.id);
+
+    await waitForStatus(job.id, "completed", { timeoutMs: 45_000 });
+    const artifacts = await listArtifacts(job.id);
+    const diff = artifacts.find((artifact) => artifact.type === "diff");
+    if (!diff) throw new Error("Expected the validation diff artifact.");
+
+    expect(diff.truncated).toBe(true);
+    expect(diff.byteSize).toBeGreaterThan(artifactMaxBytes);
+    expect(diff.metadata).toMatchObject({ filesChanged: 1 });
+
+    const stored = await getArtifact(job.id, diff.id);
+    expect(stored?.content).toContain("bytes elided");
+    expect(Buffer.byteLength(stored?.content ?? "", "utf8")).toBeLessThan(diff.byteSize);
+
+    const events = await listEvents(job.id, { limit: 500 });
+    expect(events.find((event) => event.type === "validation.recorded")?.data).toMatchObject({
+      validation: "verified",
+      filesChanged: 1,
+    });
+    expect(events.some((event) => event.type === "run.summarized")).toBe(true);
   });
 });

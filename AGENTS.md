@@ -12,14 +12,14 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 4 is complete.** Jobs execute. Creating one enqueues it, a worker claims
+**Current state: Milestone 5 is complete.** Jobs execute. Creating one enqueues it, a worker claims
 it under a Postgres lease, provisions a sandbox, records a baseline, runs a Pi coding session during
 `implementing`, heartbeats while it runs, and lands it in a terminal status. Retries, cancellation,
 timeouts, crash recovery, agent budgets, usage persistence, and provider failure classification all
-work and are covered by the unit and integration suites. Review remains simulated until Milestone 8,
-and the branch, commit and pull request belong to Milestone 9.
+work and are covered by the unit, integration, sandbox and streaming suites. Review remains
+simulated until Milestone 8, and the branch, commit and pull request belong to Milestone 9.
 
-Milestone 5 is in progress. Its phase layout has landed - the baseline runs at `analyzing`, before
+Milestone 5 is complete. Its phase layout has landed - the baseline runs at `analyzing`, before
 anything has been edited, and `planning` records one `plan.deferred` event instead of sleeping for
 two seconds as though a plan were being made - and `testing` is now validation. It stages the
 working tree, keeps `git diff --cached` and its `--numstat` totals as `diff` and `diff_stat`
@@ -29,7 +29,8 @@ deliberate and the two failing ones are terminal. `finalizing` is real too: it k
 last assistant message as an `implementation_summary` artifact - reading it back out of the event
 log rather than across a phase boundary, because `runPipeline` hands nothing from one phase to the
 next - and writes the run's closing `run.summarized` line carrying the validation outcome and the
-diff totals. Branch, commit, push and pull request stay with Milestone 9.
+diff totals. `pnpm demo:job` exercises the completed flow against the public fixture with a real Pi
+session. Branch, commit, push and pull request stay with Milestone 9.
 
 `packages/sandbox` is real; `buildPipeline()` gives `provisioning`, `analyzing`, `planning`,
 `implementing`, `testing` and `finalizing` real bodies - create a container, clone the repository,
@@ -77,6 +78,7 @@ pnpm test:integration    # the *.int.test.ts suite; needs a LOCAL Postgres and R
 pnpm test:sandbox        # the *.sbx.test.ts suite; needs LOCAL Postgres, Redis and Docker
 pnpm test:streaming      # the web SSE suite; needs LOCAL Postgres, no Redis or Docker
 pnpm demo:agent          # one real Pi session against a disposable Docker fixture
+pnpm demo:job             # full M5 job against rivet-fixture-node with Pi, Postgres, Redis and Docker
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 
