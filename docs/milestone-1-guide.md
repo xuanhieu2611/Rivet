@@ -485,11 +485,12 @@ signal something has been designed wrong.
 Also deleted in M2: the fault injector, `RIVET_PIPELINE_SPEED`, and the `simulated_failure` failure
 category.
 
-### Still marked TODO
+### Milestone 3 follow-up
 
-`<JobStatusPoller>` is `TODO(M3)`: it calls `router.refresh()` every 2 seconds and exists only
-because SSE does not land until Milestone 3. `GET /api/jobs/:id/events?after=<id>` already has the
-cursor contract SSE needs, so M3 changes the transport, not the contract.
+The job detail page now uses `GET /api/jobs/:id/events?after=<id>` as a content-negotiated SSE
+stream. The durable cursor contract described here is unchanged: reconnects use the event id, and
+the client reduces replayed rows idempotently. The temporary page-refresh mechanism from the M1/M2
+demo is gone.
 
 ---
 

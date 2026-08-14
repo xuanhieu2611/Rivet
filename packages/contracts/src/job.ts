@@ -30,7 +30,7 @@ export const jobStatusSchema = z.enum(JOB_STATUSES);
 
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
-/** Statuses from which a job never transitions again - the UI stops polling here. */
+/** Statuses from which a job never transitions again - the live stream closes here. */
 export const TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set<JobStatus>([
   "completed",
   "failed",

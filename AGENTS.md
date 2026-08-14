@@ -12,19 +12,22 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 1 is complete.** Jobs execute. Creating one enqueues it, a worker claims
-it under a Postgres lease, walks it through a **simulated** seven-phase pipeline, heartbeats while
-it runs, and lands it in a terminal status. Retries, cancellation, timeouts, and crash recovery all
-work and are covered by an integration suite. What is still fake is the work itself: the phases are
-sleeps. There is no event stream (M3) and no model call (M4).
+**Current state: Milestone 3 is complete.** Jobs execute. Creating one enqueues it, a worker claims
+it under a Postgres lease, provisions a sandbox, records a baseline, walks the seven-phase pipeline,
+heartbeats while it runs, and lands it in a terminal status. Retries, cancellation, timeouts, and
+crash recovery all work and are covered by the integration suites. The five phases that do not yet
+need a coding agent remain simulated, and there is no model call until Milestones 4 and 5.
 
-Milestone 2 is in progress and now runs end to end. `packages/sandbox` is real; `buildPipeline()`
-gives `provisioning` and `testing` real bodies - create a container, clone the repository, resolve
-the commit, install dependencies, then run the repository's own test suite and record the result -
-and `apps/worker` calls it, selected by `RIVET_SANDBOX` (`docker` by default, `off` for the
-simulated pipeline). The processor owns the container and destroys it on every exit; the sweeper
-reaps whatever a `kill -9` left behind. What remains is the UI, the `*.sbx.test.ts` suite and its CI
-job, and the docs.
+`packages/sandbox` is real; `buildPipeline()` gives `provisioning` and `testing` real bodies -
+create a container, clone the repository, resolve the commit, install dependencies, then run the
+repository's own test suite and record the result - and `apps/worker` calls it, selected by
+`RIVET_SANDBOX` (`docker` by default, `off` for the simulated pipeline). The processor owns the
+container and destroys it on every exit; the sweeper reaps whatever a `kill -9` left behind.
+
+M3 makes the append-only event log observable. The job detail route serves JSON to ordinary callers
+and a Postgres-backed SSE stream to live viewers. The browser reducer reconnects from durable event
+ids, deduplicates replayed rows, closes hidden tabs, and drains terminal cleanup before one final
+refresh. Commands expose a start event immediately and fetch their bounded transcript lazily.
 
 **A red baseline is not a failed job.** The `testing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
@@ -44,6 +47,7 @@ pnpm lint                # eslint, type-aware
 pnpm typecheck           # tsc --noEmit across every workspace
 pnpm test                # vitest across every workspace; no database, no Redis
 pnpm test:integration    # the *.int.test.ts suite; needs a LOCAL Postgres and Redis
+pnpm test:streaming      # the web SSE suite; needs LOCAL Postgres, no Redis or Docker
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 
@@ -87,6 +91,14 @@ deliberately does **not** load `.env.local`, and it refuses to run against any h
 plainly local, because every case truncates `jobs` and `job_events` and `.env.local` on a dev
 machine points at the real Neon database. `RIVET_ALLOW_REMOTE_INTEGRATION=1` is the escape hatch and
 exists only so overriding the guard has to be deliberate.
+
+### Running the streaming suite
+
+`pnpm test:streaming` runs the real-Postgres web suite in `apps/web/tests/streaming`. It exercises
+the actual SSE route, replay and reconnect cursors, live append delivery, terminal draining, abort
+cleanup, two-viewer reads, and JSON compatibility. It needs local Postgres only, reads `.env.test`,
+never `.env.local`, and refuses a non-local database unless `RIVET_ALLOW_REMOTE_INTEGRATION=1` is
+set. It truncates `jobs` and `job_events`, so run it separately from the worker integration suite.
 
 ### Docker
 
@@ -207,6 +219,20 @@ transaction and the event lands atomically with the status change it describes; 
 runs on the pool. That is why interactive transactions are required, and therefore why the `pg`
 driver was chosen over Neon's HTTP driver. Nothing ever updates or deletes an event row.
 
+**`job_events` remains the source of truth for live replay.** The SSE route tails Postgres directly;
+it does not use Redis Pub/Sub or keep a second event history. A visible active job page issues at
+most one bounded event query per second, hidden tabs close their stream, and terminal streams close
+after a short cleanup grace period. Every durable frame carries its event id. Reconnects resolve the
+maximum of `?after` and `Last-Event-ID`, and the browser reducer deduplicates by id, so
+at-least-once delivery never creates duplicate visible rows. The ordinary JSON events response
+remains available through content negotiation, and a streaming transport failure never changes the
+job status.
+
+**Command rows stay append-only.** A command start is visible immediately through a
+`commandExecutionId` in event JSON; the durable `job_commands` row is created only after execution
+returns, and its bounded transcript is fetched separately. Do not turn command lifecycle correlation
+into an update-in-place command ledger.
+
 **Importing `@rivet/queue` must never open a connection or throw**, the same rule as
 `@rivet/database` and for the same reason: `pnpm build` runs in CI with no `DATABASE_URL` and no
 `REDIS_URL`. The ioredis client and the `Queue` are both built inside functions and memoized, and
@@ -288,29 +314,34 @@ insert with no remapping.
   imports must be written as `import type`.
 - Prettier formats Markdown too. Run `pnpm format` after editing docs or CI will fail on
   `format:check`.
-- Client components are the exception, not the rule: currently only the new-job form, the cancel
-  button, and the status poller.
+- Client components are the exception, not the rule: currently the new-job form, cancel button, and
+  job-live provider plus its status, timeline, and command-log consumers.
 
-### Scaffolding to delete
+### Retired scaffolding and live updates
 
 Milestone 0's scaffolding (`PATCH /api/jobs/:id`, `nextStatus()`, `HAPPY_PATH_SEQUENCE`,
 `AdvanceStatusControl`, `updateJobStatus()`) is gone, which is what makes "nothing outside
 `transitions.ts` writes `jobs.status`" literally true. Do not reintroduce a status writer.
 
-What is left is `apps/web/components/job-status-poller.tsx`: a client component calling
-`router.refresh()` every two seconds while a job is non-terminal, because the detail page is
-server-rendered and nothing else asks for an update. It carries a `TODO(M3)` marker and is deleted
-when SSE lands.
+Milestone 3's live provider owns the detail page's EventSource lifecycle. It closes streams while a
+tab is hidden, reconnects from the latest durable cursor when visible, deduplicates replayed event
+ids, and performs one `router.refresh()` after the server sends `stream.end`. There is no interval
+that refreshes the page per event, and no polling component remains.
 
 ## CI
 
-`.github/workflows/ci.yml` has two jobs that run in parallel and share nothing. **Verify** runs
-typecheck, lint, format:check, test, build with no database and no Redis - that is the property that
-keeps the lazy clients and `force-dynamic` honest, and merging the two jobs would cost it.
-**Integration** brings up `postgres:17` and `redis:8` service containers and runs
-`pnpm test:integration`. There is deliberately no separate migrate step: the suite's own
+`.github/workflows/ci.yml` has four independent jobs that run in parallel and share nothing.
+**Verify** runs typecheck, lint, format:check, test, and build with no database, Redis, or Docker -
+that is the property that keeps the lazy clients and `force-dynamic` honest, and merging the jobs
+would cost it. **Integration** brings up `postgres:17` and `redis:8` service containers and runs
+`pnpm test:integration`. **Sandbox** adds Docker and runs the real adapter suite. **Streaming**
+brings up only `postgres:17` and runs `pnpm test:streaming`.
+
+There is deliberately no separate migrate step in the infrastructure suites: each suite's own
 `globalSetup` applies migrations from the same `drizzle/` folder with the same migrator as
-`pnpm db:migrate`, because a schema built any other way is a schema no deployment has.
+`pnpm db:migrate`, because a schema built any other way is a schema no deployment has. Streaming is
+kept in its own CI job because it truncates the same Postgres tables as the worker integration
+suite.
 
 `.github/workflows/neon-branch.yml` creates a `preview/pr-<n>` Neon branch per PR and applies
 migrations to it. It skips cleanly when the `NEON_API_KEY` secret is missing (it is not yet set), so

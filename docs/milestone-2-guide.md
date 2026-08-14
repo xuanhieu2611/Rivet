@@ -743,8 +743,8 @@ GET /api/jobs/:id/commands?after=<id>
 GET /api/jobs/:id/commands/:commandId
 ```
 
-The list endpoint omits stdout and stderr so polling or future streaming does not repeatedly move
-large transcripts.
+The list endpoint omits stdout and stderr so initial reads and event replay do not repeatedly move
+large transcripts. M3 fetches one bounded transcript only when its command completes or is opened.
 
 ---
 
@@ -978,7 +978,8 @@ Milestone 2 is intentionally incomplete:
 - Five of seven phases are still sleeps.
 - There is no Pi session or model call.
 - There is no code editing.
-- There is no live event stream. The page still polls with `router.refresh()`.
+- Milestone 3 now provides a live Postgres-backed SSE stream; this M2 guide does not detail its
+  transport or client reducer.
 - There is no checkpoint or resume into an existing sandbox.
 - There is no private repository authentication.
 - There is no hardened network boundary.
@@ -988,9 +989,9 @@ Milestone 2 is intentionally incomplete:
 - Command output is capped in Postgres rather than archived in object storage.
 
 These are milestone boundaries, not hidden claims. Milestone 3 makes execution observable in real
-time. Milestones 4 and 5 add Pi and the first autonomous coding flow. Milestone 6 adds checkpoints
-and recovery. Milestone 7 expands deterministic validation. Milestone 9 adds GitHub identity and
-short-lived credentials.
+time, while this guide remains focused on the M2 sandbox. Milestones 4 and 5 add Pi and the first
+autonomous coding flow. Milestone 6 adds checkpoints and recovery. Milestone 7 expands deterministic
+validation. Milestone 9 adds GitHub identity and short-lived credentials.
 
 ---
 

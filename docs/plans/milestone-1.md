@@ -43,9 +43,9 @@ Flagged so they are easy to overrule:
    status enum is a closed state machine that is indexed and queried on, so it earns a real Postgres
    enum plus the drift assertion. The failure taxonomy in PRD §23 has thirteen entries today and
    will churn every milestone; paying a migration per new category is not worth it.
-4. **A dev-only status poller replaces the dev-only advance button.** Without SSE (M3) the job page
-   would need manual refreshing to see anything move, which ruins the demo checkpoint. It is a
-   client component marked `TODO(M3)`, and it is smaller than the scaffolding it replaces.
+4. **A dev-only status refresh replaces the dev-only advance button.** Without SSE (M3) the job page
+   would need manual refreshing to see anything move, which ruins the demo checkpoint. It is a small
+   client component and smaller than the scaffolding it replaces.
 5. **The worker uses the pooled `DATABASE_URL`** with a small pool (`max: 5`), same as the web app.
 
 ---
@@ -779,9 +779,9 @@ failure at `error` and append a `job.created` event noting the enqueue did not l
   version of PRD §18.4's left column. Static server-rendered list for now.
 - **Attempt count, failure category, and duration** on the detail page.
 - **Cancel button** for non-terminal jobs.
-- **`<JobStatusPoller>`**, a client component that calls `router.refresh()` every 2 seconds while
-  the status is non-terminal and stops at a terminal status. Marked
-  `TODO(M3): delete when SSE lands`. Roughly 25 lines, and without it the demo checkpoint requires
+- **Temporary status refresh**, a client component that calls `router.refresh()` every 2 seconds
+  while the status is non-terminal and stops at a terminal status. It keeps the M1 demo observable
+  until M3 replaces it with SSE. Roughly 25 lines, and without it the demo checkpoint requires
   manual refreshing.
 
 ### 8.4 Deletions
@@ -944,17 +944,17 @@ callbacks as arguments.
 
 Sized so each one is reviewable and leaves `main` green.
 
-| #   | Title                               | Contents                                                                                                                            | Est. |
-| --- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| 1   | Extract `packages/core`             | Move `job-service.ts` and its tests out of `apps/web`, add the package scaffolding, update imports. Zero behaviour change.          | 1-2h |
-| 2   | Lease, event, and retry schema      | Schema edits, generated migration, contracts (`JobEvent`, event types, failure categories), `transitions.ts` + guard table + tests. | 3-4h |
-| 3   | `packages/queue`                    | The `JobQueue` port in core, the BullMQ adapter, the in-memory fake, the lazy connection. Web enqueues on create. No worker yet.    | 2-3h |
-| 4   | `apps/worker`                       | Config, logger, identity, claim, heartbeat, pipeline runner, processor, graceful shutdown. Root `pnpm dev` runs both apps.          | 4-6h |
-| 5   | Delete M0 scaffolding, add timeline | Remove `PATCH`, `nextStatus`, `AdvanceStatusControl`. Add the events timeline, attempt count, poller, `GET /api/jobs/:id/events`.   | 2-3h |
-| 6   | Failures, retries, timeout, cancel  | `classify()`, retry/terminal paths, `UnrecoverableError`, timeout via `AbortSignal`, `POST /api/jobs/:id/cancel`, cancel button.    | 3-4h |
-| 7   | Sweeper and crash recovery          | `reclaimExpiredJobs`, the job scheduler, the orphaned-`queued` reconciliation, fault injection modes.                               | 2-3h |
-| 8   | Integration tests and CI            | `*.int.test.ts` convention, vitest global setup, all twelve tests from §10.2, the new CI job.                                       | 4-5h |
-| 9   | Docs                                | `docs/architecture.md` rewrite of the affected sections, `AGENTS.md` invariants and commands, `README.md`.                          | 1-2h |
+| #   | Title                               | Contents                                                                                                                                            | Est. |
+| --- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| 1   | Extract `packages/core`             | Move `job-service.ts` and its tests out of `apps/web`, add the package scaffolding, update imports. Zero behaviour change.                          | 1-2h |
+| 2   | Lease, event, and retry schema      | Schema edits, generated migration, contracts (`JobEvent`, event types, failure categories), `transitions.ts` + guard table + tests.                 | 3-4h |
+| 3   | `packages/queue`                    | The `JobQueue` port in core, the BullMQ adapter, the in-memory fake, the lazy connection. Web enqueues on create. No worker yet.                    | 2-3h |
+| 4   | `apps/worker`                       | Config, logger, identity, claim, heartbeat, pipeline runner, processor, graceful shutdown. Root `pnpm dev` runs both apps.                          | 4-6h |
+| 5   | Delete M0 scaffolding, add timeline | Remove `PATCH`, `nextStatus`, `AdvanceStatusControl`. Add the events timeline, attempt count, temporary status refresh, `GET /api/jobs/:id/events`. | 2-3h |
+| 6   | Failures, retries, timeout, cancel  | `classify()`, retry/terminal paths, `UnrecoverableError`, timeout via `AbortSignal`, `POST /api/jobs/:id/cancel`, cancel button.                    | 3-4h |
+| 7   | Sweeper and crash recovery          | `reclaimExpiredJobs`, the job scheduler, the orphaned-`queued` reconciliation, fault injection modes.                                               | 2-3h |
+| 8   | Integration tests and CI            | `*.int.test.ts` convention, vitest global setup, all twelve tests from §10.2, the new CI job.                                                       | 4-5h |
+| 9   | Docs                                | `docs/architecture.md` rewrite of the affected sections, `AGENTS.md` invariants and commands, `README.md`.                                          | 1-2h |
 
 Roughly 22 to 32 hours. PRs 1 through 4 are the spine; if time runs short, 7 and 8 are what make the
 milestone worth having, not 5.
@@ -971,7 +971,7 @@ milestone worth having, not 5.
   reason the database client is; `heartbeat * 3 <= lease`; event types and failure categories are
   Zod-validated text, and why they are not pgEnums.
 - Commands: `pnpm test:integration`, and the note that `pnpm dev` now starts two processes.
-- Replace the "Scaffolding to delete" section with the new `TODO(M3)` poller entry.
+- Replace the temporary status-refresh entry with the M3 SSE lifecycle and reconnect invariants.
 
 **`docs/architecture.md`:** new sections for the queue, the worker, the lease and heartbeat
 protocol, the sweeper, and the event log. Update "what is deliberately absent" - M1 is no longer in

@@ -7,11 +7,10 @@ import { cn } from "@/lib/utils";
 /**
  * The job's own history, straight out of `job_events`.
  *
- * Server-rendered on every request, which is honest about what it is: the event
- * log is written transactionally with each status change, so this list is the
- * database's account of the run rather than a client-side reconstruction of it.
- * Milestone 3 keeps the markup and changes only where the rows come from - an
- * SSE stream appending to an initial page instead of a full re-render.
+ * The event log is written transactionally with each status change, so this
+ * list is the database's account of the run rather than a client-side
+ * reconstruction of it. The same presentation renders the server snapshot and
+ * the live reducer's incrementally appended events.
  *
  * Events arrive oldest-first and are rendered that way. A run reads downwards.
  */

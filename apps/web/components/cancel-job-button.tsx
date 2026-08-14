@@ -17,8 +17,8 @@ import type { ApiErrorBody } from "@/lib/api/responses";
  * cases out of three, and the middle one is the interesting one - a job in
  * flight takes up to a heartbeat interval to actually stop.
  *
- * The refresh afterwards is the same one the poller does; it just does not wait
- * two seconds for it.
+ * The refresh afterwards synchronizes server-rendered job metadata immediately;
+ * the live provider continues to own the event stream and status timeline.
  */
 export function CancelJobButton({ jobId }: { jobId: string }) {
   const router = useRouter();

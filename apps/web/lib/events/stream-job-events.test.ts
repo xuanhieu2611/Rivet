@@ -207,7 +207,7 @@ describe("createJobEventStream", () => {
     expect(sleep).toHaveBeenCalledTimes(3);
   });
 
-  it("stops polling after the request is cancelled", async () => {
+  it("stops querying after the request is cancelled", async () => {
     const list = makeList();
     list.mockResolvedValue([]);
     const waiting = waitingSleep();

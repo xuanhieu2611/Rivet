@@ -17,8 +17,8 @@ import { formatDateTime, shortenRepoUrl } from "@/lib/format";
 
 /**
  * Reads Postgres on every request, so it must never be prerendered - `next build`
- * has no database. Once Milestone 3 streams live status this becomes a
- * revalidating shell around an SSE-fed client island instead.
+ * has no database. Job detail pages add their live SSE island separately; the
+ * dashboard remains a server-rendered snapshot until a future dashboard stream.
  */
 export const dynamic = "force-dynamic";
 

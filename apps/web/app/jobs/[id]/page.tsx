@@ -7,7 +7,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { CancelJobButton } from "@/components/cancel-job-button";
-import { JobStatusPoller } from "@/components/job-status-poller";
 import { JobLiveProvider } from "@/components/job-live/job-live-provider";
 import { LiveConnectionIndicator, LiveStatusBadge } from "@/components/job-live/live-status-badge";
 import { LiveCommandLog } from "@/components/job-live/live-command-log";
@@ -47,8 +46,6 @@ export default async function JobDetailPage({ params }: PageProps) {
       initialCommandSummaries={commandSummaries.map(serializeJobCommandSummary)}
     >
       <div className="space-y-8">
-        <JobStatusPoller status={job.status} />
-
         <div className="space-y-3">
           <Link href="/" className="text-muted-foreground text-xs hover:underline">
             Back to jobs

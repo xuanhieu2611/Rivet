@@ -94,7 +94,7 @@ describe("isTerminal", () => {
     }
   });
 
-  it("treats queued as non-terminal so the UI keeps polling", () => {
+  it("treats queued as non-terminal so the live stream remains open", () => {
     expect(isTerminal("queued")).toBe(false);
   });
 });

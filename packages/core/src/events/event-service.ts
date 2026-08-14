@@ -67,9 +67,9 @@ export interface ListEventsOptions {
   /**
    * Return only events with an id greater than this.
    *
-   * The incremental-fetch cursor behind `GET /api/jobs/:id/events?after=`.
-   * Milestone 3 replaces the transport with SSE and reuses this as
-   * `Last-Event-ID`, so the contract survives the change.
+   * The cursor shared by the JSON events response and the SSE route at
+   * `GET /api/jobs/:id/events?after=`. The SSE transport carries the same value
+   * as `Last-Event-ID`, so both callers replay the same durable rows.
    */
   after?: number;
   limit?: number;

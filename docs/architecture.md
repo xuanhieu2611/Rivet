@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, at the end of Milestone 2, and names the
+This document describes Rivet **as it exists today**, at the end of Milestone 3, and names the
 places where the current shape is a deliberate shortcut rather than the intended end state. It is
 updated as each milestone lands rather than describing a system that does not exist yet.
 
@@ -22,14 +22,16 @@ that run a coding agent inside disposable sandboxes:
 
 Milestone 0 built the leftmost column: a UI, an API, and durable job state. Milestone 1 built the
 queue, the worker, and everything that makes a job survive the worker dying. Milestone 2 built the
-Docker sandbox and made provisioning and baseline testing real. The coding agent and model arrive in
-Milestones 4 and 5; the five phases that need them remain simulated until then.
+Docker sandbox and made provisioning and baseline testing real. Milestone 3 made the append-only
+event log observable through a resumable SSE stream, live status, timeline, and command log. The
+coding agent and model arrive in Milestones 4 and 5; the five phases that need them remain simulated
+until then.
 
 ## What exists today
 
 | Component     | Where                | Responsibility                                                          |
 | ------------- | -------------------- | ----------------------------------------------------------------------- |
-| Web UI        | `apps/web/app`       | Dashboard, new-job form, job detail with the execution timeline         |
+| Web UI        | `apps/web/app`       | Dashboard, new-job form, job detail with live status, timeline and logs |
 | HTTP API      | `apps/web/app/api`   | `GET`/`POST /api/jobs`, `GET /api/jobs/:id`, `/events`, `/cancel`       |
 | Worker        | `apps/worker`        | BullMQ consumer: claim, heartbeat, run the pipeline, finalize, sweep    |
 | Domain logic  | `packages/core`      | Jobs, transitions, claims, cancellation, the event log, the pipeline    |
@@ -101,8 +103,10 @@ run. The second half deliberately cannot fail the request - see the dual-write s
 `POST /api/jobs/:id/cancel` returns three different codes because there are genuinely three
 different outcomes: `200` when the job had not started and is now `cancelled`, `202` when a worker
 holds it and the request has only been recorded, `409` when it already finished.
-`GET /api/jobs/:id/events?after=<id>` is the timeline's incremental read, and its cursor is designed
-now precisely so Milestone 3 changes the transport to SSE without changing the contract.
+`GET /api/jobs/:id/events?after=<id>` is the timeline's incremental read. Content negotiation keeps
+ordinary callers on the JSON cursor envelope while `Accept: text/event-stream` opens the live SSE
+tailer. The durable event id is the reconnect cursor, so the transport changes without changing the
+underlying contract.
 
 Every page and route handler that touches the database sets `dynamic = "force-dynamic"`. That is
 what lets `pnpm build` - and therefore CI - run with no database and no Redis at all: nothing is
@@ -446,9 +450,8 @@ has no interactive transactions.
 
 The id is a `bigserial`, globally monotonic across all jobs rather than a per-job counter that would
 need a lock to allocate. Ordering within a job is all that matters, and a single lease holder is the
-only writer for a given job, so gaps and cross-job interleaving are harmless. Milestone 3 uses that
-id directly as the SSE `Last-Event-ID`, which is why `GET /api/jobs/:id/events?after=<id>` already
-has the cursor shape it will need.
+only writer for a given job, so gaps and cross-job interleaving are harmless. M3 uses that id
+directly as the SSE `Last-Event-ID` and the `id` field in every persisted event frame.
 
 Event types and failure categories are `text` columns validated by Zod, not `pgEnum`s. That is a
 deliberate asymmetry with `job_status`, which does get a real Postgres enum and a type-level drift
@@ -456,10 +459,35 @@ assertion. Status is a closed state machine that is indexed, queried, and guarde
 vocabulary is a growing description of what happened, read back only to render a timeline, and it
 churns every milestone. Paying a migration per new event type buys nothing.
 
-Today the timeline is server-rendered on each request, with a client component calling
-`router.refresh()` every two seconds while the job is non-terminal. It carries a `TODO(M3)` marker
-and is deleted when the event stream lands. It exists because the alternative was a demo that needs
-manual refreshing, and it is smaller than the Milestone 0 scaffolding it replaced.
+### The live event path
+
+The event stream is a database tailer, not a broker and not a second history.
+`GET /api/jobs/:id/events` preserves the JSON `{ events, cursor }` response for ordinary callers.
+When the request accepts `text/event-stream`, the same route first validates the job and cursor,
+then opens a Node.js Web Streams response with `retry: 2000`, connection and keepalive comments, and
+one `job.event` data frame per durable row. `X-Accel-Buffering: no`,
+`Cache-Control: no-cache, no-transform`, and the Node runtime keep proxies from treating it like a
+buffered finite response.
+
+The first cursor is the maximum valid `?after=` query value and `Last-Event-ID` header. That closes
+the gap between the server-rendered snapshot and the first connection, and it makes native
+EventSource reconnect safe even when it reuses the original URL. The tailer reads at most 200 rows
+in ascending id order, drains full pages immediately, then polls once per second. It borrows a
+pooled Postgres connection for each query and never holds a connection for the life of the response.
+A database error breaks the response without changing job status; EventSource reconnects from the
+last delivered id.
+
+The browser reducer treats delivery as at least once: it stores events by durable id, sorts them,
+and ignores duplicates. The provider closes the stream while the tab is hidden and reconnects from
+its latest cursor when visible. When a terminal transition is observed, the server waits through a
+short quiescence window so `sandbox.destroyed` can arrive, sends a non-persisted `stream.end` frame,
+and closes. The client performs one final `router.refresh()` for fields that are not event
+consumers.
+
+Command rows remain append-only. `command.started` creates a running UI row with a
+`commandExecutionId`; `command.completed` or `command.failed` pairs the lifecycle events, while the
+durable command row and bounded stdout/stderr transcript are fetched only when needed. M3 does not
+stream output bytes.
 
 ## Database access
 
@@ -502,7 +530,7 @@ than a fresh empty container.
 
 ## How this is tested
 
-Three suites, and the split is deliberate rather than administrative.
+Four suites, and the split is deliberate rather than administrative.
 
 `pnpm test` runs with **no database and no Redis**, and that is a property worth protecting rather
 than a limitation to work around. It is what proves the lazy clients stay lazy and that `pnpm build`
@@ -523,27 +551,34 @@ real worker to `completed`. Its git daemon serves temporary bare repositories on
 network or package registry is involved. The suite refuses a non-local Docker host unless the caller
 explicitly opts in, just as the integration suite refuses remote databases.
 
-Two details in that suite are load-bearing. Time is **compressed, not faked**: a two-second lease
-and a half-second heartbeat are real timings against a real database, with `pipelineSpeed: 0` so
-that costs seconds rather than minutes. Fake timers cannot survive a round trip to Postgres, which
-is where the clock that matters actually lives. And the suite refuses to run against any host that
-is not plainly local, because every case truncates `jobs` and `job_events` while `.env.local` on
-every dev machine points at the real Neon database.
+`pnpm test:streaming` is the fourth suite, in `apps/web/tests/streaming`. It uses real Postgres but
+no Redis or Docker and calls the route handler directly with `Request` objects. It proves SSE
+framing, historical replay, live append delivery, reconnect cursor precedence, duplicate-safe client
+reduction, two independent viewers, abort cleanup, terminal grace, already-terminal close, JSON
+compatibility, and invalid input handling. It runs in its own CI job because it truncates `jobs` and
+`job_events` just like the worker integration suite. It reads `.env.test`, refuses non-local
+databases by default, and uses `RIVET_ALLOW_REMOTE_INTEGRATION=1` only as a deliberate escape hatch.
+
+Two details in the infrastructure suites are load-bearing. Time is **compressed, not faked**: a
+two-second lease and a half-second heartbeat are real timings against a real database, with
+`pipelineSpeed: 0` so that costs seconds rather than minutes. Fake timers cannot survive a round
+trip to Postgres, which is where the clock that matters actually lives. And every suite refuses to
+run against a host that is not plainly local, because its cases truncate `jobs` and `job_events`
+while `.env.local` on every dev machine points at the real Neon database.
 
 ## What is deliberately absent
 
 Named so their absence reads as a decision rather than an oversight: no authentication or `user_id`
 (Milestone 9 brings GitHub identity), no `repository_id` foreign key (there is no Repository table
-to point at, so the job stores a plain `repo_url`), no event stream - the timeline is polled, not
-pushed (M3), no model call of any kind (M4), no checkpoints or resumable jobs (M6), no transactional
-outbox (see the dual-write section for why), and no deployment. There is a real Docker sandbox, but
-no coding agent or model yet, and the bridge network is not the hardened isolation boundary a
-production worker needs.
+to point at, so the job stores a plain `repo_url`), no model call of any kind (M4), no checkpoints
+or resumable jobs (M6), no transactional outbox (see the dual-write section for why), and no
+deployment. There is a real Docker sandbox, but no coding agent or model yet, and the bridge network
+is not the hardened isolation boundary a production worker needs.
 
-The one piece of scaffolding left in the codebase is `apps/web/components/job-status-poller.tsx`, a
-client component calling `router.refresh()` every two seconds while a job is non-terminal. It exists
-because the detail page is server-rendered and nothing else asks for an update, so without it the
-demo needs manual refreshing. It carries a `TODO(M3)` marker and is deleted when SSE lands.
+The stream targets a long-lived Node.js host. Native EventSource reconnect makes interruptions safe,
+but a deployment platform that buffers or caps long responses can still terminate it. Before public
+deployment, Rivet needs a streaming-capable host or a dedicated event gateway. That hosting decision
+must not move event authority out of Postgres.
 
 Milestone 1's simulation knobs now have a narrower job: phase durations and `RIVET_PIPELINE_SPEED`
 remain for the five phases that are still simulated, while the fault modes also exercise real

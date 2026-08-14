@@ -55,8 +55,9 @@ export function formatDuration(seconds: number): string {
  *
  * `now` is passed in rather than read, because this renders on the server: a
  * running job's elapsed time is a snapshot taken when the page was built, and
- * the poller is what makes it advance. Taking the clock as an argument keeps
- * that visible at the call site and keeps the function testable.
+ * the final stream refresh synchronizes it when the run ends. Taking the clock
+ * as an argument keeps that visible at the call site and keeps the function
+ * testable.
  */
 export function formatElapsed(
   startedAt: Date | null,

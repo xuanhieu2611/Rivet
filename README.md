@@ -15,17 +15,24 @@ boundary is the point of the project, and it is what the architecture is organiz
 
 ## Status
 
-**Milestone 2 - sandbox execution - is complete.** Creating a job now gives a worker a real Docker
-container, clones the requested repository and branch, resolves the commit, installs dependencies,
-and runs the repository's baseline test script. Every command records its argv, duration, exit code,
-separate stdout and stderr, and bounded transcript. A red baseline is recorded without blaming the
-job. CPU, memory, PID and command-time limits are enforced.
+**Milestone 3 - real-time execution timeline - is complete.** Creating a job now gives a worker a
+real Docker container, clones the requested repository and branch, resolves the commit, installs
+dependencies, and runs the repository's baseline test script. Every command records its argv,
+duration, exit code, separate stdout and stderr, and bounded transcript. A red baseline is recorded
+without blaming the job. CPU, memory, PID and command-time limits are enforced.
+
+The job detail page replays the append-only Postgres event log over SSE, updates its status,
+timeline, and command log in place, and reconnects from the last durable event id after a network
+interruption. Hidden tabs close their stream, terminal jobs drain cleanup events briefly, and the
+final refresh synchronizes server-rendered metadata. Command rows appear when execution starts;
+bounded transcripts are fetched lazily at completion or when opened. Output is not streamed byte by
+byte.
 
 The processor destroys the container after success, failure, cancellation, timeout, lease loss and
-shutdown. A reaper removes what a `kill -9` leaves behind. The separate sandbox suite proves those
-claims against Docker, Postgres, Redis and a hermetic git fixture. Analysis, planning,
-implementation, review and finalization are still simulated until the coding agent arrives in
-Milestones 4 and 5; there is no model call yet.
+shutdown. A reaper removes what a `kill -9` leaves behind. The sandbox suite proves those claims
+against Docker, Postgres, Redis and a hermetic git fixture; the streaming suite proves the live
+route against local Postgres. Analysis, planning, implementation, review and finalization are still
+simulated until the coding agent arrives in Milestones 4 and 5; there is no model call yet.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together and what will have
 to move as later milestones land.
@@ -41,7 +48,8 @@ to move as later milestones land.
 | Docker      | Desktop 4.86+       | Only for running jobs for real. See below                           |
 
 No local Postgres for ordinary development - it runs against a real Neon database and a real Upstash
-Redis. The integration suite is the exception and needs both services on localhost; see below.
+Redis. The integration suite is the exception and needs both services on localhost; the streaming
+suite also needs local Postgres but no Redis or Docker. See the suite instructions below.
 
 Docker is what a job's sandbox is made of, so it is needed to run a job for real and to run
 `pnpm test:sandbox`. It is deliberately **not** needed for `pnpm build`, `pnpm test`, `pnpm lint` or
@@ -79,8 +87,12 @@ pnpm dev
 The demo is watching a job run. Create one from **New job** with a public Node repository and you
 land on its detail page. The worker creates a sandbox, clones and installs the repository, records
 the resolved commit and environment fingerprint, runs its baseline tests, and then moves through the
-five still-simulated phases. The job page shows the command ledger and transcripts as it polls.
-Cancel it partway through and the running command and container are stopped.
+five still-simulated phases. The job detail page shows the command ledger and bounded transcripts
+live over SSE, with a connection indicator and durable reconnect cursor. Commands become visible
+when they start, and their separate stdout/stderr transcripts load when they complete or when you
+open a row. The stream does not send output bytes as they are produced. Cancel it partway through
+and the running command and container are stopped. To demo recovery, disable the browser network
+briefly, then restore it and watch the missed events replay without duplicate timeline rows.
 
 To watch the recovery machinery instead, break a job on purpose. Set `RIVET_FAULT_PHASE=testing`
 with one of the `RIVET_FAULT_MODE` values and restart the worker: `throw` retries the job with
@@ -113,6 +125,21 @@ It defaults to `postgresql://postgres:postgres@localhost:5432/rivet_test` and
 `redis://localhost:6379`, matching CI's service containers, and reads a root `.env.test` if you want
 different values. Migrations are applied by the suite's own setup, from the same folder and with the
 same migrator as `pnpm db:migrate`.
+
+## Running the streaming suite
+
+The web streaming suite opens the actual SSE route against local Postgres and proves framing,
+historical replay, live delivery, reconnect cursors, terminal draining, abort cleanup, and JSON
+compatibility. It deliberately does not load `.env.local`, refuses remote databases by default, and
+needs no Redis or Docker.
+
+```bash
+pnpm test:streaming
+```
+
+It defaults to `postgresql://postgres:postgres@localhost:5432/rivet_test`, reads `.env.test` when
+present, and shares the integration suite's deliberate `RIVET_ALLOW_REMOTE_INTEGRATION=1` escape
+hatch. Run it separately from the integration suite because both suites truncate the job tables.
 
 ## Running the sandbox suite
 
@@ -185,6 +212,7 @@ Every command is run from the repository root. Turborepo fans them out across th
 | `pnpm typecheck`        | `tsc --noEmit` across every workspace                                           |
 | `pnpm test`             | Vitest unit tests. No database, no Redis                                        |
 | `pnpm test:integration` | The `*.int.test.ts` suite, against a local Postgres and Redis                   |
+| `pnpm test:streaming`   | The web SSE suite, against local Postgres only                                  |
 | `pnpm test:sandbox`     | The `*.sbx.test.ts` suite, against Docker, local Postgres and Redis             |
 | `pnpm format`           | Prettier, writing changes                                                       |
 | `pnpm format:check`     | Prettier in check mode - this is what CI runs                                   |
@@ -219,10 +247,11 @@ under `tsx`.
 
 Two workflows run on every pull request:
 
-- **CI** (`.github/workflows/ci.yml`) - three independent parallel jobs. **Verify** runs typecheck,
+- **CI** (`.github/workflows/ci.yml`) - four independent parallel jobs. **Verify** runs typecheck,
   lint, format check, unit tests and build with no database, Redis or Docker. **Integration** brings
   up `postgres:17` and `redis:8`. **Sandbox** adds the host Docker daemon, pre-pulls the pinned
-  image, and runs the real adapter and end-to-end checkpoint.
+  image, and runs the real adapter and end-to-end worker path. **Streaming** brings up only
+  `postgres:17` and exercises the actual SSE route.
 - **Neon preview branch** (`.github/workflows/neon-branch.yml`) - creates an ephemeral Neon branch
   named `preview/pr-<n>`, applies the migrations to it to prove they still apply cleanly against
   real Postgres, and deletes the branch when the pull request closes.
@@ -243,8 +272,8 @@ built before any agent behaviour.
       cancellation, timeouts, and a sweeper that recovers jobs from a crashed worker.
 - [x] **M2 - Sandbox execution.** A sandbox abstraction over Docker: clone a repository, run
       commands, capture output, enforce timeouts and resource limits, tear down cleanly.
-- [ ] **M3 - Real-time execution timeline.** A job event stream, an SSE endpoint, and a live
-      timeline and log view in the UI with reconnect support.
+- [x] **M3 - Real-time execution timeline.** A Postgres-backed SSE event stream, reconnect cursor,
+      live timeline, connection indicator, and lazy command log with bounded transcripts.
 - [ ] **M4 - Coding-agent integration.** A `CodingAgentAdapter` over the Pi harness, started
       programmatically inside the sandbox against the cloned repository.
 - [ ] **M5 - First autonomous coding job.** One implementation session solves a trivial fixture bug
