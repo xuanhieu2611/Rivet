@@ -102,8 +102,9 @@ describe("idempotent enqueue", () => {
     const second = await requestJobRun(job.id, testQueue.queue);
 
     expect(first.result).toBe("enqueued");
-    // The BullMQ job id is the job's own UUID, so the second message is not a
-    // second message. This is what makes a retried `POST /api/jobs` safe.
+    // The BullMQ job id encodes the same durable generation, so the second
+    // message is not a second message. This is what makes a retried `POST
+    // /api/jobs` safe.
     expect(second.result).toBe("already-queued");
 
     worker = startTestWorker({ queue: testQueue.queue });
@@ -175,7 +176,7 @@ describe("terminal failure", () => {
 
     // BullMQ was told not to bother, via `UnrecoverableError` - the v6
     // replacement for `job.discard()`.
-    const message = await testQueue.queue.bull.getJob(job.id);
+    const message = await testQueue.queue.bull.getJob(`${job.id}.0`);
     expect(await message?.getState()).toBe("failed");
     expect(message?.attemptsMade).toBe(1);
   });

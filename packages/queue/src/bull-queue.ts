@@ -3,6 +3,7 @@ import { type JobsOptions, Queue } from "bullmq";
 
 import { getRedis } from "./connection";
 import {
+  encodeJobRunId,
   JOB_NAMES,
   type JobRunsMessage,
   QUEUE_NAMES,
@@ -14,8 +15,9 @@ import {
  * The BullMQ adapter for the `JobQueue` port.
  *
  * Everything Redis-specific in Rivet lives behind this class. It is deliberately
- * boring: the message is a job id, the BullMQ job id is the same job id, and the
- * interesting decisions are all about idempotency.
+ * boring: the message carries a job id and dispatch generation, and the BullMQ
+ * job id is their encoded pair. The interesting decisions are all about
+ * idempotency and making a reclaimed generation independent of an old message.
  *
  * Version note: this is BullMQ **6**, released 2026-07-30. Most material online
  * describes v5, where the legacy repeatable-jobs API still existed, `job.discard()`
@@ -28,9 +30,8 @@ import {
  * Defaults applied to every `run-job` message.
  *
  * `removeOnComplete` is the one that took thought. A completed BullMQ job keeps
- * its id reserved, and Rivet reuses the Postgres job UUID as the BullMQ job id
- * on purpose. Keeping a debugging window of completed messages would therefore
- * make a later re-enqueue of the same job - a retry, or a sweeper reclaim -
+ * its encoded generation id reserved. Keeping a debugging window of completed
+ * messages would therefore make a later re-enqueue of the same generation
  * silently deduplicate against a message that already ran. `enqueueJobRun`
  * handles that explicitly below, but a short retention keeps the failure mode
  * small even if someone bypasses it. Redis is not the audit log; `job_events`
@@ -96,8 +97,13 @@ export class BullJobQueue implements JobQueue {
     return this.queue.removeJobScheduler(SCHEDULER_IDS.sweep);
   }
 
-  async enqueueJobRun(jobId: string, options: EnqueueOptions = {}): Promise<EnqueueResult> {
-    const existing = await this.queue.getJob(jobId);
+  async enqueueJobRun(
+    jobId: string,
+    dispatchGeneration: number,
+    options: EnqueueOptions = {},
+  ): Promise<EnqueueResult> {
+    const messageId = encodeJobRunId(jobId, dispatchGeneration);
+    const existing = await this.queue.getJob(messageId);
 
     if (existing) {
       const state = await existing.getState();
@@ -106,31 +112,31 @@ export class BullJobQueue implements JobQueue {
         // a no-op anyway; saying so out loud makes the caller's log honest.
         return "already-queued";
       }
-      // The previous message for this job is done with. Clear the id so the new
-      // one is actually created rather than deduplicated away. This is the path
-      // a retry and a sweeper reclaim both take.
+      // The previous message for this generation is done with. Clear its id so
+      // the new delivery is actually created rather than deduplicated away.
+      // A new dispatch generation never comes through this branch: it has a
+      // different message id and can run while an older generation is active.
       await existing.remove();
     }
 
     await this.queue.add(
       JOB_NAMES.runJob,
-      { jobId },
+      { jobId, dispatchGeneration },
       {
-        // The job's own UUID. This is what makes enqueueing idempotent, and it
-        // is why two `POST /api/jobs` retries of the same create cannot produce
-        // two executions.
-        jobId,
+        // The encoded pair is the idempotency key. This is why a reclaimed
+        // generation can be delivered before BullMQ releases the old one.
+        jobId: messageId,
         ...(options.delayMs === undefined ? {} : { delay: options.delayMs }),
       },
     );
     return "enqueued";
   }
 
-  async removeJobRun(jobId: string): Promise<boolean> {
-    // Returns 0 for a job that does not exist and for one a worker currently
+  async removeJobRun(jobId: string, dispatchGeneration: number): Promise<boolean> {
+    // Returns 0 for a message that does not exist and for one a worker currently
     // holds. Both mean "there is nothing here you can take away", which is what
     // the caller needs to know.
-    const removed = await this.queue.remove(jobId);
+    const removed = await this.queue.remove(encodeJobRunId(jobId, dispatchGeneration));
     return removed > 0;
   }
 

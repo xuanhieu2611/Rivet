@@ -191,6 +191,8 @@ export function createPhaseContextFactory(
 ): (phase: Phase) => PhaseContext {
   const database = options.database ?? db;
   const { job, leaseOwner, sandboxes, signal, log } = options;
+  const appendOwnedEvent = (input: PhaseEventInput) =>
+    database.transaction((tx) => appendEvent({ ...input, jobId: job.id, leaseOwner }, tx));
 
   return (phase) => ({
     job,
@@ -207,20 +209,16 @@ export function createPhaseContextFactory(
       // Make the attempt visible before Docker gets a chance to do anything.
       // If this write fails, the command is deliberately not run: an action we
       // cannot audit from its first moment is worse than a failed attempt.
-      await appendEvent(
-        {
-          jobId: job.id,
-          type: "command.started",
-          message: `${input.argv.join(" ")} started`,
-          data: {
-            commandExecutionId,
-            argv: input.argv,
-            cwd: input.cwd,
-            phase: phase.label,
-          },
+      await appendOwnedEvent({
+        type: "command.started",
+        message: `${input.argv.join(" ")} started`,
+        data: {
+          commandExecutionId,
+          argv: input.argv,
+          cwd: input.cwd,
+          phase: phase.label,
         },
-        database,
-      );
+      });
 
       let result: ExecResult;
       try {
@@ -236,22 +234,19 @@ export function createPhaseContextFactory(
         });
       } catch (cause) {
         try {
-          await appendEvent(
-            {
-              jobId: job.id,
-              type: "command.failed",
-              message: `${input.argv.join(" ")} failed: ${describeError(cause)}`,
-              data: {
-                commandExecutionId,
-                argv: input.argv,
-                cwd: input.cwd,
-                phase: phase.label,
-                error: describeError(cause),
-              },
+          await appendOwnedEvent({
+            type: "command.failed",
+            message: `${input.argv.join(" ")} failed: ${describeError(cause)}`,
+            data: {
+              commandExecutionId,
+              argv: input.argv,
+              cwd: input.cwd,
+              phase: phase.label,
+              error: describeError(cause),
             },
-            database,
-          );
+          });
         } catch (eventError) {
+          if (eventError instanceof LeaseLostError) throw eventError;
           // The sandbox error is the authoritative failure. A database outage
           // while recording this secondary event must never replace it.
           log.warn(
@@ -266,7 +261,10 @@ export function createPhaseContextFactory(
       // reason a status change and its event do: an event carrying a
       // `commandId` that resolves to nothing is worse than no event at all.
       const command = await database.transaction(async (tx) => {
-        const recorded = await recordCommand({ jobId: job.id, phase: phase.status, result }, tx);
+        const recorded = await recordCommand(
+          { jobId: job.id, phase: phase.status, result, leaseOwner },
+          tx,
+        );
         await appendEvent(
           {
             jobId: job.id,
@@ -282,6 +280,7 @@ export function createPhaseContextFactory(
               commandId: recorded.id,
               phase: phase.label,
             },
+            leaseOwner,
           },
           tx,
         );
@@ -292,15 +291,7 @@ export function createPhaseContextFactory(
     },
 
     async event(input) {
-      await appendEvent(
-        {
-          jobId: job.id,
-          type: input.type,
-          message: input.message,
-          ...(input.data ? { data: input.data } : {}),
-        },
-        database,
-      );
+      await appendOwnedEvent(input);
     },
 
     async artifact(input) {
@@ -313,10 +304,10 @@ export function createPhaseContextFactory(
             content: input.content,
             maxBytes: options.artifactMaxBytes,
             ...(input.metadata ? { metadata: input.metadata } : {}),
+            leaseOwner,
           },
           tx,
         );
-
         await appendEvent(
           {
             jobId: job.id,
@@ -331,6 +322,7 @@ export function createPhaseContextFactory(
               truncated: recorded.truncated,
               phase: phase.label,
             },
+            leaseOwner,
           },
           tx,
         );

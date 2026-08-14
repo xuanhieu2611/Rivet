@@ -116,6 +116,8 @@ export interface JobDetail extends JobSummary {
   pullRequestUrl: string | null;
   failureReason: string | null;
 
+  /** The durable delivery generation carried by the queue message. */
+  dispatchGeneration: number;
   /** How many times any worker has claimed this job, reclaims included. */
   attemptCount: number;
   /** Machine-readable cause, paired with the human-readable `failureReason`. */

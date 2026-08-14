@@ -2,6 +2,7 @@ import type { JobCommand, JobCommandSummary, JobStatus } from "@rivet/contracts"
 import { db, type Executor, type JobCommandRow, jobCommands } from "@rivet/database";
 import { and, asc, eq, gt } from "drizzle-orm";
 
+import { assertActiveLease } from "../jobs/lease";
 import type { ExecResult } from "./sandbox";
 
 /**
@@ -208,6 +209,8 @@ export interface RecordCommandInput {
   /** The status the job was in while the command ran. */
   phase: JobStatus;
   result: ExecResult;
+  /** When present, the command row is fenced on this active lease. */
+  leaseOwner?: string;
 }
 
 /**
@@ -221,6 +224,16 @@ export async function recordCommand(
   input: RecordCommandInput,
   executor: Executor = db,
 ): Promise<JobCommand> {
+  // Keep the lease check and insert in one transaction when this writer is
+  // called directly. PhaseContext already supplies a transaction for the
+  // command-completed row and its event.
+  if (input.leaseOwner !== undefined && executor === db) {
+    return db.transaction((tx) => recordCommand(input, tx));
+  }
+  if (input.leaseOwner !== undefined) {
+    await assertActiveLease(input.jobId, input.leaseOwner, executor);
+  }
+
   const { result } = input;
   const [row] = await executor
     .insert(jobCommands)

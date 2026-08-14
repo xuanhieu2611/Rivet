@@ -123,7 +123,9 @@ describe("PhaseContext command lifecycle", () => {
       "event:command.completed",
     ]);
     expect(test.sandboxExec).toHaveBeenCalledOnce();
-    expect(test.transaction).toHaveBeenCalledOnce();
+    // One transaction fences the start event; the second owns the command row
+    // and its completion event.
+    expect(test.transaction).toHaveBeenCalledTimes(2);
     expect(result.commandId).toBe(17);
 
     const started = test.events[0];
@@ -150,7 +152,7 @@ describe("PhaseContext command lifecycle", () => {
     await expect(test.context.exec(INPUT)).rejects.toBe(cause);
 
     expect(test.sequence).toEqual(["event:command.started", "exec", "event:command.failed"]);
-    expect(test.transaction).not.toHaveBeenCalled();
+    expect(test.transaction).toHaveBeenCalledTimes(2);
     expect(test.events[1]?.data).toMatchObject({
       commandExecutionId: test.events[0]?.data?.commandExecutionId,
       argv: INPUT.argv,
@@ -187,7 +189,7 @@ describe("PhaseContext command lifecycle", () => {
     await expect(test.context.exec(INPUT)).rejects.toBe(eventWriteError);
 
     expect(test.sandboxExec).not.toHaveBeenCalled();
-    expect(test.transaction).not.toHaveBeenCalled();
+    expect(test.transaction).toHaveBeenCalledOnce();
   });
 });
 

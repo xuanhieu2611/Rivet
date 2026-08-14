@@ -16,7 +16,7 @@ import type { EnqueueOptions, EnqueueResult, JobQueue } from "../queue/job-queue
  * of truth, so a `queued` row with no message is a recoverable state, not a
  * lost job: the sweeper's second responsibility is finding rows that have sat
  * in `queued` with nothing behind them and enqueueing them again. Re-adding
- * with the job's own UUID as the message id makes that safe to repeat.
+ * with the job's encoded dispatch-generation id makes that safe to repeat.
  *
  * (A transactional outbox is the stronger answer, and it is deliberately not
  * built yet. It buys correctness this design already gets from reconciliation,
@@ -39,14 +39,41 @@ export interface EnqueueOutcome {
  * and is recorded as `job.enqueue_failed`, so the job's own history shows why
  * nothing happened for a minute before the sweeper picked it up.
  */
-export async function requestJobRun(
+export function requestJobRun(
+  jobId: string,
+  dispatchGeneration: number,
+  queue: JobQueue,
+  options?: EnqueueOptions,
+  database?: Database,
+): Promise<EnqueueOutcome>;
+export function requestJobRun(
   jobId: string,
   queue: JobQueue,
-  options: EnqueueOptions = {},
+  options?: EnqueueOptions,
+  database?: Database,
+): Promise<EnqueueOutcome>;
+export async function requestJobRun(
+  jobId: string,
+  dispatchGenerationOrQueue: number | JobQueue,
+  queueOrOptions?: JobQueue | EnqueueOptions,
+  optionsOrDatabase?: EnqueueOptions | Database,
   database: Database = db,
 ): Promise<EnqueueOutcome> {
+  const dispatchGeneration =
+    typeof dispatchGenerationOrQueue === "number" ? dispatchGenerationOrQueue : 0;
+  const queue = (
+    typeof dispatchGenerationOrQueue === "number" ? queueOrOptions : dispatchGenerationOrQueue
+  ) as JobQueue;
+  const options = (
+    typeof dispatchGenerationOrQueue === "number" ? optionsOrDatabase : queueOrOptions
+  ) as EnqueueOptions | undefined;
+  const executor =
+    typeof dispatchGenerationOrQueue === "number"
+      ? database
+      : ((optionsOrDatabase as Database | undefined) ?? db);
+
   try {
-    const result = await queue.enqueueJobRun(jobId, options);
+    const result = await queue.enqueueJobRun(jobId, dispatchGeneration, options ?? {});
     await appendEvent(
       {
         jobId,
@@ -55,8 +82,9 @@ export async function requestJobRun(
           result === "enqueued"
             ? "Queued for execution."
             : "Already queued for execution; no second message sent.",
+        data: { dispatchGeneration },
       },
-      database,
+      executor,
     );
     return { result };
   } catch (error) {
@@ -70,7 +98,7 @@ export async function requestJobRun(
           "Could not reach the queue. The job is persisted and will be picked up by the sweeper.",
         data: { error: error instanceof Error ? error.message : String(error) },
       },
-      database,
+      executor,
     ).catch(() => undefined);
 
     return { result: null, error };

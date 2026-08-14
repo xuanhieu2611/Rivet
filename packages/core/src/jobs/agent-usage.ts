@@ -1,5 +1,5 @@
 import { db, type Database, jobs, type NewJob } from "@rivet/database";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 /**
  * The agent totals a phase is allowed to write.
@@ -35,7 +35,9 @@ export async function recordAgentUsage(
   const [row] = await database
     .update(jobs)
     .set(patch)
-    .where(and(eq(jobs.id, jobId), eq(jobs.leaseOwner, leaseOwner)))
+    .where(
+      and(eq(jobs.id, jobId), eq(jobs.leaseOwner, leaseOwner), sql`${jobs.leaseExpiresAt} > now()`),
+    )
     .returning({ id: jobs.id });
 
   return row !== undefined;

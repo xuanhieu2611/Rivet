@@ -155,6 +155,16 @@ const sweep = createSweepRunner({
   ...(sandbox ? { sandbox } : {}),
 });
 
+// Redis schedulers cover steady state, but a worker must also reconcile once
+// before it settles into waiting. This closes the restart window where a job
+// was reclaimed or its enqueue was lost while every scheduler message was
+// absent. The pass is deliberately best effort: a worker that cannot reach the
+// database can still start and let the next scheduler or worker retry it.
+void sweep().then(
+  () => log.info("startup reconciliation complete"),
+  (error: unknown) => log.error({ err: error }, "startup reconciliation failed"),
+);
+
 const worker = new Worker<JobRunsMessage>(
   QUEUE_NAMES.jobRuns,
   createProcessor({

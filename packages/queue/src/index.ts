@@ -26,6 +26,7 @@ export {
 } from "./bull-queue";
 export { InMemoryJobQueue, type RecordedEnqueue } from "./memory-queue";
 export {
+  encodeJobRunId,
   JOB_NAMES,
   type JobRunPayload,
   type JobRunsMessage,

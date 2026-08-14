@@ -59,7 +59,7 @@ describe("cancelling a job nobody has claimed", () => {
   it("cancels it outright and drops the queue message", async () => {
     const job = await createTestJob();
     await requestJobRun(job.id, testQueue.queue);
-    expect(await testQueue.queue.bull.getJob(job.id)).toBeDefined();
+    expect(await testQueue.queue.bull.getJob(`${job.id}.0`)).toBeDefined();
 
     const result = await requestJobCancellation(job.id, testQueue.queue);
 
@@ -68,7 +68,7 @@ describe("cancelling a job nobody has claimed", () => {
     expect(row.status).toBe("cancelled");
     expect(row.failureCategory).toBe("cancelled");
     expect(row.completedAt).not.toBeNull();
-    expect(await testQueue.queue.bull.getJob(job.id)).toBeUndefined();
+    expect(await testQueue.queue.bull.getJob(`${job.id}.0`)).toBeUndefined();
   });
 
   it("is a no-op the second time, and reports the job already finished", async () => {

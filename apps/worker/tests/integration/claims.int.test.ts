@@ -1,4 +1,4 @@
-import { claimJob, heartbeat, reclaimExpiredJobs, transitionJob } from "@rivet/core";
+import { appendEvent, claimJob, heartbeat, reclaimExpiredJobs, transitionJob } from "@rivet/core";
 import { TransitionConflictError } from "@rivet/core";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -142,7 +142,12 @@ describe("fencing", () => {
     await sleep(1_100);
     await reclaimExpiredJobs(testQueue.queue, { maxAttempts: 3 });
 
-    const reclaimed = await claimJob(job.id, "worker-b", 30);
+    expect((await readJob(job.id)).dispatchGeneration).toBe(1);
+    // The old delivery can still arrive after reclaim, but its generation is no
+    // longer entitled to claim the row.
+    expect(await claimJob(job.id, "stale-worker", 30, 0)).toBeNull();
+
+    const reclaimed = await claimJob(job.id, "worker-b", 30, 1);
     expect(reclaimed).not.toBeNull();
     expect((await readJob(job.id)).leaseOwner).toBe("worker-b");
 
@@ -164,8 +169,17 @@ describe("fencing", () => {
     const row = await readJob(job.id);
     expect(row.status).toBe("provisioning");
     expect(row.leaseOwner).toBe("worker-b");
-    // Not one byte of the rejected write reached the timeline either. A
-    // conflicting transition and its event are the same transaction.
+    await expect(
+      appendEvent({
+        jobId: job.id,
+        type: "phase.completed",
+        message: "Zombie event from a reclaimed worker.",
+        leaseOwner: "worker-a",
+      }),
+    ).rejects.toThrow(/no longer leased/);
+    // Not one byte of either rejected write reached the timeline. A conflicting
+    // transition and its event are the same transaction, and direct phase
+    // events use the same lease fence.
     expect(await readEvents(job.id)).toHaveLength(before.length);
   });
 });

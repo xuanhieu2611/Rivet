@@ -2,6 +2,7 @@ import type { ArtifactType, JobArtifact, JobArtifactSummary, JobStatus } from "@
 import { db, type Executor, type JobArtifactRow, jobArtifacts } from "@rivet/database";
 import { and, asc, eq, gt } from "drizzle-orm";
 
+import { assertActiveLease } from "../jobs/lease";
 import { truncate } from "../sandbox/command-log";
 
 /**
@@ -39,6 +40,8 @@ export interface RecordArtifactInput {
    */
   maxBytes: number;
   metadata?: Record<string, unknown>;
+  /** When present, the artifact row is fenced on this active lease. */
+  leaseOwner?: string;
 }
 
 /**
@@ -55,6 +58,16 @@ export async function recordArtifact(
   input: RecordArtifactInput,
   executor: Executor = db,
 ): Promise<JobArtifact> {
+  // Keep the lease check and insert in one transaction when this writer is
+  // called directly. PhaseContext already supplies a transaction for the
+  // artifact row and its `artifact.recorded` event.
+  if (input.leaseOwner !== undefined && executor === db) {
+    return db.transaction((tx) => recordArtifact(input, tx));
+  }
+  if (input.leaseOwner !== undefined) {
+    await assertActiveLease(input.jobId, input.leaseOwner, executor);
+  }
+
   const byteSize = Buffer.byteLength(input.content, "utf8");
   const bounded = truncate(input.content, input.maxBytes);
 

@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   // is unreachable would be a lie the client could not act on, and it would
   // tempt a retry that creates a second job. A `queued` row with no message is
   // exactly what the sweeper reconciles, within a minute.
-  const outcome = await requestJobRun(job.id, getJobQueue());
+  const outcome = await requestJobRun(job.id, job.dispatchGeneration, getJobQueue());
   if (outcome.error) {
     console.error(`POST /api/jobs: enqueue failed for ${job.id}`, outcome.error);
   }

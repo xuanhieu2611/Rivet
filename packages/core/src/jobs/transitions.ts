@@ -104,6 +104,7 @@ export function assertTransitionAllowed(
 
 /** Columns a transition may set. `status` is excluded - see `transitionJob`. */
 export type TransitionPatch = Omit<Partial<NewJob>, "status">;
+export type TransitionEventData = JobEventData | ((current: Job, now: Date) => JobEventData);
 
 export interface TransitionInput {
   jobId: string;
@@ -121,7 +122,7 @@ export interface TransitionInput {
   message: string;
   /** Event type, when the change deserves a more specific name than the default. */
   type?: JobEventType;
-  data?: JobEventData;
+  data?: TransitionEventData;
   /**
    * An extra condition on the locked row, beyond status and lease ownership.
    *
@@ -207,7 +208,12 @@ export async function transitionJob(
     const { job: current, now } = locked;
 
     if (!expectedFrom.includes(current.status)) throw conflict(current.status);
-    if (input.leaseOwner !== undefined && current.leaseOwner !== input.leaseOwner) {
+    if (
+      input.leaseOwner !== undefined &&
+      (current.leaseOwner !== input.leaseOwner ||
+        current.leaseExpiresAt === null ||
+        current.leaseExpiresAt <= now)
+    ) {
       throw conflict(current.status);
     }
     if (input.precondition && !input.precondition(current, now)) throw conflict(current.status);
@@ -227,6 +233,9 @@ export async function transitionJob(
       throw conflict(current.status);
     }
 
+    const eventData =
+      typeof input.data === "function" ? input.data(current, now) : (input.data ?? {});
+
     await appendEvent(
       {
         jobId: input.jobId,
@@ -234,7 +243,10 @@ export async function transitionJob(
         message: input.message,
         // `current.status`, not `input.from`: the timeline records the status
         // the job was actually in, never the set the caller would have accepted.
-        data: { ...input.data, from: current.status, to: input.to },
+        // The transition's lease check above fences this event together with
+        // the status update, even when the patch clears the lease on terminal
+        // completion.
+        data: { ...eventData, from: current.status, to: input.to },
       },
       tx,
     );

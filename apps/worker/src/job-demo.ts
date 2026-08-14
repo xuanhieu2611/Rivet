@@ -56,7 +56,7 @@ async function main(): Promise<void> {
       baseBranch: FIXTURE_BRANCH,
     });
 
-    const enqueued = await requestJobRun(job.id, queue);
+    const enqueued = await requestJobRun(job.id, job.dispatchGeneration, queue);
     if (enqueued.result === null) {
       throw new Error("The job was created, but Redis did not accept its queue message.");
     }

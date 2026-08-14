@@ -9,47 +9,60 @@ describe("InMemoryJobQueue", () => {
   it("records the payload of every enqueue", async () => {
     const queue = new InMemoryJobQueue();
 
-    await queue.enqueueJobRun(JOB_A);
-    await queue.enqueueJobRun(JOB_B, { delayMs: 5_000 });
+    await queue.enqueueJobRun(JOB_A, 0);
+    await queue.enqueueJobRun(JOB_B, 0, { delayMs: 5_000 });
 
     expect(queue.calls).toEqual([
-      { jobId: JOB_A, options: {}, result: "enqueued" },
-      { jobId: JOB_B, options: { delayMs: 5_000 }, result: "enqueued" },
+      { jobId: JOB_A, dispatchGeneration: 0, options: {}, result: "enqueued" },
+      {
+        jobId: JOB_B,
+        dispatchGeneration: 0,
+        options: { delayMs: 5_000 },
+        result: "enqueued",
+      },
     ]);
-    expect(queue.enqueued).toEqual([JOB_A, JOB_B]);
+    expect(queue.enqueued).toEqual([`${JOB_A}.0`, `${JOB_B}.0`]);
   });
 
-  it("dedupes by job id while a message is outstanding", async () => {
+  it("dedupes by encoded generation while a message is outstanding", async () => {
     const queue = new InMemoryJobQueue();
 
-    expect(await queue.enqueueJobRun(JOB_A)).toBe("enqueued");
-    expect(await queue.enqueueJobRun(JOB_A)).toBe("already-queued");
+    expect(await queue.enqueueJobRun(JOB_A, 0)).toBe("enqueued");
+    expect(await queue.enqueueJobRun(JOB_A, 0)).toBe("already-queued");
 
     // Both calls are recorded - the dedupe is visible, not silent - but only
     // one execution would ever happen.
     expect(queue.calls).toHaveLength(2);
-    expect(queue.enqueued).toEqual([JOB_A]);
-    expect(queue.pending).toEqual([JOB_A]);
+    expect(queue.enqueued).toEqual([`${JOB_A}.0`]);
+    expect(queue.pending).toEqual([`${JOB_A}.0`]);
   });
 
-  it("lets an id be enqueued again once its message is drained", async () => {
+  it("allows a new generation while the previous one is still outstanding", async () => {
     const queue = new InMemoryJobQueue();
 
-    await queue.enqueueJobRun(JOB_A);
-    expect(queue.drain()).toEqual([JOB_A]);
+    await queue.enqueueJobRun(JOB_A, 0);
+    expect(await queue.enqueueJobRun(JOB_A, 1)).toBe("enqueued");
+    expect(queue.pending).toEqual([`${JOB_A}.0`, `${JOB_A}.1`]);
+  });
+
+  it("lets a generation be enqueued again once its message is drained", async () => {
+    const queue = new InMemoryJobQueue();
+
+    await queue.enqueueJobRun(JOB_A, 0);
+    expect(queue.drain()).toEqual([`${JOB_A}.0`]);
     expect(queue.pending).toEqual([]);
 
     // This is the retry and sweeper-reclaim path: the previous message is
-    // finished, so the same job id may be enqueued for another attempt.
-    expect(await queue.enqueueJobRun(JOB_A)).toBe("enqueued");
+    // finished, so the same generation may be enqueued for another delivery.
+    expect(await queue.enqueueJobRun(JOB_A, 0)).toBe("enqueued");
   });
 
   it("removes an outstanding message and reports whether there was one", async () => {
     const queue = new InMemoryJobQueue();
 
-    await queue.enqueueJobRun(JOB_A);
-    expect(await queue.removeJobRun(JOB_A)).toBe(true);
-    expect(await queue.removeJobRun(JOB_A)).toBe(false);
+    await queue.enqueueJobRun(JOB_A, 0);
+    expect(await queue.removeJobRun(JOB_A, 0)).toBe(true);
+    expect(await queue.removeJobRun(JOB_A, 0)).toBe(false);
     expect(queue.pending).toEqual([]);
   });
 

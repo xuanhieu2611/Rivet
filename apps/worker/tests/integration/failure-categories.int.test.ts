@@ -133,7 +133,7 @@ async function runFailure(
   });
 
   const failed = await waitForStatus(job.id, "failed");
-  const message = await queue.queue.bull.getJob(job.id);
+  const message = await queue.queue.bull.getJob(`${job.id}.0`);
   const events = await readEvents(job.id);
 
   return {

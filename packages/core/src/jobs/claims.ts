@@ -63,8 +63,18 @@ export async function claimJob(
   jobId: string,
   leaseOwner: string,
   leaseSeconds: number,
+  dispatchGenerationOrDatabase: number | Database = 0,
   database: Database = db,
 ): Promise<JobDetail | null> {
+  // Keep the old fourth-argument database form usable for callers that do not
+  // need to override the initial generation, while making every real delivery
+  // pass its generation explicitly. New generations are never inferred from
+  // BullMQ state: the durable job row is the authority.
+  const dispatchGeneration =
+    typeof dispatchGenerationOrDatabase === "number" ? dispatchGenerationOrDatabase : 0;
+  const executor =
+    typeof dispatchGenerationOrDatabase === "number" ? database : dispatchGenerationOrDatabase;
+
   try {
     return await transitionJob(
       {
@@ -72,9 +82,15 @@ export async function claimJob(
         from: "queued",
         to: CLAIM_STATUS,
         type: "job.claimed",
-        message: `Claimed by ${leaseOwner}.`,
-        data: { leaseOwner },
-        precondition: (job, now) => job.leaseExpiresAt === null || job.leaseExpiresAt <= now,
+        message: `Claimed by ${leaseOwner} for dispatch generation ${dispatchGeneration}.`,
+        data: (job) => ({
+          leaseOwner,
+          attempt: job.attemptCount + 1,
+          dispatchGeneration,
+        }),
+        precondition: (job, now) =>
+          job.dispatchGeneration === dispatchGeneration &&
+          (job.leaseExpiresAt === null || job.leaseExpiresAt <= now),
         patch: (job, now) => ({
           leaseOwner,
           leaseExpiresAt: leaseDeadline(now, leaseSeconds),
@@ -85,7 +101,7 @@ export async function claimJob(
           startedAt: job.startedAt ?? now,
         }),
       },
-      database,
+      executor,
     );
   } catch (error) {
     if (error instanceof TransitionConflictError) return null;
@@ -132,7 +148,9 @@ export async function heartbeat(
       heartbeatAt: sql`now()`,
       leaseExpiresAt: sql`now() + make_interval(secs => ${leaseSeconds}::double precision)`,
     })
-    .where(and(eq(jobs.id, jobId), eq(jobs.leaseOwner, leaseOwner)))
+    .where(
+      and(eq(jobs.id, jobId), eq(jobs.leaseOwner, leaseOwner), sql`${jobs.leaseExpiresAt} > now()`),
+    )
     .returning({ cancelRequestedAt: jobs.cancelRequestedAt, status: jobs.status });
 
   if (!row) return null;

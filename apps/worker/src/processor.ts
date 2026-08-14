@@ -28,11 +28,10 @@ import type { Logger } from "./logger";
 /**
  * One run of one job, from claim to terminal status.
  *
- * The shape to hold on to: **BullMQ delivers a job id and nothing else.**
- * Everything that matters - whether this worker may run the job, what it did,
- * how it ended - is a Postgres write guarded by the lease. That is what makes
- * a lost message, a duplicated message, or a message for a job that finished
- * ten minutes ago all harmless.
+ * The shape to hold on to: **BullMQ delivers a job id and dispatch generation.**
+ * Everything else - whether this worker may run the job, what it did, how it
+ * ended - is a Postgres fact guarded by the lease. A stale generation can reach
+ * this process, but it cannot claim or write the job.
  *
  * Two counters exist here and they mean different things. `job.attemptsMade` is
  * BullMQ's per-message retry count; `jobs.attempt_count` is how many times any
@@ -126,13 +125,17 @@ export function createProcessor(deps: ProcessorDeps) {
       return deps.sweep();
     }
 
-    const { jobId } = job.data;
+    const { jobId, dispatchGeneration = 0 } = job.data;
     if (!jobId) {
       // A `run-job` message with no job id cannot be repaired by retrying it.
       throw new UnrecoverableError(`Message ${job.id ?? "(no id)"} carries no jobId.`);
     }
 
-    const log = deps.log.child({ jobId, bullAttempt: job.attemptsMade + 1 });
+    const log = deps.log.child({
+      jobId,
+      dispatchGeneration,
+      bullAttempt: job.attemptsMade + 1,
+    });
 
     // Already draining when this arrived. Do not start work that shutdown is
     // about to interrupt; put the message back and let the next worker have it.
@@ -141,7 +144,7 @@ export function createProcessor(deps: ProcessorDeps) {
       return requeue(job, token);
     }
 
-    const claimed = await claimJob(jobId, workerId, config.leaseSeconds);
+    const claimed = await claimJob(jobId, workerId, config.leaseSeconds, dispatchGeneration);
     if (!claimed) {
       // Cancelled before anyone got to it, already terminal, a duplicate
       // message, or another worker won the race. None of these are errors, and
@@ -233,6 +236,7 @@ export function createProcessor(deps: ProcessorDeps) {
               type: "phase.started",
               message: phase.label,
               data: { phase: phase.label },
+              leaseOwner: workerId,
             });
             return;
           }
@@ -256,6 +260,7 @@ export function createProcessor(deps: ProcessorDeps) {
             type: "phase.completed",
             message: `${phase.label} finished`,
             data: { phase: phase.label, durationMs: elapsedMs },
+            leaseOwner: workerId,
           });
         },
       });
@@ -273,6 +278,12 @@ export function createProcessor(deps: ProcessorDeps) {
       // phase was waiting on dies with it.
       pipeline.catch(() => undefined);
       await Promise.race([pipeline, deadline.expiry]);
+
+      // Cleanup is still part of the leased attempt. Recording its lifecycle
+      // before the terminal transition means the event can use the same fence
+      // as every other phase write, rather than becoming a stale post-release
+      // write in `finally`.
+      await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite: true, log });
 
       await transitionJob({
         jobId,
@@ -292,12 +303,17 @@ export function createProcessor(deps: ProcessorDeps) {
       // and would otherwise never let this be read. `classify` is pure, so
       // asking twice costs nothing.
       mayWrite = classify(error) !== "lease_lost";
+      // Destroy the attempt before `handleFailure` can clear or hand back its
+      // lease. A stale worker may still clean up its own container, but it may
+      // not append the cleanup event after discovering that it lost ownership.
+      await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite, log });
       await handleFailure(error, { job, token, jobId, currentStatus, workerId, log });
     } finally {
       deadline.cancel();
-      // Before the heartbeat stops, so the lease is still being renewed while a
-      // container is being removed - which can take a moment on a loaded host.
-      await destroySandbox({ sandboxes, jobId, mayWrite, log });
+      // Fallback for failures that happen before the main try body reaches its
+      // cleanup point. The holder is idempotent, so the normal path has nothing
+      // left here to destroy.
+      await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite, log });
       await stopHeartbeat();
       runs.release(jobId);
     }
@@ -307,6 +323,7 @@ export function createProcessor(deps: ProcessorDeps) {
 interface DestroyContext {
   sandboxes: SandboxHolder;
   jobId: string;
+  leaseOwner: string;
   mayWrite: boolean;
   log: Logger;
 }
@@ -323,13 +340,14 @@ interface DestroyContext {
  * process's resources are different obligations, and only the first one is
  * about ownership.
  *
- * This cannot throw. It runs in a `finally` that is usually already carrying
- * the error that actually mattered, and a cleanup failure that replaces it
- * turns a two-minute diagnosis into an hour. What it cannot remove, the sweeper's
- * reaper removes later - the same backstop argument the lease makes.
+ * This cannot throw. It runs from both the leased cleanup point and the
+ * processor's `finally` fallback, and a cleanup failure that replaces the error
+ * that actually mattered turns a two-minute diagnosis into an hour. What it
+ * cannot remove, the sweeper's reaper removes later - the same backstop argument
+ * the lease makes.
  */
 async function destroySandbox(context: DestroyContext): Promise<void> {
-  const { sandboxes, jobId, mayWrite, log } = context;
+  const { sandboxes, jobId, leaseOwner, mayWrite, log } = context;
   try {
     const containerId = await sandboxes.destroy();
     if (!containerId) return;
@@ -342,6 +360,7 @@ async function destroySandbox(context: DestroyContext): Promise<void> {
       type: "sandbox.destroyed",
       message: `Sandbox ${containerId.slice(0, 12)} removed.`,
       data: { containerId },
+      leaseOwner,
     });
   } catch (error) {
     log.error({ err: error }, "could not clean up the sandbox; the reaper will get it");

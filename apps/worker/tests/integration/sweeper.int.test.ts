@@ -59,6 +59,9 @@ afterEach(async () => {
 describe("crash recovery", () => {
   it("reclaims a job whose worker vanished, and a second worker finishes it", async () => {
     const job = await createTestJob();
+    // Keep the original delivery around. Reclaim must use a different encoded
+    // message id rather than waiting for this generation to become stalled.
+    await testQueue.queue.enqueueJobRun(job.id, 0);
 
     // What `kill -9` leaves behind, exactly: a claimed row, a lease with a
     // deadline on it, and nobody to renew it. No release, no failure, no event -
@@ -86,6 +89,9 @@ describe("crash recovery", () => {
     expect(reclaimed.status).toBe("queued");
     expect(reclaimed.leaseOwner).toBeNull();
     expect(reclaimed.leaseExpiresAt).toBeNull();
+    expect(reclaimed.dispatchGeneration).toBe(1);
+    expect(await testQueue.queue.bull.getJob(`${job.id}.0`)).toBeDefined();
+    expect(await testQueue.queue.bull.getJob(`${job.id}.1`)).toBeDefined();
     // Not bumped by the reclaim itself: the counter means "times a worker
     // picked this up", and the next claim is what does that.
     expect(reclaimed.attemptCount).toBe(1);
@@ -113,13 +119,15 @@ describe("crash recovery", () => {
     // Three claims, each one ending the same way: the worker stops answering.
     // A job that reliably kills its worker must not be allowed to keep doing
     // that to a fresh worker every sweep interval.
+    let dispatchGeneration = 0;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const claimed = await claimJob(job.id, `worker-${attempt}`, 1);
+      const claimed = await claimJob(job.id, `worker-${attempt}`, 1, dispatchGeneration);
       expect(claimed?.attemptCount).toBe(attempt);
       await sleep(1_100);
       if (attempt < 3) {
         const results = await reclaimExpiredJobs(testQueue.queue, SWEEP);
         expect(results[0]?.outcome).toBe("reclaimed");
+        dispatchGeneration += 1;
       }
     }
 
@@ -156,7 +164,7 @@ describe("crash recovery", () => {
     expect(cancelled.leaseOwner).toBeNull();
 
     // Nothing re-enqueued it, so no worker can pick it up again.
-    expect(await testQueue.queue.bull.getJob(job.id)).toBeUndefined();
+    expect(await testQueue.queue.bull.getJob(`${job.id}.0`)).toBeUndefined();
   });
 });
 
@@ -167,11 +175,11 @@ describe("orphaned queued rows", () => {
     // leaves behind, and what an unreachable Redis leaves behind, and what a
     // flushed Redis leaves behind. All three look like this.
     const job = await createTestJob();
-    expect(await testQueue.queue.bull.getJob(job.id)).toBeUndefined();
+    expect(await testQueue.queue.bull.getJob(`${job.id}.0`)).toBeUndefined();
 
     const results = await requeueOrphanedJobs(testQueue.queue, SWEEP);
     expect(results).toEqual([{ jobId: job.id, outcome: "enqueued" }]);
-    expect(await testQueue.queue.bull.getJob(job.id)).toBeDefined();
+    expect(await testQueue.queue.bull.getJob(`${job.id}.0`)).toBeDefined();
 
     const types = await eventTypes(job.id);
     expect(types).toEqual(["job.created", "job.enqueued"]);
@@ -183,7 +191,7 @@ describe("orphaned queued rows", () => {
 
   it("says nothing and does nothing when the message was there all along", async () => {
     const job = await createTestJob();
-    await testQueue.queue.enqueueJobRun(job.id);
+    await testQueue.queue.enqueueJobRun(job.id, 0);
     const before = await readEvents(job.id);
 
     const results = await requeueOrphanedJobs(testQueue.queue, SWEEP);
@@ -204,7 +212,7 @@ describe("orphaned queued rows", () => {
     });
 
     expect(results).toEqual([]);
-    expect(await testQueue.queue.bull.getJob(job.id)).toBeUndefined();
+    expect(await testQueue.queue.bull.getJob(`${job.id}.0`)).toBeUndefined();
   });
 });
 

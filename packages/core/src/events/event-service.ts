@@ -2,6 +2,8 @@ import type { JobEvent, JobEventData, JobEventType } from "@rivet/contracts";
 import { db, type Executor, type JobEventRow, jobEvents } from "@rivet/database";
 import { and, asc, eq, gt } from "drizzle-orm";
 
+import { assertActiveLease } from "../jobs/lease";
+
 /**
  * The append-only job event log.
  *
@@ -21,6 +23,8 @@ export interface AppendEventInput {
   /** One human-readable line. This is what the timeline renders. */
   message: string;
   data?: JobEventData;
+  /** When present, the event is written only while this lease is active. */
+  leaseOwner?: string;
 }
 
 /** Maps a database row to the contract shape. */
@@ -47,6 +51,18 @@ export async function appendEvent(
   input: AppendEventInput,
   executor: Executor = db,
 ): Promise<JobEvent> {
+  // A direct call with the shared database handle needs its own transaction so
+  // the row lock in `assertActiveLease` remains held through the insert. Callers
+  // that already have a transaction, such as `transitionJob` and PhaseContext,
+  // pass it directly and do not nest one here.
+  if (input.leaseOwner !== undefined && executor === db) {
+    return db.transaction((tx) => appendEvent(input, tx));
+  }
+
+  if (input.leaseOwner !== undefined) {
+    await assertActiveLease(input.jobId, input.leaseOwner, executor);
+  }
+
   const [row] = await executor
     .insert(jobEvents)
     .values({

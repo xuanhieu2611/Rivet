@@ -9,7 +9,8 @@
  *
  * `packages/queue` supplies two implementations - the BullMQ adapter for the
  * real system, and an in-memory array for tests. Both are interchangeable here
- * because everything below is expressed in terms of a job id.
+ * because everything below is expressed in terms of a job id and its durable
+ * dispatch generation.
  */
 
 export interface EnqueueOptions {
@@ -26,31 +27,39 @@ export interface EnqueueOptions {
  * What an enqueue actually did.
  *
  * `already-queued` is the normal, uninteresting answer when a message for this
- * job is still in flight: enqueueing is idempotent on the job id, which is what
- * lets the API, the retry path and the sweeper all call it without coordinating.
- * Callers log the distinction rather than acting on it.
+ * job generation is still in flight: enqueueing is idempotent on the encoded
+ * `(jobId, dispatchGeneration)` key, which is what lets the API, the retry path
+ * and the sweeper all call it without coordinating. Callers log the distinction
+ * rather than acting on it.
  */
 export type EnqueueResult = "enqueued" | "already-queued";
 
 export interface JobQueue {
   /**
-   * Asks for `jobId` to be run, at most once concurrently.
+   * Asks for one durable dispatch generation of `jobId` to be run, at most once
+   * concurrently.
    *
-   * Idempotent by construction: the transport keys the message on the job's
-   * UUID, so a duplicate call while the first is still outstanding is a no-op.
-   * A job that has already finished its previous message can be enqueued again,
-   * which is what makes retry and sweeper reclaim work.
+   * Idempotent by construction: the transport keys the message on the encoded
+   * `(jobId, dispatchGeneration)` pair, so a duplicate call for the same
+   * generation is a no-op. A new generation gets a new message id even while an
+   * older generation is still active, which lets a sweeper redeliver work
+   * immediately after a lease reclaim.
    */
-  enqueueJobRun(jobId: string, options?: EnqueueOptions): Promise<EnqueueResult>;
+  enqueueJobRun(
+    jobId: string,
+    dispatchGeneration: number,
+    options?: EnqueueOptions,
+  ): Promise<EnqueueResult>;
 
   /**
-   * Drops any outstanding message for `jobId`. Returns whether one was removed.
+   * Drops the outstanding message for one dispatch generation. Returns whether
+   * one was removed.
    *
    * Used by cancellation of a job that has not started yet. A message that is
    * currently being processed cannot be removed - the worker holds it - so a
    * `false` here means "cancel cooperatively instead", not "failed".
    */
-  removeJobRun(jobId: string): Promise<boolean>;
+  removeJobRun(jobId: string, dispatchGeneration: number): Promise<boolean>;
 
   /** Releases the underlying connection. Only entrypoints call this. */
   close(): Promise<void>;

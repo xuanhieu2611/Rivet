@@ -162,6 +162,9 @@ export function startTestWorker(options: TestWorkerOptions): TestWorker {
   const config: WorkerConfig = { ...TEST_CONFIG, ...options.config };
   const workerId = options.workerId ?? `test-worker-${randomUUID().slice(0, 8)}`;
   const log = testLogger.child({ workerId });
+  const sweep = options.withSweeper
+    ? createSweepRunner({ queue: options.queue, config, log })
+    : undefined;
 
   const worker = new Worker<JobRunsMessage>(
     options.queue.bull.name,
@@ -173,9 +176,7 @@ export function startTestWorker(options: TestWorkerOptions): TestWorker {
       ...(options.phases ? { phases: options.phases } : {}),
       ...(options.phaseFactory ? { phaseFactory: options.phaseFactory } : {}),
       ...(options.faults ? { faults: options.faults } : {}),
-      ...(options.withSweeper
-        ? { sweep: createSweepRunner({ queue: options.queue, config, log }) }
-        : {}),
+      ...(sweep ? { sweep } : {}),
     }),
     {
       // The same shared client the real worker uses, which is also the only
@@ -187,6 +188,13 @@ export function startTestWorker(options: TestWorkerOptions): TestWorker {
       stalledInterval: 5_000,
     },
   );
+
+  // Match the production worker's startup reconciliation. Tests that opt into
+  // the sweeper should not need to manufacture a scheduler tick just to prove
+  // a queued row can recover after a restart.
+  void sweep?.().catch((error: unknown) => {
+    testLogger.warn({ err: error }, "test startup reconciliation failed");
+  });
 
   return {
     worker,
@@ -405,8 +413,12 @@ export function assertMilestone6RecoveryFacts(facts: Milestone6RecoveryFacts): v
 }
 
 /** Enqueues without the event bookkeeping, when a test only needs the message. */
-export async function enqueue(queue: JobQueue, jobId: string): Promise<void> {
-  await queue.enqueueJobRun(jobId);
+export async function enqueue(
+  queue: JobQueue,
+  jobId: string,
+  dispatchGeneration = 0,
+): Promise<void> {
+  await queue.enqueueJobRun(jobId, dispatchGeneration);
 }
 
 export interface WaitOptions {

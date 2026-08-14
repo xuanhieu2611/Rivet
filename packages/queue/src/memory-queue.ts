@@ -1,5 +1,7 @@
 import type { EnqueueOptions, EnqueueResult, JobQueue } from "@rivet/core";
 
+import { encodeJobRunId } from "./names";
+
 /**
  * A `JobQueue` that is an array.
  *
@@ -9,12 +11,13 @@ import type { EnqueueOptions, EnqueueResult, JobQueue } from "@rivet/core";
  * `enqueued` here instead of against a live Redis.
  *
  * It mirrors the BullMQ adapter's idempotency rule rather than approximating
- * it: a job id that is still outstanding is not enqueued twice. Where the two
- * differ, this one is the liar, so the integration suite is what proves the
- * real adapter.
+ * it: an encoded `(jobId, dispatchGeneration)` key that is still outstanding
+ * is not enqueued twice. Where the two differ, this one is the liar, so the
+ * integration suite is what proves the real adapter.
  */
 export interface RecordedEnqueue {
   jobId: string;
+  dispatchGeneration: number;
   options: EnqueueOptions;
   result: EnqueueResult;
 }
@@ -23,20 +26,27 @@ export class InMemoryJobQueue implements JobQueue {
   /** Every call, in order, including the deduplicated ones. */
   readonly calls: RecordedEnqueue[] = [];
 
-  /** Job ids with an outstanding message, in enqueue order. */
+  /** Encoded message ids with an outstanding message, in enqueue order. */
   private readonly outstanding: string[] = [];
 
   private closed = false;
 
-  enqueueJobRun(jobId: string, options: EnqueueOptions = {}): Promise<EnqueueResult> {
-    const result: EnqueueResult = this.outstanding.includes(jobId) ? "already-queued" : "enqueued";
-    if (result === "enqueued") this.outstanding.push(jobId);
-    this.calls.push({ jobId, options, result });
+  enqueueJobRun(
+    jobId: string,
+    dispatchGeneration: number,
+    options: EnqueueOptions = {},
+  ): Promise<EnqueueResult> {
+    const messageId = encodeJobRunId(jobId, dispatchGeneration);
+    const result: EnqueueResult = this.outstanding.includes(messageId)
+      ? "already-queued"
+      : "enqueued";
+    if (result === "enqueued") this.outstanding.push(messageId);
+    this.calls.push({ jobId, dispatchGeneration, options, result });
     return Promise.resolve(result);
   }
 
-  removeJobRun(jobId: string): Promise<boolean> {
-    const index = this.outstanding.indexOf(jobId);
+  removeJobRun(jobId: string, dispatchGeneration: number): Promise<boolean> {
+    const index = this.outstanding.indexOf(encodeJobRunId(jobId, dispatchGeneration));
     if (index === -1) return Promise.resolve(false);
     this.outstanding.splice(index, 1);
     return Promise.resolve(true);
@@ -52,14 +62,16 @@ export class InMemoryJobQueue implements JobQueue {
     return this.outstanding.splice(0, this.outstanding.length);
   }
 
-  /** Ids with a message still outstanding, without consuming them. */
+  /** Encoded message ids with a message still outstanding, without consuming them. */
   get pending(): readonly string[] {
     return this.outstanding;
   }
 
-  /** Every id ever enqueued for real, deduplicated calls excluded. */
+  /** Every encoded message id ever enqueued for real, deduplicated calls excluded. */
   get enqueued(): string[] {
-    return this.calls.filter((call) => call.result === "enqueued").map((call) => call.jobId);
+    return this.calls
+      .filter((call) => call.result === "enqueued")
+      .map((call) => encodeJobRunId(call.jobId, call.dispatchGeneration));
   }
 
   close(): Promise<void> {

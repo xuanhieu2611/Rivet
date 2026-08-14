@@ -83,6 +83,7 @@ export function toJobDetail(row: Job): JobDetail {
     finalBranch: row.finalBranch,
     pullRequestUrl: row.pullRequestUrl,
     failureReason: row.failureReason,
+    dispatchGeneration: row.dispatchGeneration,
     attemptCount: row.attemptCount,
     // `failure_category` is a plain text column, so a value written by a newer
     // build could be outside the enum. Coerced rather than trusted.

@@ -1,5 +1,5 @@
 import type { JobStatus } from "@rivet/contracts";
-import { db, type Database, jobs } from "@rivet/database";
+import { db, type Database, jobs, type Job } from "@rivet/database";
 import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import { appendEvent } from "../events/event-service";
@@ -34,9 +34,9 @@ import { transitionJob, TransitionConflictError } from "./transitions";
  *    `201` instead of failing the request.
  *
  * Neither half needs to be exactly-once, and neither tries to be. Re-enqueueing
- * is idempotent on the job id, and every status write goes through
- * `transitionJob`'s compare-and-swap, so the worst a redundant sweep can do is
- * lose a race and write nothing.
+ * is idempotent on the durable `(jobId, dispatchGeneration)` pair, and every
+ * status write goes through `transitionJob`'s compare-and-swap, so the worst a
+ * redundant sweep can do is lose a race and write nothing.
  */
 
 /** Scan size per category per pass. Enough that a backlog drains, not a batch job. */
@@ -86,6 +86,8 @@ export interface ReclaimResult {
   leaseOwner: string | null;
   /** `jobs.attempt_count` as it stood before this pass. */
   attemptCount: number;
+  /** The generation to enqueue after a successful reclaim. */
+  dispatchGeneration: number;
 }
 
 export interface RequeueResult {
@@ -167,6 +169,7 @@ export async function reclaimExpiredJobs(
       status: jobs.status,
       attemptCount: jobs.attemptCount,
       leaseOwner: jobs.leaseOwner,
+      dispatchGeneration: jobs.dispatchGeneration,
       cancelRequestedAt: jobs.cancelRequestedAt,
     })
     .from(jobs)
@@ -197,25 +200,17 @@ export async function reclaimExpiredJobs(
   // process dies between the commit and the enqueue, the row is sitting in
   // `queued` with no message - which is leak (2), and the next pass fixes it.
   //
-  // One case does not produce a new message, and it is worth knowing about
-  // because it is the `kill -9` case specifically: the dead worker's message is
-  // still sitting in Redis marked `active`, since nothing told Redis otherwise
-  // either. The adapter will not displace a message that is not finished, so
-  // this enqueue answers `already-queued` and no redelivery happens here. That
-  // is correct rather than a gap - the message genuinely still exists - but it
-  // does mean recovery in that case waits for BullMQ's stalled-job detection to
-  // notice the expired lock and move the message back to `wait`, rather than
-  // for this sweep. The row is already back in `queued`, so whichever worker
-  // eventually receives that message claims it and runs it.
-  //
-  // The practical consequence: end-to-end crash recovery takes as long as the
-  // slower of the two mechanisms, Rivet's lease expiry plus a sweep interval,
-  // or BullMQ's `lockDuration` plus `stalledInterval`. Both are on the order of
-  // a minute by default, and neither can be dropped: BullMQ's half cannot see
-  // the job row, and this half cannot displace a live message.
+  // The dead worker's message may still be active in Redis. The reclaimed row
+  // has a new generation, so its encoded message id is different and BullMQ can
+  // deliver it immediately without waiting for the old message's stalled-job
+  // detector. If the old message eventually redelivers, its generation fails
+  // the claim precondition and it completes harmlessly.
   for (const result of results) {
     if (result.outcome === "reclaimed") {
-      await requestJobRun(result.jobId, queue, {}, database);
+      // The transition above has committed before this call. The generation in
+      // the result is the one written by that transaction, not a value copied
+      // from the stale message that just died.
+      await requestJobRun(result.jobId, result.dispatchGeneration, queue, {}, database);
     }
   }
 
@@ -227,6 +222,7 @@ interface ReclaimCandidate {
   status: JobStatus;
   attemptCount: number;
   leaseOwner: string | null;
+  dispatchGeneration: number;
   cancelRequestedAt: Date | null;
 }
 
@@ -240,11 +236,16 @@ async function reclaimOne(
     from: candidate.status,
     leaseOwner: candidate.leaseOwner,
     attemptCount: candidate.attemptCount,
+    dispatchGeneration: candidate.dispatchGeneration,
   };
   const owner = candidate.leaseOwner ?? "an unknown worker";
   // `exactOptionalPropertyTypes`: an unknown owner is an absent key, not an
   // explicit `undefined`.
   const ownerData = candidate.leaseOwner === null ? {} : { leaseOwner: candidate.leaseOwner };
+  const stillExpired = (current: Job, now: Date) =>
+    current.dispatchGeneration === candidate.dispatchGeneration &&
+    current.leaseOwner === candidate.leaseOwner &&
+    (current.leaseExpiresAt === null || current.leaseExpiresAt <= now);
 
   try {
     // A cancel that was requested while the worker was alive but never acted on,
@@ -267,6 +268,7 @@ async function reclaimOne(
           to: "cancelled",
           message: `Cancelled while ${owner} was unreachable; its lease expired.`,
           data: { failureCategory: "cancelled", ...ownerData },
+          precondition: stillExpired,
           patch: (_job, now) => ({
             completedAt: now,
             failureCategory: "cancelled",
@@ -291,6 +293,7 @@ async function reclaimOne(
           type: "job.failed",
           message: reason,
           data: { failureCategory: "lease_expired", ...ownerData },
+          precondition: stillExpired,
           patch: (_job, now) => ({
             completedAt: now,
             failureReason: reason,
@@ -311,14 +314,24 @@ async function reclaimOne(
         to: "queued",
         type: "job.reclaimed",
         message: `Lease held by ${owner} expired; returned to the queue.`,
-        data: { ...ownerData, attempt: candidate.attemptCount },
-        // Clearing the lease is what lets the next worker claim immediately
-        // instead of waiting out an expiry that has already passed.
-        patch: { leaseOwner: null, leaseExpiresAt: null },
+        data: (current) => ({
+          ...ownerData,
+          attempt: candidate.attemptCount,
+          dispatchGeneration: current.dispatchGeneration + 1,
+        }),
+        precondition: stillExpired,
+        // Clearing the lease and advancing the generation happen in the same
+        // transaction as `job.reclaimed`. The old message can remain active in
+        // BullMQ, but it no longer has a generation that can claim the row.
+        patch: (current) => ({
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          dispatchGeneration: current.dispatchGeneration + 1,
+        }),
       },
       database,
     );
-    return { ...base, outcome: "reclaimed" };
+    return { ...base, outcome: "reclaimed", dispatchGeneration: candidate.dispatchGeneration + 1 };
   } catch (error) {
     if (error instanceof TransitionConflictError) {
       // Somebody else got there between the scan and the write. Their version
@@ -366,7 +379,7 @@ export async function requeueOrphanedJobs(
   const staleSeconds = (options.orphanedQueuedAfterMs ?? DEFAULT_ORPHANED_QUEUED_AFTER_MS) / 1_000;
 
   const stale = await database
-    .select({ id: jobs.id })
+    .select({ id: jobs.id, dispatchGeneration: jobs.dispatchGeneration })
     .from(jobs)
     .where(
       and(
@@ -385,9 +398,9 @@ export async function requeueOrphanedJobs(
 
   const results: RequeueResult[] = [];
 
-  for (const { id } of stale) {
+  for (const { id, dispatchGeneration } of stale) {
     try {
-      const outcome = await queue.enqueueJobRun(id);
+      const outcome = await queue.enqueueJobRun(id, dispatchGeneration);
       if (outcome === "enqueued") {
         // Recorded only when a message genuinely had to be re-sent. The `queued`
         // rows examined here are re-examined every single pass, and writing an
@@ -398,6 +411,7 @@ export async function requeueOrphanedJobs(
             jobId: id,
             type: "job.enqueued",
             message: "Re-queued by the sweeper: the row was waiting with no message behind it.",
+            data: { dispatchGeneration },
           },
           database,
         );

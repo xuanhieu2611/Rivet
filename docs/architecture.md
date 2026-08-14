@@ -129,8 +129,12 @@ queue, which is three methods:
 
 ```ts
 interface JobQueue {
-  enqueueJobRun(jobId: string, options?: EnqueueOptions): Promise<EnqueueResult>;
-  removeJobRun(jobId: string): Promise<boolean>;
+  enqueueJobRun(
+    jobId: string,
+    dispatchGeneration: number,
+    options?: EnqueueOptions,
+  ): Promise<EnqueueResult>;
+  removeJobRun(jobId: string, dispatchGeneration: number): Promise<boolean>;
   close(): Promise<void>;
 }
 ```
@@ -139,22 +143,22 @@ interface JobQueue {
 which is an array, for tests. The fake is what keeps the entire unit suite runnable with no Redis,
 which is in turn what keeps CI's `verify` job able to prove that `pnpm build` needs no environment.
 
-**The message is a job id and nothing else.** Anything more copied into the payload would be a
-second copy of state that can go stale between the enqueue and the moment a worker picks it up. A
-worker that receives a message reads everything it needs from Postgres, under a lease.
+**The message carries a job id and a dispatch generation.** Postgres remains the source of truth for
+everything else, so no mutable job state is copied into the payload. The generation is different
+from the job's attempt count: it changes only when an expired lease is reclaimed and identifies the
+new delivery that is allowed to claim the row.
 
-The interesting decisions are all about idempotency, and they all follow from one choice: **the
-BullMQ message id is the job's own UUID.** Two `POST /api/jobs` retries of the same create cannot
-produce two executions, and the API, the retry path and the sweeper can all call `enqueueJobRun`
-without coordinating.
+The interesting decisions are all about idempotency and fencing. The BullMQ message id is the
+encoded `<job UUID>.<dispatch generation>` pair. Two retries of the same generation cannot produce
+two executions, while a reclaimed generation gets a different id and can be delivered immediately
+even when the dead worker's older message is still active. The processor passes the generation to
+`claimJob`, and the claim requires both `status = queued` and an exact durable generation match.
 
-That choice has a sharp edge in BullMQ v6 that is worth writing down, because everything depends on
-it. A _completed_ message keeps its id reserved. Adding the same id again is silently deduplicated
-against the message that already ran, so a retry or a sweeper reclaim would enqueue nothing at all.
-`enqueueJobRun` therefore looks the id up first: if a message exists and is still waiting, delayed
-or active, it answers `already-queued` and does nothing; if the message is finished, it removes it
-and adds a fresh one. Retention is deliberately short for the same reason (`removeOnComplete` after
-five minutes) - Redis is not the audit log, `job_events` in Postgres is.
+A _completed_ message keeps its id reserved. `enqueueJobRun` therefore looks the encoded id up
+first: if a message exists and is still waiting, delayed or active, it answers `already-queued`; if
+the message is finished, it removes it and adds a fresh one. Retention is deliberately short for the
+same reason (`removeOnComplete` after five minutes) - Redis is not the audit log, `job_events` in
+Postgres is. If the old generation later redelivers after a reclaim, its claim fails harmlessly.
 
 Other v6 specifics that cost time to rediscover: `UnrecoverableError` replaced `job.discard()` as
 the way to refuse a retry; the legacy repeatable-jobs API is gone in favour of job schedulers, which
@@ -354,11 +358,12 @@ other process is currently mid-write on the same row. So Rivet keeps the authori
 - `lease_expires_at` - until when.
 - `heartbeat_at` - when they last said something. Observability; the lease is what enforces.
 
-`claimJob` moves a `queued` job to `provisioning`, stamps all three, bumps `attempt_count`, and
-coalesces `started_at` so a reclaimed job keeps its original start time and end-to-end duration
-stays honest across a crash. It is one transition and therefore one compare-and-swap, so two workers
-racing on the same job produce exactly one winner and one `null`. `null` is an ordinary answer, not
-an error: cancelled before anyone got to it, already terminal, duplicate message, lost race.
+`claimJob` accepts a message's dispatch generation, moves a matching `queued` job to `provisioning`,
+stamps all three lease columns, bumps `attempt_count`, and coalesces `started_at` so a reclaimed job
+keeps its original start time and end-to-end duration stays honest across a crash. It is one
+transition and therefore one compare-and-swap, so two workers racing on the same job produce exactly
+one winner and one `null`. `null` is an ordinary answer, not an error: cancelled before anyone got
+to it, already terminal, a stale generation, or another worker won.
 
 **A lease that has run out on a non-terminal job means its holder is gone, whatever Redis
 believes.** That single fact is what the sweeper acts on, and it is the reason the lease is worth
@@ -432,15 +437,13 @@ because those need to enqueue afterwards and holding a Postgres transaction open
 round trip is a bad trade. Correctness comes from `transitionJob`'s compare-and-swap: if two
 sweepers pick the same job, the second finds a status it did not expect and writes nothing.
 
-There is one honest limit here, and it is specific to the `kill -9` case. The dead worker's message
-is still sitting in Redis marked active, because nothing told Redis anything either, and the adapter
-will not displace a message that is not finished - so the reclaim's enqueue answers `already-queued`
-and produces no redelivery. The message genuinely still exists, so that is correct rather than a
-gap, but it means recovery waits for BullMQ's stalled-job detection to move the message back to
-`wait`. End-to-end crash recovery therefore takes the slower of the two mechanisms: Rivet's lease
-expiry plus a sweep interval, or BullMQ's `lockDuration` plus `stalledInterval`. Both are on the
-order of a minute, and neither half can be dropped - BullMQ's cannot see the job row, and Rivet's
-cannot displace a live message.
+The `kill -9` path no longer waits for BullMQ's stalled-job detector. Reclaiming clears the lease
+and increments `dispatch_generation` in the same Postgres transaction that writes `job.reclaimed`.
+Only after that commit does the sweeper enqueue the returned generation. The old active message may
+remain in Redis, but its generation cannot claim the row; the new encoded id is free to run now.
+
+The previous message may still be present in Redis, but it is no longer authoritative: the durable
+claim fence rejects its old generation.
 
 **Leak two: a job Postgres thinks is queued, that no message points at.** This is the dual-write
 gap, and it deserves its own section.
@@ -448,10 +451,10 @@ gap, and it deserves its own section.
 The sweep runs as a BullMQ job scheduler rather than a `setInterval`, for two reasons that are the
 same reason: the schedule lives in Redis, so N workers still produce one sweep per interval rather
 than N, and it survives a restart without any worker having to remember it held the timer. Every
-worker upserts the same scheduler id at startup. 60 seconds and not 10, because a sweep is a
-Postgres query on a schedule and Neon's compute endpoint will not autosuspend while something keeps
-querying it - a chattier sweeper quietly spends the free tier's monthly compute allowance on finding
-nothing.
+worker upserts the same scheduler id at startup and also runs one reconciliation pass immediately on
+startup. 60 seconds and not 10, because a sweep is a Postgres query on a schedule and Neon's compute
+endpoint will not autosuspend while something keeps querying it - a chattier sweeper quietly spends
+the free tier's monthly compute allowance on finding nothing.
 
 ## The dual-write gap, and why the sweeper is the honest answer
 
@@ -462,9 +465,9 @@ between, or Redis is unreachable, or Redis loses data, Postgres says `queued` an
 Rivet's answer is not a two-phase commit, and it is not pretending the window does not exist. It is
 this: **Postgres is the source of truth, so a `queued` row with no message is a recoverable state
 rather than a lost job.** `requeueOrphanedJobs` finds rows that have been sitting in `queued` longer
-than a sweep interval and enqueues them again. Re-adding with the job's own UUID as the message id
-makes that safe to repeat, and safe to do redundantly - a row that did have a message answers
-`already-queued` and nothing happens.
+than a sweep interval and enqueues their current dispatch generation. Re-adding with the encoded
+`(jobId, dispatchGeneration)` id makes that safe to repeat, and safe to do redundantly - a row that
+did have a message answers `already-queued` and nothing happens.
 
 Three consequences follow, and they are the visible design of the system rather than incidental
 details:
@@ -479,8 +482,8 @@ details:
 - **It also catches a case that is not a leak at all**: a job BullMQ has stopped retrying. The
   processor releases a transiently failed job back to `queued` and rethrows so BullMQ applies its
   backoff; when BullMQ exhausts its own attempts it simply stops, leaving the row in `queued`. The
-  sweeper is the backstop, and it works only because the adapter clears a finished message before
-  reusing its id.
+  sweeper is the backstop, and it works only because the adapter clears a finished generation
+  message before reusing its encoded id.
 
 **A transactional outbox is the stronger answer, and it is deliberately not built.** Writing the
 intent-to-enqueue into a table inside the job's own transaction and having a relay process drain it
@@ -497,10 +500,12 @@ when a job is deleted.
 
 Two rules make it trustworthy. `appendEvent()` is the only writer, and it takes an `Executor` rather
 than reaching for the pool - so `transitionJob` passes its transaction and the event lands
-atomically with the status change it describes. The timeline can therefore never disagree with the
-row it is describing, in either direction: no status change without its event, no event for a change
-that rolled back. This is the concrete reason Milestone 0 chose `pg` over Neon's HTTP driver, which
-has no interactive transactions.
+atomically with the status change it describes. Phase events pass the active lease owner and lock
+the job row before inserting, so a reclaimed worker cannot append after its ownership ends. The
+timeline can therefore never disagree with the row it is describing, in either direction: no status
+change without its event, no fenced phase event after lease loss, and no event for a change that
+rolled back. This is the concrete reason Milestone 0 chose `pg` over Neon's HTTP driver, which has
+no interactive transactions.
 
 The id is a `bigserial`, globally monotonic across all jobs rather than a per-job counter that would
 need a lock to allocate. Ordering within a job is all that matters, and a single lease holder is the
@@ -540,8 +545,9 @@ consumers.
 
 Command rows remain append-only. `command.started` creates a running UI row with a
 `commandExecutionId`; `command.completed` or `command.failed` pairs the lifecycle events, while the
-durable command row and bounded stdout/stderr transcript are fetched only when needed. M3 does not
-stream output bytes.
+durable command row and bounded stdout/stderr transcript are fetched only when needed. Command rows,
+artifacts, provisioning metadata and cumulative usage all use the same active-lease fence, so an old
+worker cannot leave phase state in the replacement attempt. M3 does not stream output bytes.
 
 The server-rendered job page reads artifact metadata and the latest summary and diff after the
 terminal refresh. Artifact content is not part of the SSE stream; the API exposes the same split to

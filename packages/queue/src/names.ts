@@ -13,7 +13,7 @@ export const QUEUE_NAMES = {
 } as const;
 
 export const JOB_NAMES = {
-  /** Payload: `{ jobId }`. Everything else is read from Postgres. */
+  /** Payload: `{ jobId, dispatchGeneration }`. Everything else is read from Postgres. */
   runJob: "run-job",
   /** Payload: nothing. Produced by the recurring sweep scheduler. */
   sweep: "sweep",
@@ -33,12 +33,13 @@ export const SCHEDULER_IDS = {
 /**
  * The message body.
  *
- * Just the id, on purpose. Postgres is the source of truth, so anything else
- * copied in here would be a second copy that can go stale between the enqueue
- * and the moment a worker picks it up.
+ * The job id and dispatch generation are the only delivery facts. Postgres is
+ * still the source of truth for everything else, so copying more state here
+ * would create a second copy that can go stale between enqueue and claim.
  */
 export interface JobRunPayload {
   jobId: string;
+  dispatchGeneration: number;
 }
 
 /**
@@ -50,7 +51,16 @@ export interface JobRunPayload {
  */
 export interface SweepPayload {
   jobId?: never;
+  dispatchGeneration?: never;
 }
 
 /** Everything that can arrive on the `job-runs` queue. */
 export type JobRunsMessage = JobRunPayload | SweepPayload;
+
+/** BullMQ custom ids may not contain a colon, so use a dot as the separator. */
+export function encodeJobRunId(jobId: string, dispatchGeneration: number): string {
+  if (!Number.isSafeInteger(dispatchGeneration) || dispatchGeneration < 0) {
+    throw new Error(`Invalid dispatch generation: ${dispatchGeneration}.`);
+  }
+  return `${jobId}.${dispatchGeneration}`;
+}

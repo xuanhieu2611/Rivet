@@ -69,7 +69,7 @@ export async function requestJobCancellation(
   }
 
   if (current.status === "queued") {
-    const cancelled = await cancelQueuedJob(jobId, queue, database);
+    const cancelled = await cancelQueuedJob(jobId, current.dispatchGeneration, queue, database);
     // `null` means a worker claimed the job between the read above and the
     // write - the race this whole function is arranged around. It is in flight
     // now, so fall through to the cooperative path.
@@ -87,6 +87,7 @@ export async function requestJobCancellation(
  */
 async function cancelQueuedJob(
   jobId: string,
+  dispatchGeneration: number,
   queue: JobQueue,
   database: Database,
 ): Promise<CancelOutcome | null> {
@@ -118,7 +119,7 @@ async function cancelQueuedJob(
   // fails to claim it, and drops it - so an unreachable Redis must not turn a
   // successful cancellation into an error the caller has to interpret.
   try {
-    await queue.removeJobRun(jobId);
+    await queue.removeJobRun(jobId, dispatchGeneration);
     return { outcome: "cancelled", job };
   } catch (queueError) {
     return { outcome: "cancelled", job, queueError };
