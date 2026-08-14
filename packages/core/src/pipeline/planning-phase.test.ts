@@ -32,6 +32,8 @@ function harness() {
     // same reason: `planning` runs before anything needs a container of its own.
     exec: () => Promise.reject(new Error("the planning phase runs no commands")),
     artifact: () => Promise.reject(new Error("a plan artifact is Milestone 6")),
+
+    readBaseline: () => Promise.resolve(null),
     recordProvisioning: () => Promise.reject(new Error("the planning phase writes no job columns")),
     recordAgentUsage: () => Promise.reject(new Error("the planning phase spends nothing")),
 

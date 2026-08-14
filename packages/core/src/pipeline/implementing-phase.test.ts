@@ -9,6 +9,7 @@ import type {
   CodingAgentSession,
   CodingAgentSpec,
 } from "../agent/coding-agent";
+import type { BaselineOutcome } from "../events/baseline-log";
 import { BudgetExceededError, JobCancelledError } from "../jobs/failure";
 import type { ExecResult, Sandbox, SandboxProvider } from "../sandbox/sandbox";
 import { SandboxHolder } from "../sandbox/sandbox-holder";
@@ -65,8 +66,14 @@ const AGENT_BASE = {
   fileMaxBytes: 262_144,
 };
 
-const DEFAULT_LISTING = ".\n..\n.git\npackage.json\npnpm-lock.yaml\nsrc\n";
+const DEFAULT_LISTING = ".\n..\n.git\nREADME.md\npackage.json\npnpm-lock.yaml\nsrc\n";
 const DEFAULT_TRACKED = "package.json\nsrc/sum.ts\nsrc/sum.test.ts\n";
+const DEFAULT_README = "# widgets\n\nA library of widgets.\n";
+const DEFAULT_MANIFEST = JSON.stringify({
+  name: "widgets",
+  dependencies: { left_pad: "^1.0.0" },
+  scripts: { test: "vitest run", lint: "eslint .", build: "tsc" },
+});
 
 /** A session that yields a fixed list, or misbehaves on request. */
 class ScriptedAgent implements CodingAgent {
@@ -138,12 +145,15 @@ function harness(
     overrides?: Partial<AgentOptions>;
     job?: Partial<JobDetail>;
     respond?: Responder;
+    /** What `analyzing` recorded, or an error to prove the builder survives one. */
+    baseline?: BaselineOutcome | null | Error;
   } = {},
 ) {
   const holder = new SandboxHolder();
   const controller = new AbortController();
   const executed: PhaseExecInput[] = [];
   const events: PhaseEventInput[] = [];
+  const infos: Record<string, unknown>[] = [];
   const warnings: Record<string, unknown>[] = [];
   const reads: string[] = [];
   const writes: { path: string; content: string }[] = [];
@@ -184,7 +194,7 @@ function harness(
     signal: controller.signal,
     log: {
       debug: () => undefined,
-      info: () => undefined,
+      info: (details) => infos.push(details),
       warn: (details) => warnings.push(details),
     },
 
@@ -214,6 +224,11 @@ function harness(
 
     artifact: () => Promise.reject(new Error("the implementing phase records no artifacts")),
 
+    readBaseline: () =>
+      options.baseline instanceof Error
+        ? Promise.reject(options.baseline)
+        : Promise.resolve(options.baseline ?? null),
+
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: (patch) => {
       usages.push(patch);
@@ -227,6 +242,7 @@ function harness(
     controller,
     executed,
     events,
+    infos,
     warnings,
     reads,
     writes,
@@ -239,6 +255,8 @@ function harness(
 function defaultResponse(argv: string[]): Partial<ExecResult> | undefined {
   if (argv[0] === "ls") return { stdout: DEFAULT_LISTING };
   if (argv[0] === "git") return { stdout: DEFAULT_TRACKED };
+  if (argv[0] === "head") return { stdout: DEFAULT_README };
+  if (argv[0] === "cat") return { stdout: DEFAULT_MANIFEST };
   return undefined;
 }
 
@@ -413,8 +431,6 @@ describe("implementingPhase", () => {
     expect(context).toContain("/home/node/workspace/repo");
     expect(context).toContain("corepack pnpm run test");
     expect(context).toContain("src/sum.ts");
-    // Honest about the ordering: the suite has not been run at this point.
-    expect(context).toContain("has NOT been run yet");
   });
 
   it("passes the job's own ceilings into the session spec", async () => {
@@ -456,6 +472,169 @@ describe("implementingPhase", () => {
     expect(test.usages).toEqual([
       { totalInputTokens: 1_900, totalOutputTokens: 300, totalCostUsd: "1.3750" },
     ]);
+  });
+});
+
+/**
+ * The sentence Stage 4 exists to replace, in each of its four readings.
+ *
+ * Four rather than three because "nobody has looked yet" is a different fact
+ * from "we looked and there was nothing to run", and a model told the wrong one
+ * goes hunting for a test script that either is or is not there.
+ */
+describe("the baseline the model is told about", () => {
+  const contextFor = async (baseline: BaselineOutcome | null | Error) => {
+    const agent = new ScriptedAgent();
+    await harness({ agent, baseline }).run();
+    return agent.specs[0]?.context ?? "";
+  };
+
+  it("says a red suite is the task and not the model's fault", async () => {
+    const context = await contextFor("failed");
+
+    expect(context).toContain("FAILED");
+    expect(context).toContain("not your fault");
+    // The exact command the baseline ran, so "re-run it" is unambiguous.
+    expect(context).toContain("corepack pnpm run test");
+    expect(context).not.toContain("has not been run");
+  });
+
+  it("says a green suite has to stay green", async () => {
+    const context = await contextFor("passed");
+
+    expect(context).toContain("PASSED");
+    expect(context).toContain("must still pass");
+  });
+
+  it("distinguishes a skipped baseline from an absent one", async () => {
+    expect(await contextFor("skipped")).toContain("No baseline could be established");
+    expect(await contextFor(null)).toContain("has not been run");
+  });
+
+  it("still builds a context when the baseline cannot be read", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({ agent, baseline: new Error("database unavailable") });
+
+    await test.run();
+
+    expect(agent.specs[0]?.context).toContain("has not been run");
+    expect(test.warnings.some((warning) => warning.err instanceof Error)).toBe(true);
+  });
+});
+
+describe("what else the first prompt carries", () => {
+  it("includes the README head and the manifest's scripts", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({ agent });
+
+    await test.run();
+
+    const context = agent.specs[0]?.context ?? "";
+    expect(context).toContain("A library of widgets.");
+    expect(context).toContain('"lint": "eslint ."');
+    // Only the scripts block. The dependency list is a lockfile in prose.
+    expect(context).not.toContain("left_pad");
+  });
+
+  it("bounds the README in the container rather than after the fact", async () => {
+    const test = harness({});
+
+    await test.run();
+
+    const head = test.executed.find((input) => input.argv[0] === "head");
+    expect(head?.argv).toEqual(["head", "-c", "4096", "README.md"]);
+    expect(head?.maxOutputBytes).toBe(4_096);
+  });
+
+  it("reads no README when the repository has none", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({
+      agent,
+      respond: (argv) =>
+        argv[0] === "ls" ? { stdout: ".\n..\npackage.json\npnpm-lock.yaml\n" } : undefined,
+    });
+
+    await test.run();
+
+    expect(test.executed.some((input) => input.argv[0] === "head")).toBe(false);
+    expect(agent.specs[0]?.context).not.toContain("README.md (first");
+  });
+
+  it("survives a manifest that is not readable as JSON", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({
+      agent,
+      respond: (argv) => (argv[0] === "cat" ? { stdout: "{" } : undefined),
+    });
+
+    await test.run();
+
+    expect(agent.specs[0]?.context).not.toContain("package.json scripts");
+  });
+
+  it("asks for a verified change and a closing summary", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({ agent });
+
+    await test.run();
+
+    const context = agent.specs[0]?.context ?? "";
+    expect(context).toContain("Run the test suite yourself");
+    expect(context).toContain("End your last turn with a plain message");
+    // Milestone 9 owns git identity; nothing here should be committing.
+    expect(context).toContain("do not create branches");
+  });
+});
+
+describe("the implementation summary", () => {
+  const summaryLog = (test: ReturnType<typeof harness>) =>
+    test.infos.find((entry) => "hasSummary" in entry);
+
+  it("retains the last non-empty assistant message", async () => {
+    const test = harness({
+      agent: new ScriptedAgent({
+        events: [
+          { type: "assistant_message", turn: 0, text: "Reading sum.ts." },
+          { type: "assistant_message", turn: 1, text: "Fixed the comparison in sum()." },
+          { type: "session_ended", reason: "completed", turns: 2, usage: USAGE },
+        ],
+      }),
+    });
+
+    await test.run();
+
+    expect(summaryLog(test)).toMatchObject({
+      hasSummary: true,
+      summaryBytes: Buffer.byteLength("Fixed the comparison in sum().", "utf8"),
+    });
+  });
+
+  it("does not let a whitespace message replace a real one", async () => {
+    const test = harness({
+      agent: new ScriptedAgent({
+        events: [
+          { type: "assistant_message", turn: 0, text: "Fixed the comparison." },
+          { type: "assistant_message", turn: 1, text: "  \n" },
+          { type: "session_ended", reason: "completed", turns: 2, usage: USAGE },
+        ],
+      }),
+    });
+
+    await test.run();
+
+    expect(summaryLog(test)?.summaryBytes).toBe(21);
+  });
+
+  it("reports an absent summary rather than inventing one", async () => {
+    const test = harness({
+      agent: new ScriptedAgent({
+        events: [{ type: "session_ended", reason: "completed", turns: 1, usage: USAGE }],
+      }),
+    });
+
+    await test.run();
+
+    expect(summaryLog(test)).toMatchObject({ hasSummary: false, summaryBytes: 0 });
   });
 });
 

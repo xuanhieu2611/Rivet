@@ -20,6 +20,7 @@
 
 export * from "./agent/errors";
 export * from "./artifacts/artifact-store";
+export * from "./events/baseline-log";
 export * from "./events/event-service";
 export * from "./jobs/agent-usage";
 export * from "./jobs/cancel";

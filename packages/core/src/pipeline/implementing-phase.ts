@@ -7,8 +7,10 @@ import type {
   CodingAgentSpec,
   CodingAgentUsage,
 } from "../agent/coding-agent";
+import type { BaselineOutcome } from "../events/baseline-log";
 import type { AgentUsagePatch } from "../jobs/agent-usage";
 import { BudgetExceededError } from "../jobs/failure";
+import { truncate } from "../sandbox/command-log";
 import { splitLines } from "./command-output";
 import type { PhaseContext } from "./phase-context";
 import type { AgentOptions, PipelineOptions } from "./phases";
@@ -33,9 +35,11 @@ import { detectPackageManager, type ProjectPlan, REPO_DIRNAME } from "./project"
  * is Rivet's, not the harness's, and a harness that decided to ignore it would
  * still be stopped.
  *
- * What this phase deliberately does not do is judge the result. Completion
- * detection, diff persistence and implementation summaries are Milestone 5,
- * where a failure means the prompt was wrong rather than the wiring.
+ * What this phase still deliberately does not do is judge the result. It sets
+ * the session up to be judgeable - it states the baseline, names the exact test
+ * command, and asks for a closing summary - and `testing` forms the opinion by
+ * re-running the suite itself. A model saying it is done is a claim, not a
+ * result.
  */
 
 /**
@@ -46,6 +50,29 @@ import { detectPackageManager, type ProjectPlan, REPO_DIRNAME } from "./project"
  * first turn. The model has `bash` and can look at the rest.
  */
 const CONTEXT_FILE_LIMIT = 300;
+
+/**
+ * Three caps rather than one total, and that is the whole reason they are
+ * separate constants.
+ *
+ * PRD §14 step 1 wants the README and the manifest's scripts in the first
+ * prompt. Bounded as a shared total, one enormous README would crowd out the
+ * scripts block and the file listing - the two things that are almost always
+ * more useful than prose. Bounded individually, a repository with a book for a
+ * README costs exactly the README's share and nothing else's.
+ */
+const README_MAX_BYTES = 4_096;
+const SCRIPTS_MAX_BYTES = 2_048;
+
+/**
+ * The manifest is read with a cap well above the default, for the same reason
+ * `baseline-phase.ts` reads it that way: a `package.json` clipped at 64KB is not
+ * a smaller manifest, it is invalid JSON.
+ */
+const MANIFEST_MAX_BYTES = 1_048_576;
+
+/** The candidate root READMEs, in the order they are preferred. */
+const README_NAMES = ["README.md", "README.rst", "README.txt", "README"];
 
 export function implementingPhase(
   agent: AgentOptions,
@@ -123,6 +150,21 @@ export function implementingPhase(
 
     if (state.breach) throw state.breach;
 
+    // Said out loud because a session that ended on a tool call leaves no
+    // summary at all, and that is a property of the run worth being able to see
+    // before `finalizing` reports it. Stage 6 turns this into the
+    // `implementation_summary` artifact; until then it is a log line rather than
+    // a fact quietly held in memory and never mentioned.
+    ctx.log.info(
+      {
+        hasSummary: state.lastAssistantMessage !== undefined,
+        summaryBytes: state.lastAssistantMessage
+          ? Buffer.byteLength(state.lastAssistantMessage, "utf8")
+          : 0,
+      },
+      "the coding session finished",
+    );
+
     // The same two questions again, for an adapter that ends its stream
     // cleanly on an abort rather than throwing out of it. Both shapes are
     // legal - the port only promises that `run` throws when the session cannot
@@ -150,6 +192,23 @@ function sessionExpired(sessionTimeoutMs: number): AgentSessionTimedOutError {
 class SessionAccounting {
   /** Set the moment a ceiling is reached. The phase stops and throws it. */
   breach: BudgetExceededError | undefined;
+
+  /**
+   * The last thing the model said, which is the implementation summary.
+   *
+   * Retained rather than recomputed because the event is already being written -
+   * this costs one assignment per message and nothing else. The two alternatives
+   * were both rejected for Milestone 5: a `.rivet/summary.md` the model writes
+   * adds a file that then has to be excluded from every diff, and a second
+   * structured model call adds a second provider dependency inside the phase,
+   * which PRD §41 lists as later work.
+   *
+   * Undefined when the session ended on a tool call, which some do. That is
+   * recorded plainly rather than papered over with a synthesized sentence: an
+   * invented summary is worse than an admitted absence, because only one of them
+   * can be told apart from a real one afterwards.
+   */
+  lastAssistantMessage: string | undefined;
 
   private sessionId: string | undefined;
   private turns = 0;
@@ -199,6 +258,10 @@ class SessionAccounting {
       }
 
       case "assistant_message": {
+        // Only a message with something in it. A model that ends on whitespace
+        // has said nothing, and keeping that would replace a real summary from
+        // an earlier turn with an empty one.
+        if (event.text.trim().length > 0) this.lastAssistantMessage = event.text;
         await this.write("agent.message", event.text, { turn: event.turn });
         return;
       }
@@ -420,6 +483,11 @@ async function buildContext(
   ctx.signal.throwIfAborted();
   const tracked = files.exitCode === 0 ? splitLines(files.stdout) : [];
 
+  const rootEntries = listing.exitCode === 0 ? splitLines(listing.stdout) : [];
+  const readme = await readReadme(ctx, options, repoDir, rootEntries);
+  const scripts = await readScripts(ctx, options, repoDir, plan);
+  const baseline = await readBaselineOutcome(ctx);
+
   return [
     `# The repository you are working in`,
     ``,
@@ -435,10 +503,104 @@ async function buildContext(
     `no credentials and no access to any model provider. \`bash\` runs as an unprivileged user, so`,
     `\`sudo\` is not available and installing system packages will not work.`,
     ``,
-    `The repository's own test suite has NOT been run yet, so you have no baseline result to`,
-    `compare against. Run it yourself if you need to know whether something was already broken.`,
+    `You do not need to commit anything. Everything you change in the working tree is collected`,
+    `as a diff after you finish, so leave your work uncommitted and do not create branches.`,
+    ``,
+    ...describeBaseline(baseline, testCommand(plan)),
+    ``,
+    `# When you are done`,
+    ``,
+    ...describeCompletion(testCommand(plan)),
+    ...readme,
+    ...scripts,
     ...describeFiles(tracked),
   ].join("\n");
+}
+
+/** The exact command the baseline ran, which is the one to re-run. */
+function testCommand(plan: ProjectPlan | null): string | null {
+  return plan ? plan.runScript("test").join(" ") : null;
+}
+
+/**
+ * The sentence this stage exists to replace.
+ *
+ * Until Milestone 5 it read "the test suite has NOT been run yet", which stopped
+ * being true the moment the baseline moved to `analyzing`. What replaces it is
+ * most of the value of telling the model anything at all: a red baseline says
+ * "this failure is the task and it is not your fault", and a green one says
+ * "everything passing now has to still pass", and those two produce very
+ * different sessions.
+ *
+ * Null is not `skipped`, and they are worded differently on purpose. `skipped`
+ * means `analyzing` looked and there was nothing to run; null means nobody has
+ * looked yet, and telling a model no baseline could be established when a test
+ * script is sitting right there sends it hunting for a problem that is not real.
+ */
+function describeBaseline(baseline: BaselineOutcome | null, command: string | null): string[] {
+  const rerun = command ? ` with \`${command}\`` : "";
+
+  switch (baseline) {
+    case "passed":
+      return [
+        `# The test baseline`,
+        ``,
+        `The repository's own test suite was run${rerun} before anything was modified, and it`,
+        `PASSED. Nothing here is broken yet, so every test that passes now must still pass when`,
+        `you are done. A test that fails after your change is a regression you caused.`,
+      ];
+    case "failed":
+      return [
+        `# The test baseline`,
+        ``,
+        `The repository's own test suite was run${rerun} before anything was modified, and it`,
+        `FAILED. That failure was already there and is not your fault - it is almost certainly`,
+        `the thing you have been asked to fix. Run the suite yourself to see it, fix the cause`,
+        `rather than the test, and do not delete or weaken a test to make it pass.`,
+      ];
+    case "skipped":
+      return [
+        `# The test baseline`,
+        ``,
+        `No baseline could be established: this repository has no runnable test script, or its`,
+        `manifest could not be read. Nothing will re-run tests after you finish either, so be`,
+        `correspondingly careful, and verify your change however the project allows.`,
+      ];
+    case null:
+      return [
+        `# The test baseline`,
+        ``,
+        `The repository's own test suite has not been run, so there is no baseline result to`,
+        `compare against. Run it yourself if you need to know whether something was already`,
+        `broken before you touched it.`,
+      ];
+  }
+}
+
+/**
+ * The two instructions the rest of the milestone depends on.
+ *
+ * Neither is enforced here, and that is the design rather than a gap: `testing`
+ * re-runs the suite itself and disbelieves the model if it disagrees. What this
+ * buys is that the model is likely to have already found the problem the
+ * deterministic check would otherwise find first, which is the difference
+ * between a session that debugged itself and one that gets marked wrong.
+ */
+function describeCompletion(command: string | null): string[] {
+  return [
+    ...(command
+      ? [
+          `1. Run the test suite yourself - \`${command}\` - and make it pass before you declare`,
+          `   the work done. Do not finish on an untested change.`,
+        ]
+      : [
+          `1. Verify your change however this project allows before you declare the work done.`,
+          `   There is no test script here to run.`,
+        ]),
+    `2. End your last turn with a plain message describing what you changed and why. That`,
+    `   message is kept as the summary of this run, so write it for a person reading the job`,
+    `   afterwards rather than for yourself.`,
+  ];
 }
 
 function describeProject(plan: ProjectPlan | null): string[] {
@@ -448,6 +610,111 @@ function describeProject(plan: ProjectPlan | null): string[] {
     `- Dependencies are already installed.`,
     `- Test command: \`${plan.runScript("test").join(" ")}\``,
   ];
+}
+
+/**
+ * The baseline, or null for every way of not having one.
+ *
+ * Best effort like everything else in this builder: a database hiccup while
+ * reading one event is not a reason to fail a job that has a container, a clone
+ * and a model waiting on it. The null wording is honest about not knowing.
+ */
+async function readBaselineOutcome(ctx: PhaseContext): Promise<BaselineOutcome | null> {
+  try {
+    return await ctx.readBaseline();
+  } catch (error) {
+    ctx.log.warn({ err: error }, "could not read the baseline back; the model is told so");
+    return null;
+  }
+}
+
+/**
+ * The head of the README, if there is one.
+ *
+ * The head rather than a head+tail elision, because a README is written to be
+ * read from the top: its first few paragraphs say what the project is, and its
+ * last few are a licence notice. `head -c` in the container rather than
+ * truncating here, so an enormous file is never carried across the sandbox
+ * boundary just to be thrown away on this side.
+ */
+async function readReadme(
+  ctx: PhaseContext,
+  options: PipelineOptions,
+  repoDir: string,
+  rootEntries: readonly string[],
+): Promise<string[]> {
+  const entries = new Set(rootEntries);
+  const name = README_NAMES.find((candidate) => entries.has(candidate));
+  if (!name) return [];
+
+  const result = await ctx.exec({
+    argv: ["head", "-c", String(README_MAX_BYTES), name],
+    cwd: repoDir,
+    timeoutMs: options.commandTimeoutMs,
+    maxOutputBytes: README_MAX_BYTES,
+  });
+  ctx.signal.throwIfAborted();
+  if (result.exitCode !== 0 || result.stdout.trim().length === 0) return [];
+
+  return [
+    ``,
+    `# ${name} (first ${README_MAX_BYTES} bytes)`,
+    ``,
+    result.stdout.trimEnd(),
+    ...(result.stdout.length >= README_MAX_BYTES
+      ? [`... truncated; read the rest with \`bash\`.`]
+      : []),
+  ];
+}
+
+/**
+ * The manifest's `scripts` block, which is the project's own list of verbs.
+ *
+ * Only the scripts. The rest of a `package.json` is dependency versions the
+ * model can read for itself if it turns out to matter, and pasting all of it
+ * would spend the context budget on a lockfile in prose.
+ */
+async function readScripts(
+  ctx: PhaseContext,
+  options: PipelineOptions,
+  repoDir: string,
+  plan: ProjectPlan | null,
+): Promise<string[]> {
+  if (!plan) return [];
+
+  const result = await ctx.exec({
+    argv: ["cat", "package.json"],
+    cwd: repoDir,
+    timeoutMs: options.commandTimeoutMs,
+    maxOutputBytes: MANIFEST_MAX_BYTES,
+  });
+  ctx.signal.throwIfAborted();
+  if (result.exitCode !== 0 || result.truncated) return [];
+
+  const scripts = parseScripts(result.stdout);
+  if (!scripts) return [];
+
+  const bounded = truncate(JSON.stringify(scripts, null, 2), SCRIPTS_MAX_BYTES);
+  return [``, `# package.json scripts`, ``, "```json", bounded.text, "```"];
+}
+
+/** The `scripts` object, or null for every shape that is not one. */
+function parseScripts(text: string): Record<string, string> | null {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof manifest !== "object" || manifest === null) return null;
+
+  const scripts = (manifest as { scripts?: unknown }).scripts;
+  if (typeof scripts !== "object" || scripts === null) return null;
+
+  const entries = Object.entries(scripts).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string",
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
 function describeFiles(tracked: string[]): string[] {

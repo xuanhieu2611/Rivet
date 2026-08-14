@@ -115,6 +115,9 @@ function harness(options: { respond?: Responder; createFails?: Error } = {}) {
 
     artifact: () => Promise.reject(new Error("the provisioning phase records no artifacts")),
 
+    // Nothing has established one this early; provisioning runs before `analyzing`.
+    readBaseline: () => Promise.resolve(null),
+
     recordProvisioning: (patch) => {
       patches.push(patch);
       return Promise.resolve();

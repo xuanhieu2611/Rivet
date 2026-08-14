@@ -4,6 +4,7 @@ import type { ArtifactType, JobDetail, JobEventData, JobEventType } from "@rivet
 import { db, type Database } from "@rivet/database";
 
 import { recordArtifact } from "../artifacts/artifact-store";
+import { type BaselineOutcome, readBaseline } from "../events/baseline-log";
 import { appendEvent } from "../events/event-service";
 import { type AgentUsagePatch, recordAgentUsage as persistAgentUsage } from "../jobs/agent-usage";
 import { LeaseLostError } from "../jobs/failure";
@@ -68,6 +69,16 @@ export interface PhaseContext {
    * returned event says how big it really was.
    */
   artifact(input: PhaseArtifactInput): Promise<number>;
+
+  /**
+   * What `analyzing` concluded about the repository, or null if it never ran.
+   *
+   * A read rather than a field on this object on purpose. The baseline is a fact
+   * about the job that outlives the process that established it, so the phases
+   * that consume it - `implementing`, to tell the model, and `testing`, to
+   * compare against - go back to the event log for it. See `events/baseline-log.ts`.
+   */
+  readBaseline(): Promise<BaselineOutcome | null>;
 
   /** Records what the run is executing in. Throws `LeaseLostError` if the lease is gone. */
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
@@ -311,6 +322,10 @@ export function createPhaseContextFactory(
         "recorded an artifact",
       );
       return artifact.id;
+    },
+
+    readBaseline() {
+      return readBaseline(job.id, database);
     },
 
     async recordProvisioning(patch) {

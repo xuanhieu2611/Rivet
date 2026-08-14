@@ -108,6 +108,9 @@ function harness(options: { respond?: Responder } = {}) {
 
     artifact: () => Promise.reject(new Error("the baseline phase records no artifacts")),
 
+    // The phase that writes the baseline never reads one back.
+    readBaseline: () => Promise.resolve(null),
+
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: () => Promise.resolve(),
   };

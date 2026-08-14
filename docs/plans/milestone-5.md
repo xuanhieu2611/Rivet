@@ -220,6 +220,9 @@ parameter list now.
 
 ## Stage 4 - what the session is told
 
+**Done.** `packages/core/src/events/baseline-log.ts`, plus the context builder in
+`implementing-phase.ts`.
+
 The context builder in `implementing-phase.ts` currently ends with:
 
 > The repository's own test suite has NOT been run yet, so you have no baseline result to compare
@@ -245,6 +248,33 @@ model call - were both rejected for M5: the first adds a file that then has to b
 every diff, and the second is a second provider dependency inside the phase, which PRD §41 lists as
 later work. When the last message is absent or empty, the artifact records that plainly instead of
 inventing one.
+
+As built, with three additions the stage did not spell out.
+
+`readBaseline` reaches the phase through **`PhaseContext.readBaseline()`** rather than being
+imported into `implementing-phase.ts` directly. Same rule as `recordArtifact` behind
+`ctx.artifact()` and `appendEvent` behind `ctx.event()`: a phase that imports the database is a
+phase that can no longer be tested without one, and that property is what the whole `PhaseContext`
+split exists for. The query itself lives where the stage said, in `packages/core/src/events/`, and
+is split into a pure `baselineFrom(events)` plus a one-query `readBaseline(jobId)` around it - which
+is what lets the Stage 8 unit test run "against a synthetic event list" with no database.
+
+**Null is a fourth baseline reading, not a synonym for `skipped`.** `skipped` means `analyzing`
+looked and found nothing runnable; null means nobody has looked yet - a job resumed straight into
+`implementing`, a row from before the event existed, or a database hiccup while reading it back. The
+context says something different for each, because telling a model "no baseline could be
+established" when a `test` script is sitting right there sends it hunting for a problem that is not
+real. The read is best effort for the same reason everything else in the builder is: a failed event
+query is not a reason to fail a job that has a container, a clone and a model waiting on it.
+
+**The retained summary is a log line until Stage 6.** `SessionAccounting.lastAssistantMessage` holds
+the last non-empty assistant message, as the stage asks, and the phase states its presence and size
+on the way out. That is deliberate rather than incidental: a value held in memory that nothing reads
+is indistinguishable from one that is never set, and a session ending on a tool call - the risk this
+milestone already lists - would be invisible until `finalizing` reported it. Stage 6 replaces the
+log line with the `implementation_summary` artifact. Worth noting too that the port already
+truncates `assistant_message` to `previewMaxBytes`, so what is retained is the same text the
+`agent.message` row carries; the retention buys "which one was last", not fidelity.
 
 ## Stage 5 - `testing` becomes validation
 
