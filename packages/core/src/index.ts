@@ -18,6 +18,7 @@
  *   turning into a junk drawer.
  */
 
+export * from "./agent/errors";
 export * from "./events/event-service";
 export * from "./jobs/cancel";
 export * from "./jobs/claims";
@@ -29,6 +30,7 @@ export * from "./jobs/sweeper";
 export * from "./jobs/transitions";
 export * from "./pipeline/baseline-phase";
 export * from "./pipeline/command-output";
+export * from "./pipeline/implementing-phase";
 export * from "./pipeline/phase-context";
 export * from "./pipeline/phases";
 export * from "./pipeline/project";

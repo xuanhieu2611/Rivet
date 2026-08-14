@@ -13,6 +13,7 @@
     "test:sandbox": "vitest run --config vitest.sandbox.config.ts"
   },
   "dependencies": {
+    "@rivet/agent": "workspace:*",
     "@rivet/contracts": "workspace:*",
     "@rivet/core": "workspace:*",
     "@rivet/database": "workspace:*",

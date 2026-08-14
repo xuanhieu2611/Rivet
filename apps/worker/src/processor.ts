@@ -434,6 +434,15 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       throw new UnrecoverableError(describeError(error));
     }
 
+    case "budget_exceeded": {
+      // Its own terminal status rather than `failed`, because a job that ran
+      // out of budget did not go wrong - it was stopped, and the dashboard
+      // should say which. Never retried: a second attempt would start from zero
+      // and spend the same budget reaching the same ceiling.
+      await finishBadly(jobId, currentStatus, "budget_exceeded", workerId, error, log);
+      throw new UnrecoverableError(describeError(error));
+    }
+
     case "retryable": {
       // A transient error gets the normal release-and-rethrow path while
       // BullMQ still has another delivery available. Once the message has
@@ -474,7 +483,7 @@ function isLastBullAttempt(job: Job<JobRunsMessage>): boolean {
 async function finishBadly(
   jobId: string,
   from: JobStatus,
-  to: Extract<JobStatus, "cancelled" | "timed_out" | "failed">,
+  to: Extract<JobStatus, "cancelled" | "timed_out" | "failed" | "budget_exceeded">,
   workerId: string,
   error: unknown,
   log: Logger,

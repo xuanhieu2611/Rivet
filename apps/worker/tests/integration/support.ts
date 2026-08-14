@@ -76,6 +76,21 @@ export const TEST_CONFIG: WorkerConfig = {
     baselineTimeoutMs: 5_000,
     maxOutputBytes: 16_384,
   },
+  // `off` for the same reason the sandbox is: this suite is about the lease,
+  // the queue and the recovery paths, and it runs in CI with no model key. A
+  // test that wants a session drives `FakeCodingAgent` through the pipeline it
+  // builds, rather than through this configuration.
+  agent: {
+    mode: "off",
+    model: "unused-under-off",
+    provider: "unused-under-off",
+    sessionTimeoutMs: 5_000,
+    maxTurns: 4,
+    toolOutputMaxBytes: 4_096,
+    fileMaxBytes: 16_384,
+    previewMaxBytes: 512,
+    homeDir: "/tmp/rivet-pi-test",
+  },
 };
 
 export function uniqueQueueName(suite: string): string {

@@ -160,9 +160,10 @@ says what it wanted.
 ```
 apps/web            Next.js 16 App Router. Pages and route handlers. No business logic.
 apps/worker         Long-running Node process. BullMQ Worker, heartbeat, sweeper, reaper, faults.
-packages/core       All domain logic: jobs/, events/, pipeline/, queue/, sandbox/ (the two ports).
+packages/core       All domain logic: agent/, jobs/, events/, pipeline/, queue/, sandbox/ (three ports).
 packages/queue      BullMQ adapter for the port, an in-memory fake, the lazy ioredis connection.
 packages/sandbox    dockerode adapter for the sandbox port, a scripted fake, the lazy Docker client.
+packages/agent      Pi adapter for the coding-agent port, a scripted fake, the lazily-loaded SDK.
 packages/contracts  Zod schemas, the job status enum, JobSummary / JobDetail / JobEvent.
 packages/database   Drizzle schema, generated migrations, the pg Pool. Neon Postgres.
 packages/config     tsconfig + ESLint bases that every workspace extends.
@@ -190,16 +191,28 @@ re-enqueues it. Read `docs/architecture.md` before changing anything in that loo
 
 ### Invariants that are easy to break
 
-**`packages/core` imports no `next/*`, no `bullmq`, no `ioredis`, no `dockerode`, and reads no
-`process.env`.** All five rules exist for one reason: core is shared by two deployables and must not
-depend on either one's framework or on the delivery mechanism. Configuration arrives as function
-arguments, which is what lets the whole pipeline run in under a millisecond at `speed: 0` with no
-fake timers and no sleeping in CI - and it is why `PipelineOptions` carries the image, the limits
-and all four timeouts rather than defaulting any of them here. A default limit in the package that
-is supposed to hold no policy is how a container ends up unbounded. Core declares the `JobQueue` and
-`Sandbox` ports; `packages/queue` and `packages/sandbox` are the only packages that know Redis and
-Docker exist. Every module lives under `jobs/`, `events/`, `pipeline/`, `queue/` or `sandbox/` - a
-file at the top level next to `index.ts` is the first sign the package is becoming a junk drawer.
+**`packages/core` imports no `next/*`, no `bullmq`, no `ioredis`, no `dockerode`, no
+`@earendil-works/*`, and reads no `process.env`.** All six rules exist for one reason: core is
+shared by two deployables and must not depend on either one's framework or on the delivery
+mechanism. Configuration arrives as function arguments, which is what lets the whole pipeline run in
+under a millisecond at `speed: 0` with no fake timers and no sleeping in CI - and it is why
+`PipelineOptions` carries the image, the limits and all four timeouts rather than defaulting any of
+them here. A default limit in the package that is supposed to hold no policy is how a container ends
+up unbounded. Core declares the `JobQueue`, `Sandbox` and `CodingAgent` ports; `packages/queue`,
+`packages/sandbox` and `packages/agent` are the only packages that know Redis, Docker and Pi exist.
+Every module lives under `agent/`, `jobs/`, `events/`, `pipeline/`, `queue/` or `sandbox/` - a file
+at the top level next to `index.ts` is the first sign the package is becoming a junk drawer.
+
+**The model key stays on the worker host, and the container never sees a credential.** The harness
+runs in the worker process; its four tools - `read`, `write`, `edit`, `bash` - end at
+`AgentToolbox`, whose implementations are the phase's own `ctx.exec` and the sandbox's
+`getFile`/`putFile`. Two things keep that true and both are easy to undo by being helpful. Pi's
+`bash` tool hands its operations an `env` built from the worker's own `process.env`; forwarding it
+would put `OPENROUTER_API_KEY` inside a container running arbitrary cloned code, so it is ignored,
+always. And after `createAgentSession` returns, `PiCodingAgent` asserts that
+`session.getActiveToolNames()` is exactly those four and fails the job otherwise - which is the
+difference between believing no host-side tool survived and knowing it. Be honest about what this
+buys: it contains the _model_, not the harness. Nothing sandboxes the harness process itself.
 
 **`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
 merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, so a caller cannot

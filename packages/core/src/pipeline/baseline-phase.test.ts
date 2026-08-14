@@ -95,6 +95,7 @@ function harness(options: { respond?: Responder } = {}) {
         oomKilled: false,
         durationMs: 5,
         commandId: executed.length,
+        commandExecutionId: `exec-${executed.length}`,
         ...scripted,
       };
       return Promise.resolve(result);

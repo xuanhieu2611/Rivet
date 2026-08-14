@@ -275,7 +275,8 @@ built before any agent behaviour.
 - [x] **M3 - Real-time execution timeline.** A Postgres-backed SSE event stream, reconnect cursor,
       live timeline, connection indicator, and lazy command log with bounded transcripts.
 - [ ] **M4 - Coding-agent integration.** A `CodingAgentAdapter` over the Pi harness, started
-      programmatically inside the sandbox against the cloned repository.
+      programmatically in the worker, with `read`/`write`/`edit`/`bash` backed by the job's sandbox
+      so the model credential never enters a container running cloned code.
 - [ ] **M5 - First autonomous coding job.** One implementation session solves a trivial fixture bug
       unattended, with budget tracking and the final diff persisted.
 - [ ] **M6 - Planning, persistence and recovery.** Checkpoints, resumable jobs, and surviving a

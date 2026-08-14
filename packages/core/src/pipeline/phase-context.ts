@@ -76,9 +76,20 @@ export interface PhaseExecInput {
   maxOutputBytes?: number;
 }
 
-/** An `ExecResult` plus the id of the row holding its transcript. */
+/** An `ExecResult` plus the ids that make its transcript findable. */
 export interface RecordedCommand extends ExecResult {
   commandId: number;
+  /**
+   * The correlation id stamped on this command's `command.started`,
+   * `command.completed` and `command.failed` events.
+   *
+   * Returned rather than kept private because a caller may need to point at
+   * this command from an event of its own - the coding agent's shell tool does
+   * exactly that, so that one `agent.tool_started` row and the command
+   * lifecycle it caused are the same thing on the timeline rather than two
+   * unrelated entries that happen to be adjacent.
+   */
+  commandExecutionId: string;
 }
 
 export interface PhaseEventInput {
@@ -209,7 +220,7 @@ export function createPhaseContextFactory(
         return recorded;
       });
 
-      return { ...result, commandId: command.id };
+      return { ...result, commandId: command.id, commandExecutionId };
     },
 
     async event(input) {
