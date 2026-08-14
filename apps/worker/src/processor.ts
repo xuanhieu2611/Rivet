@@ -14,6 +14,7 @@ import {
   type PhaseContext,
   planResume,
   releaseJob,
+  remainingJobMs,
   type ResumePlan,
   runPipeline,
   SandboxHolder,
@@ -163,18 +164,24 @@ export function createProcessor(deps: ProcessorDeps) {
     const controller = new AbortController();
     runs.register(jobId, controller);
 
-    // The whole-run budget. Separate from the lease: the lease asks "is this
-    // worker alive", this asks "has this job taken too long", and a wedged job
-    // can very much answer yes to both.
+    // The whole-*job* budget, and the distinction is Milestone 6's. Until now
+    // this was `maxDurationSeconds` counted from this claim, which gave every
+    // reclaimed attempt a fresh hour: a job that crashed every fifty-nine
+    // minutes would have run forever, and the wall clock would have been the one
+    // ceiling a crash could reset. `claimJob` fixes `deadline_at` on the first
+    // claim and every later claim gets only what is left of it.
     //
-    // It is also the one deadline that does not merely *ask* the run to stop.
-    // Everything else - cancellation, lease loss, shutdown - is cooperative,
-    // and cooperative is the right default because a phase that is interrupted
-    // between its own writes is worse than one that finishes its sentence. A
-    // budget cannot be cooperative, though, because the thing it exists to
-    // catch is precisely a phase that has stopped listening.
+    // Separate from the lease: the lease asks "is this worker alive", this asks
+    // "has this job taken too long", and a wedged job can very much answer yes
+    // to both. It is also the one deadline that does not merely *ask* the run to
+    // stop. Everything else - cancellation, lease loss, shutdown - is
+    // cooperative, and cooperative is the right default because a phase
+    // interrupted between its own writes is worse than one that finishes its
+    // sentence. A budget cannot be cooperative, though, because the thing it
+    // exists to catch is precisely a phase that has stopped listening.
+    const remainingMs = remainingJobMs(claimed);
     const deadline = createDeadline(
-      claimed.maxDurationSeconds * 1_000,
+      remainingMs,
       () => new JobTimedOutError(`Job exceeded its ${claimed.maxDurationSeconds}s budget.`),
       controller,
     );
@@ -208,6 +215,17 @@ export function createProcessor(deps: ProcessorDeps) {
     let mayWrite = true;
 
     try {
+      // Nothing was left of the budget by the time anyone was free to claim
+      // this. Failing here rather than at the first phase boundary is deliberate
+      // and is most of what makes a fixed deadline safe: a job whose hour ran
+      // out while it sat in the queue must not pull an image, clone a repository
+      // and start a model session in order to be told it is out of time.
+      if (remainingMs <= 0) {
+        throw new JobTimedOutError(
+          `Job exceeded its ${claimed.maxDurationSeconds}s budget while it was waiting for a worker.`,
+        );
+      }
+
       // Build after the try begins so a faulty per-run factory follows the same
       // cleanup path as every other phase failure.
       const runPhases = deps.phaseFactory?.(injection) ?? phases;

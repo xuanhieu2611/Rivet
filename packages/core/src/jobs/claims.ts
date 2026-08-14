@@ -57,7 +57,9 @@ const CLAIM_STATUS: JobStatus = "provisioning";
  *
  * `startedAt` is coalesced rather than overwritten, so end-to-end duration stays
  * honest across a crash and a reclaim: it is when the work first began, not when
- * the last worker picked it up.
+ * the last worker picked it up. `deadlineAt` is coalesced for the harder reason:
+ * it is a ceiling, and a ceiling that moved on every claim would be one a crash
+ * could reset.
  */
 export async function claimJob(
   jobId: string,
@@ -99,6 +101,13 @@ export async function claimJob(
           // including reclaims after a crash that BullMQ never learned about.
           attemptCount: job.attemptCount + 1,
           startedAt: job.startedAt ?? now,
+          // Established once and never extended, for the same reason
+          // `startedAt` is coalesced rather than overwritten - except that this
+          // one is enforcement rather than reporting. A job whose deadline moved
+          // with every claim could buy another whole budget by crashing, which
+          // would make the wall clock the one ceiling recovery resets. See
+          // `jobs/deadline.ts`.
+          deadlineAt: job.deadlineAt ?? new Date(now.getTime() + job.maxDurationSeconds * 1_000),
         }),
       },
       executor,

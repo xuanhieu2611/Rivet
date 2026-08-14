@@ -6,9 +6,9 @@ import type { Phase } from "./phases";
 import { abortableSleep, type PipelineDeps, runPipeline, scaleDuration } from "./run-pipeline";
 
 const PHASES: readonly Phase[] = [
-  { status: "provisioning", label: "one", durationMs: 1_000 },
-  { status: "analyzing", label: "two", durationMs: 2_000 },
-  { status: "planning", label: "three", durationMs: 3_000 },
+  { status: "provisioning", label: "one", durationMs: 1_000, recovery: "replay" },
+  { status: "analyzing", label: "two", durationMs: 2_000, recovery: "replay" },
+  { status: "planning", label: "three", durationMs: 3_000, recovery: "replay" },
 ];
 
 /**
@@ -152,8 +152,8 @@ describe("runPipeline", () => {
    */
   describe("phases with a body", () => {
     const withBody = (run: (ctx: PhaseContext) => Promise<void>): readonly Phase[] => [
-      { status: "provisioning", label: "one", durationMs: 1_000, run },
-      { status: "analyzing", label: "two", durationMs: 2_000 },
+      { status: "provisioning", label: "one", durationMs: 1_000, recovery: "replay", run },
+      { status: "analyzing", label: "two", durationMs: 2_000, recovery: "replay" },
     ];
 
     /** The runner only ever passes the context through, so a cast is honest here. */

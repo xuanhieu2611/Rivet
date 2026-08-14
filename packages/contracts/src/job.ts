@@ -112,7 +112,19 @@ export interface JobDetail extends JobSummary {
   totalCostUsd: string;
   /** Cumulative completed model turns across planner and implementation sessions. */
   totalTurns: number;
+  /** Cumulative model calls across every session and every attempt. */
+  totalModelCalls: number;
+  /** Cumulative tool calls across every session and every attempt. */
+  totalToolCalls: number;
   startedAt: Date | null;
+  /**
+   * When this job's wall-clock budget runs out, set on the first claim.
+   *
+   * Retained across every reclaim, which is the whole point: a crash does not
+   * hand the replacement worker another `maxDurationSeconds`, and the time the
+   * job spent waiting for one counts against it. Null until the first claim.
+   */
+  deadlineAt: Date | null;
   completedAt: Date | null;
   finalBranch: string | null;
   pullRequestUrl: string | null;

@@ -110,6 +110,24 @@ describe.each(Object.entries(PIPELINES))("%s pipeline", (_name, phases) => {
     }
   });
 
+  it("declares a recovery mode on every phase, and no external effects yet", () => {
+    for (const phase of phases) {
+      expect(["replay", "checkpoint", "reconcile_external"]).toContain(phase.recovery);
+      // M6 has no GitHub branch, commit, push or pull request, so nothing here
+      // may claim it needs reconciling. When M9 adds one, this is the assertion
+      // that has to be changed deliberately rather than a policy that drifts.
+      expect(phase.recovery).not.toBe("reconcile_external");
+    }
+  });
+
+  it("treats implementation as the one phase with a durable partial cursor", () => {
+    const checkpointed = phases
+      .filter((phase) => phase.recovery === "checkpoint")
+      .map((phase) => phase.status);
+
+    expect(checkpointed).toEqual(["implementing"]);
+  });
+
   it("holds the same statuses and labels as every other pipeline", () => {
     expect(phases.map((phase) => [phase.status, phase.label])).toEqual(
       simulatedPipeline().map((phase) => [phase.status, phase.label]),

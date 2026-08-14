@@ -7,6 +7,7 @@ import {
   type CheckpointPatchStats,
 } from "../checkpoints/workspace-snapshot";
 import type { BaselineOutcome } from "../events/baseline-log";
+import { remainingJobMinutes } from "../jobs/deadline";
 import { truncate } from "../sandbox/command-log";
 import { splitLines } from "./command-output";
 import { runAgentSession } from "./agent-session";
@@ -435,22 +436,31 @@ function describeRecovery(
 /**
  * What is left of the job's ceilings, counted across every attempt.
  *
- * Turns and spend are cumulative job totals and survive a crash, which is the
- * point: a worker dying does not hand the replacement a fresh budget. The
- * wall-clock line is derived from `started_at`, which `claimJob` coalesces
- * rather than overwrites, so it already counts recovery downtime. Model and
- * tool calls are stated as this session's ceilings because that is what they
- * currently are; Stage 8 makes them cumulative and this line becomes a
- * subtraction like the others.
+ * Every line here is a subtraction from a cumulative total, and that is the
+ * honest thing to tell a model that is inheriting a job rather than starting
+ * one. Turns, model calls, tool calls and spend are durable job totals that
+ * survive a crash - a worker dying does not hand the replacement a fresh
+ * budget - and the wall-clock line comes from `deadline_at`, which is fixed on
+ * the first claim, so the time this job spent waiting for a replacement worker
+ * is already subtracted.
+ *
+ * The in-run totals are preferred over the claimed row because a planner session
+ * in this same attempt has already spent from them.
  */
 function describeRemainingBudget(ctx: PhaseContext, agent: AgentOptions | undefined): string[] {
   const job = ctx.job;
-  const spent = parseCostCeiling(job.totalCostUsd) ?? 0;
+  const usage = ctx.readAgentUsage?.() ?? {
+    totalCostUsd: job.totalCostUsd,
+    totalTurns: job.totalTurns,
+    totalModelCalls: job.totalModelCalls,
+    totalToolCalls: job.totalToolCalls,
+  };
+  const spent = parseCostCeiling(usage.totalCostUsd) ?? 0;
   const ceiling = parseCostCeiling(job.maxCostUsd);
-  const minutesLeft = remainingMinutes(job.startedAt, job.maxDurationSeconds);
+  const minutesLeft = remainingJobMinutes(job);
 
   return [
-    `- Turns already spent on this job: ${job.totalTurns}${agent ? ` (this session may take ${agent.maxTurns})` : ""}`,
+    `- Turns already spent on this job: ${usage.totalTurns}${agent ? ` (this session may take ${agent.maxTurns})` : ""}`,
     ...(ceiling === null
       ? [`- Spend so far: $${spent.toFixed(4)}; no cost ceiling is configured.`]
       : [`- Spend so far: $${spent.toFixed(4)} of the job's $${ceiling.toFixed(2)} ceiling.`]),
@@ -461,16 +471,15 @@ function describeRemainingBudget(ctx: PhaseContext, agent: AgentOptions | undefi
             ` ${Math.round(job.maxDurationSeconds / 60)}-minute budget remain, and the time this job`,
           `  spent waiting for a replacement worker counted against it.`,
         ]),
-    `- This session may make at most ${job.maxModelCalls} model calls and ${job.maxToolCalls} tool calls.`,
+    `- Model calls: ${remaining(usage.totalModelCalls, job.maxModelCalls)} of the job's` +
+      ` ${job.maxModelCalls} remain. Tool calls: ${remaining(usage.totalToolCalls, job.maxToolCalls)}` +
+      ` of ${job.maxToolCalls}. Both count every session this job has run.`,
   ];
 }
 
-/** Whole minutes left, or null when the job has no recorded start. */
-function remainingMinutes(startedAt: Date | null, maxDurationSeconds: number): number | null {
-  if (!startedAt) return null;
-  const elapsedMs = Date.now() - startedAt.getTime();
-  if (!Number.isFinite(elapsedMs)) return null;
-  return Math.max(0, Math.round((maxDurationSeconds * 1_000 - elapsedMs) / 60_000));
+/** What is left of a ceiling, never negative. */
+function remaining(spent: number, limit: number): number {
+  return Math.max(0, limit - spent);
 }
 
 function quote(text: string): string[] {

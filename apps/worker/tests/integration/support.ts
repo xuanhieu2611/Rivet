@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { JobEvent, JobEventType, JobStatus } from "@rivet/contracts";
 import { createJob, type JobQueue, listEvents } from "@rivet/core";
-import { closeDb, db, type Job, jobs } from "@rivet/database";
+import { closeDb, db, type Job, jobs, type NewJob } from "@rivet/database";
 import {
   BullJobQueue,
   closeRedis,
@@ -205,6 +205,22 @@ export function startTestWorker(options: TestWorkerOptions): TestWorker {
       await worker.close(true);
     },
   };
+}
+
+/**
+ * Puts a job row into a state some earlier attempt would have left it in.
+ *
+ * Deliberately not a status write - it cannot be, since `status` is excluded
+ * from the patch type - and deliberately not a way around `transitionJob`.
+ * Cumulative counters and the job deadline become true through a claim and a
+ * session, and a test about what happens *after* those is entitled to arrange
+ * them directly rather than running a whole first attempt to earn them.
+ */
+export async function patchTestJob(
+  jobId: string,
+  patch: Omit<Partial<NewJob>, "status">,
+): Promise<void> {
+  await db.update(jobs).set(patch).where(eq(jobs.id, jobId));
 }
 
 /** Creates a job row through the real service, with sensible test defaults. */

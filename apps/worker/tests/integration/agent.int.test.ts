@@ -20,7 +20,9 @@ import {
   createTestJob,
   createTestQueue,
   eventTypes,
+  patchTestJob,
   readEvents,
+  readJob,
   resetDatabase,
   startTestWorker,
   TEST_CONFIG,
@@ -401,6 +403,98 @@ describe("coding-agent execution through the worker", () => {
     expect(
       (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
     ).toHaveLength(0);
+  });
+
+  it("spends tool calls from the totals a previous attempt persisted", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({
+      script: [
+        {
+          events: [
+            sessionStarted(),
+            { type: "turn_started", turn: 0 },
+            {
+              type: "tool_started",
+              turn: 0,
+              toolCallId: "call-1",
+              toolName: "read",
+              argsPreview: "{}",
+            },
+            {
+              type: "tool_started",
+              turn: 0,
+              toolCallId: "call-2",
+              toolName: "read",
+              argsPreview: "{}",
+            },
+          ],
+        },
+      ],
+    });
+    const job = await createTestJob({ maxToolCalls: 3 });
+    // What an interrupted attempt left behind. This session's second tool call
+    // is the job's fourth, so the ceiling is crossed one call into the session
+    // rather than three - which is what a per-session counter would have allowed.
+    await patchTestJob(job.id, { totalToolCalls: 2, totalModelCalls: 1 });
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    await waitForStatus(job.id, "budget_exceeded");
+    const breach = await waitFor(
+      async () =>
+        (await readEvents(job.id)).find((event) => event.type === "agent.budget_exceeded"),
+      { label: "the persisted budget event" },
+    );
+    expect(breach.data).toMatchObject({
+      budget: "tool_calls",
+      budgetValue: 4,
+      budgetLimit: 3,
+    });
+    // The counters that justify the terminal status are on the row, and they got
+    // there before the status did.
+    const row = await readJob(job.id);
+    expect(row.totalToolCalls).toBe(4);
+    expect(row.totalModelCalls).toBe(2);
+  });
+
+  it("never starts a session for a job that has already spent its model calls", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({ script: [{ events: [sessionStarted()] }] });
+    const job = await createTestJob({ maxModelCalls: 5 });
+    await patchTestJob(job.id, { totalModelCalls: 5 });
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const exceeded = await waitForStatus(job.id, "budget_exceeded");
+    expect(exceeded.failureCategory).toBe("budget_exceeded");
+    // The planner is the first session a job runs, and it is refused before the
+    // provider is contacted at all.
+    expect(agent.starts).toHaveLength(0);
+  });
+
+  it("times a job out on arrival when its deadline passed while it was queued", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({ script: [{ events: [sessionStarted()] }] });
+    const job = await createTestJob({ maxDurationSeconds: 60 });
+    // A job that started an hour ago on a worker that is now gone. Its deadline
+    // is fixed and has passed, and no amount of waiting for a free worker
+    // extends it.
+    await patchTestJob(job.id, {
+      startedAt: new Date(Date.now() - 3_600_000),
+      deadlineAt: new Date(Date.now() - 60_000),
+    });
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const timedOut = await waitForStatus(job.id, "timed_out");
+    expect(timedOut.failureCategory).toBe("timed_out");
+    expect(timedOut.failureReason).toContain("waiting for a worker");
+    // Nothing was built to discover that: no container, no clone, no session.
+    expect(await eventTypes(job.id)).not.toContain("sandbox.created");
+    expect(agent.starts).toHaveLength(0);
   });
 
   it("lets the job deadline stop a long session and land in timed_out", async () => {

@@ -13,14 +13,25 @@ import { createFaultInjection } from "./faults";
 
 const log = pino({ level: "silent" });
 
-const TESTING: Phase = { status: "testing", label: "Run tests", durationMs: 10 };
+const TESTING: Phase = {
+  status: "testing",
+  label: "Run tests",
+  durationMs: 10,
+  recovery: "replay",
+};
 const SANDBOX_TESTING: Phase = {
   status: "testing",
   label: "Run tests",
   durationMs: 10,
+  recovery: "replay",
   run: () => Promise.resolve(),
 };
-const PLANNING: Phase = { status: "planning", label: "Create plan", durationMs: 10 };
+const PLANNING: Phase = {
+  status: "planning",
+  label: "Create plan",
+  durationMs: 10,
+  recovery: "replay",
+};
 const SPEC: SandboxSpec = {
   jobId: "11111111-1111-4111-8111-111111111111",
   image: "node@sha256:test",
@@ -87,7 +98,12 @@ describe("createFaultInjection", () => {
       provider,
     );
 
-    injection.fault?.({ status: "provisioning", label: "Provision", durationMs: 1 });
+    injection.fault?.({
+      status: "provisioning",
+      label: "Provision",
+      durationMs: 1,
+      recovery: "replay",
+    });
     await expect(
       injection.sandbox?.create(SPEC, new AbortController().signal),
     ).rejects.toMatchObject({ category: "sandbox_unavailable" });

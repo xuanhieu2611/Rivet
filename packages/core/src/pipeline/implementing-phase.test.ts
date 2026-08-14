@@ -201,7 +201,12 @@ function harness(
 
   const ctx: PhaseContext = {
     job: { ...JOB, ...options.job },
-    phase: { status: "implementing", label: "Implement change", durationMs: 0 },
+    phase: {
+      status: "implementing",
+      label: "Implement change",
+      durationMs: 0,
+      recovery: "checkpoint",
+    },
     sandboxes: holder,
     signal: controller.signal,
     log: {
@@ -420,12 +425,16 @@ describe("implementingPhase", () => {
         totalOutputTokens: 200,
         totalCostUsd: "0.2500",
         totalTurns: 0,
+        totalModelCalls: 0,
+        totalToolCalls: 0,
       },
       {
         totalInputTokens: 2_000,
         totalOutputTokens: 400,
         totalCostUsd: "0.5000",
         totalTurns: 0,
+        totalModelCalls: 0,
+        totalToolCalls: 0,
       },
     ]);
   });
@@ -626,7 +635,13 @@ describe("implementingPhase", () => {
 
   it("starts persisted totals from the job row on a reclaimed attempt", async () => {
     const test = harness({
-      job: { totalInputTokens: 900, totalOutputTokens: 100, totalCostUsd: "1.1250" },
+      job: {
+        totalInputTokens: 900,
+        totalOutputTokens: 100,
+        totalCostUsd: "1.1250",
+        totalModelCalls: 4,
+        totalToolCalls: 11,
+      },
       agent: new ScriptedAgent({
         events: [{ type: "usage", turn: 0, usage: USAGE }],
       }),
@@ -640,6 +655,10 @@ describe("implementingPhase", () => {
         totalOutputTokens: 300,
         totalCostUsd: "1.3750",
         totalTurns: 0,
+        // Carried forward rather than restarted: the counters a previous
+        // attempt persisted are the ones this session spends from.
+        totalModelCalls: 4,
+        totalToolCalls: 11,
       },
     ]);
   });
@@ -876,6 +895,91 @@ describe("budgets", () => {
 
     await expect(test.run()).rejects.toThrow(BudgetExceededError);
     expect(test.agent.sessions[0]?.stopCount).toBe(1);
+  });
+
+  it("counts model calls from what earlier sessions already spent", async () => {
+    // Four calls are already on the job row and the ceiling is five, so the
+    // second turn of this session is the sixth call of the job. A per-session
+    // counter would have let this run to its fifth turn.
+    const test = harness({
+      agent: new ScriptedAgent({ events: turns(5) }),
+      job: { maxModelCalls: 5, totalModelCalls: 4 },
+    });
+
+    await expect(test.run()).rejects.toThrow(/model call ceiling/);
+    expect(test.find("agent.budget_exceeded")?.data).toMatchObject({
+      budget: "model_calls",
+      budgetValue: 6,
+      budgetLimit: 5,
+    });
+  });
+
+  it("counts tool calls from what earlier sessions already spent", async () => {
+    const call = (index: number): CodingAgentEvent => ({
+      type: "tool_started",
+      turn: 0,
+      toolCallId: `call-${index}`,
+      toolName: "read",
+      argsPreview: "{}",
+    });
+    const test = harness({
+      agent: new ScriptedAgent({ events: [call(1), call(2), call(3)] }),
+      job: { maxToolCalls: 10, totalToolCalls: 9 },
+    });
+
+    await expect(test.run()).rejects.toThrow(/tool call ceiling/);
+    expect(test.find("agent.budget_exceeded")?.data).toMatchObject({ budgetValue: 11 });
+  });
+
+  it("persists the totals that justify a breach before announcing it", async () => {
+    const test = harness({
+      agent: new ScriptedAgent({ events: turns(5) }),
+      job: { maxModelCalls: 2 },
+    });
+
+    await expect(test.run()).rejects.toThrow(BudgetExceededError);
+    // The last write is the one that carries the breaching count, and it
+    // happened before the event: a job about to move to `budget_exceeded` must
+    // not leave a timeline claiming a ceiling its own row does not show.
+    expect(test.usages.at(-1)).toMatchObject({ totalModelCalls: 3 });
+  });
+
+  it("refuses a session the job can no longer afford, without contacting a provider", async () => {
+    const test = harness({
+      agent: new ScriptedAgent({ events: turns(1) }),
+      job: { maxModelCalls: 200, totalModelCalls: 200 },
+    });
+
+    await expect(test.run()).rejects.toThrow(/already spent its model call ceiling/);
+    // The point of failing before `start`: no session, so no provider round trip
+    // and no context window spent discovering what the job row already said.
+    expect(test.agent.sessions).toHaveLength(0);
+    expect(test.find("agent.budget_exceeded")?.data).toMatchObject({
+      budget: "model_calls",
+      budgetValue: 200,
+      budgetLimit: 200,
+    });
+  });
+
+  it("refuses a session whose spend ceiling is already reached", async () => {
+    const test = harness({
+      agent: new ScriptedAgent({ events: turns(1) }),
+      job: { maxCostUsd: "5.00", totalCostUsd: "5.0000" },
+    });
+
+    await expect(test.run()).rejects.toThrow(/already spent its spend ceiling/);
+    expect(test.agent.sessions).toHaveLength(0);
+  });
+
+  it("starts a session that still has one call left", async () => {
+    const test = harness({
+      agent: new ScriptedAgent({ events: [] }),
+      job: { maxModelCalls: 200, totalModelCalls: 199 },
+    });
+
+    await test.run();
+
+    expect(test.agent.sessions).toHaveLength(1);
   });
 
   it("says out loud when a cost ceiling cannot be enforced, rather than passing silently", async () => {

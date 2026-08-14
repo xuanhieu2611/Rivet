@@ -24,11 +24,35 @@ import { validationPhase } from "./validation-phase";
  * not change shape to accommodate it, because it never imported its callbacks
  * in the first place.
  */
+/**
+ * How a phase behaves when a reclaimed attempt reaches it again.
+ *
+ * Three words, and the third one is why this type exists at all:
+ *
+ * - `replay` - running it again is harmless. Everything it produces is a
+ *   database row whose readers select the latest complete record, so a crash
+ *   before the boundary checkpoint costs the work, not the correctness.
+ * - `checkpoint` - the phase's partial progress is durable in its own right and
+ *   recovery continues from it rather than repeating it. `implementing` is the
+ *   only one in M6: its turn checkpoints are the workflow cursor.
+ * - `reconcile_external` - the phase has an effect outside Rivet, so before
+ *   repeating it the run must ask the provider what already happened. Nothing
+ *   declares this yet, and that is the point: M9's branch, commit, push and
+ *   pull request cannot be added to a phase without someone choosing this word,
+ *   because the field is required and `replay` would be a claim that pushing a
+ *   branch twice is harmless.
+ *
+ * See `docs/plans/milestone-6.md` §7 for the protocol the third one implies.
+ */
+export type PhaseRecovery = "replay" | "checkpoint" | "reconcile_external";
+
 export interface Phase {
   /** The status the job holds while this phase runs. */
   status: JobStatus;
   /** One line for the timeline and the log. */
   label: string;
+  /** What a reclaimed attempt is allowed to do with this phase. Required. */
+  recovery: PhaseRecovery;
   /** The simulated duration, used only when `run` is absent. Scaled by `speed`. */
   durationMs: number;
   /**
@@ -135,13 +159,23 @@ export interface AgentOptions {
  * body through `buildPipeline()`. See `planning-phase.ts`.
  */
 const PHASE_TEMPLATE: readonly Phase[] = [
-  { status: "provisioning", label: "Provision sandbox", durationMs: 2_000 },
-  { status: "analyzing", label: "Establish test baseline", durationMs: 3_000 },
-  { status: "planning", label: "Create plan", durationMs: 0 },
-  { status: "implementing", label: "Implement change", durationMs: 5_000 },
-  { status: "testing", label: "Validate change", durationMs: 4_000 },
-  { status: "reviewing", label: "Review patch", durationMs: 3_000 },
-  { status: "finalizing", label: "Finalize", durationMs: 2_000 },
+  { status: "provisioning", label: "Provision sandbox", durationMs: 2_000, recovery: "replay" },
+  {
+    status: "analyzing",
+    label: "Establish test baseline",
+    durationMs: 3_000,
+    recovery: "replay",
+  },
+  { status: "planning", label: "Create plan", durationMs: 0, recovery: "replay" },
+  // The one phase whose partial work is a durable cursor rather than something
+  // to run again: a turn checkpoint is what a replacement session continues from.
+  { status: "implementing", label: "Implement change", durationMs: 5_000, recovery: "checkpoint" },
+  { status: "testing", label: "Validate change", durationMs: 4_000, recovery: "replay" },
+  { status: "reviewing", label: "Review patch", durationMs: 3_000, recovery: "replay" },
+  // Replayable only while it writes nothing outside Rivet. M9 puts a branch, a
+  // push and a pull request here, and each of those makes this
+  // `reconcile_external` - which is exactly the decision this field forces.
+  { status: "finalizing", label: "Finalize", durationMs: 2_000, recovery: "replay" },
 ];
 
 /**

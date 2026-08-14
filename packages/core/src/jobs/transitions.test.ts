@@ -54,6 +54,15 @@ describe("ALLOWED_TRANSITIONS", () => {
     }
   });
 
+  it("lets every phase that runs a model session record a budget breach", () => {
+    // Both phases spend from the same cumulative job ceilings, so both can be
+    // the one that crosses them. A phase that could breach but could not record
+    // it would throw inside the failure path and be redelivered to breach again.
+    for (const status of ["planning", "implementing"] as const) {
+      expect(ALLOWED_TRANSITIONS[status]).toContain("budget_exceeded");
+    }
+  });
+
   it("lists no status twice", () => {
     for (const targets of Object.values(ALLOWED_TRANSITIONS)) {
       expect(new Set(targets).size).toBe(targets.length);

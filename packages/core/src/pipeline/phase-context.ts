@@ -181,12 +181,21 @@ export interface PhaseContext {
   checkpoint(input: PhaseCheckpointInput): Promise<JobCheckpoint>;
 }
 
-/** Cumulative model totals shared by planner and implementation sessions in one run. */
+/**
+ * Cumulative model totals shared by planner and implementation sessions.
+ *
+ * Cumulative across attempts as well as across sessions: every field is seeded
+ * from the claimed job row, which already carries whatever an interrupted
+ * predecessor persisted. A session that starts here starts where the last one
+ * stopped.
+ */
 export interface AgentUsageTotals {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCostUsd: string;
   totalTurns: number;
+  totalModelCalls: number;
+  totalToolCalls: number;
 }
 
 /** The slice of a pino logger a phase uses. Structured first, message second. */
@@ -318,6 +327,8 @@ export function createPhaseContextFactory(
     totalOutputTokens: job.totalOutputTokens ?? 0,
     totalCostUsd: job.totalCostUsd ?? "0",
     totalTurns: job.totalTurns ?? 0,
+    totalModelCalls: job.totalModelCalls ?? 0,
+    totalToolCalls: job.totalToolCalls ?? 0,
   };
   const appendOwnedEvent = (input: PhaseEventInput) =>
     database.transaction((tx) => appendEvent({ ...input, jobId: job.id, leaseOwner }, tx));
@@ -517,6 +528,8 @@ export function createPhaseContextFactory(
         totalOutputTokens: patch.totalOutputTokens ?? currentAgentUsage.totalOutputTokens,
         totalCostUsd: patch.totalCostUsd ?? currentAgentUsage.totalCostUsd,
         totalTurns: patch.totalTurns ?? currentAgentUsage.totalTurns,
+        totalModelCalls: patch.totalModelCalls ?? currentAgentUsage.totalModelCalls,
+        totalToolCalls: patch.totalToolCalls ?? currentAgentUsage.totalToolCalls,
       };
     },
 

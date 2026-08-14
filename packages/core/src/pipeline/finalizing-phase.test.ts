@@ -30,7 +30,7 @@ function harness(options: { summary?: string | null; validation?: ValidationReco
 
   const ctx: PhaseContext = {
     job: JOB,
-    phase: { status: "finalizing", label: "Finalize", durationMs: 2_000 },
+    phase: { status: "finalizing", label: "Finalize", durationMs: 2_000, recovery: "replay" },
     sandboxes: new SandboxHolder(),
     signal: controller.signal,
     log: { debug: () => undefined, info: () => undefined, warn: () => undefined },

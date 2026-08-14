@@ -46,7 +46,12 @@ export const ALLOWED_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
     "queued",
   ],
   analyzing: ["planning", "failed", "cancelled", "timed_out", "queued"],
-  planning: ["implementing", "failed", "cancelled", "timed_out", "queued"],
+  // `budget_exceeded` is here because planning is a real model session as of
+  // M6 and spends from the same cumulative job ceilings implementation does.
+  // Without the edge, a planner that crossed a ceiling could not record what
+  // stopped it: the transition would be refused, the failure would escape the
+  // processor, and the message would be redelivered to breach again.
+  planning: ["implementing", "failed", "cancelled", "timed_out", "budget_exceeded", "queued"],
   implementing: ["testing", "failed", "cancelled", "timed_out", "budget_exceeded", "queued"],
   testing: ["reviewing", "implementing", "failed", "cancelled", "timed_out", "queued"],
   reviewing: ["revising", "finalizing", "failed", "cancelled", "timed_out", "queued"],

@@ -8,7 +8,7 @@ import type {
   CodingAgentUsage,
 } from "../agent/coding-agent";
 import type { AgentUsagePatch } from "../jobs/agent-usage";
-import { BudgetExceededError } from "../jobs/failure";
+import { BudgetExceededError, LeaseLostError } from "../jobs/failure";
 import type { AgentUsageTotals, PhaseContext } from "./phase-context";
 import type { AgentOptions } from "./phases";
 
@@ -25,8 +25,15 @@ export async function runAgentSession(
   const deadline = AbortSignal.timeout(agent.sessionTimeoutMs);
   const signal = AbortSignal.any([ctx.signal, deadline]);
 
-  const session = await agent.coding.start(spec, tools, signal);
+  // Built before the session exists, because what it knows decides whether the
+  // session may exist at all. A job whose cumulative model calls, tool calls or
+  // spend are already at their ceiling has no room for another turn, and
+  // starting one to discover that costs a provider round trip and a container's
+  // worth of context to arrive at the answer already sitting in the job row.
   const state = new SessionAccounting(spec, ctx);
+  await state.assertBudgetRemaining();
+
+  const session = await agent.coding.start(spec, tools, signal);
 
   try {
     for await (const event of session.run(signal)) {
@@ -59,8 +66,18 @@ function sessionExpired(sessionTimeoutMs: number): AgentSessionTimedOutError {
 /**
  * The running totals, ceilings, and timeline writes shared by every role.
  *
- * Usage is persisted after each reported turn through PhaseContext, so planning
- * and implementation spend from the same durable job totals.
+ * **Every ceiling except the per-session turn limit is cumulative over the whole
+ * job.** Model calls, tool calls, tokens and spend are seeded from the durable
+ * job row - which already carries whatever a planner session and any
+ * interrupted predecessor persisted - and written back under the lease as they
+ * grow. That is what makes a crash cost a job its progress rather than reset its
+ * budget: a worker dying halfway through the two hundredth model call does not
+ * hand its replacement two hundred more.
+ *
+ * `maxTurns` is the deliberate exception. It is a property of one session -
+ * "this conversation has stopped getting anywhere" - and lives on
+ * `AgentOptions` rather than on the job row, so it is counted per session and
+ * says so in the breach message.
  */
 export class SessionAccounting {
   /** Set the moment a ceiling is reached. The caller stops the session. */
@@ -71,10 +88,14 @@ export class SessionAccounting {
 
   private sessionId: string | undefined;
   private turns = 0;
-  private toolCalls = 0;
   private warnedAboutCost = false;
+  /** The breach has already been persisted and announced; do not do it twice. */
+  private breachSettled = false;
+  private breachDetail: { value: number; limit: number } | undefined;
 
   private cumulativeTurns: number;
+  private cumulativeModelCalls: number;
+  private cumulativeToolCalls: number;
   private readonly total: CodingAgentUsage;
   private readonly sessionTotal: CodingAgentUsage = emptyUsage();
 
@@ -89,6 +110,8 @@ export class SessionAccounting {
         totalOutputTokens: ctx.job.totalOutputTokens ?? 0,
         totalCostUsd: ctx.job.totalCostUsd,
         totalTurns: ctx.job.totalTurns ?? 0,
+        totalModelCalls: ctx.job.totalModelCalls ?? 0,
+        totalToolCalls: ctx.job.totalToolCalls ?? 0,
       } satisfies AgentUsageTotals);
     this.total = {
       inputTokens: persisted.totalInputTokens,
@@ -98,6 +121,32 @@ export class SessionAccounting {
       costUsd: parseStoredCost(persisted.totalCostUsd),
     };
     this.cumulativeTurns = persisted.totalTurns ?? 0;
+    this.cumulativeModelCalls = persisted.totalModelCalls ?? 0;
+    this.cumulativeToolCalls = persisted.totalToolCalls ?? 0;
+  }
+
+  /**
+   * Refuses a session the job cannot afford, before the provider is contacted.
+   *
+   * `>=` rather than `>` because this asks a different question from the checks
+   * inside the run: those ask whether the call that just happened was allowed,
+   * this asks whether there is room for one more. A job sitting exactly on its
+   * model-call ceiling would breach on its very first turn, and failing here
+   * rather than there is the difference between an explanation and a bill.
+   */
+  async assertBudgetRemaining(): Promise<void> {
+    const limits = this.spec.limits;
+    this.checkExhausted("model_calls", this.cumulativeModelCalls, limits.maxModelCalls);
+    this.checkExhausted("tool_calls", this.cumulativeToolCalls, limits.maxToolCalls);
+    if (limits.maxCostUsd !== null && this.total.costUsd !== null) {
+      this.checkExhausted("cost", this.total.costUsd, limits.maxCostUsd);
+    }
+
+    if (!this.breach) return;
+    // Nothing new to persist - these totals are what the job row already says -
+    // so the breach only has to be said out loud before it is thrown.
+    await this.settleBreach();
+    throw this.breach;
   }
 
   async record(event: CodingAgentEvent): Promise<void> {
@@ -114,9 +163,12 @@ export class SessionAccounting {
 
       case "turn_started": {
         this.turns += 1;
+        this.cumulativeModelCalls += 1;
+        await this.ctx.recordAgentUsage(this.usagePatch());
         await this.write("agent.turn_started", `Turn ${this.turns}.`, { turn: event.turn });
         this.check("turns", this.turns, this.spec.limits.maxTurns);
-        this.check("model_calls", this.turns, this.spec.limits.maxModelCalls);
+        this.check("model_calls", this.cumulativeModelCalls, this.spec.limits.maxModelCalls);
+        await this.settleBreach();
         return;
       }
 
@@ -127,14 +179,16 @@ export class SessionAccounting {
       }
 
       case "tool_started": {
-        this.toolCalls += 1;
+        this.cumulativeToolCalls += 1;
+        await this.ctx.recordAgentUsage(this.usagePatch());
         await this.write("agent.tool_started", `${event.toolName} ${event.argsPreview}`, {
           turn: event.turn,
           toolName: event.toolName,
           toolCallId: event.toolCallId,
           ...(event.commandExecutionId ? { commandExecutionId: event.commandExecutionId } : {}),
         });
-        this.check("tool_calls", this.toolCalls, this.spec.limits.maxToolCalls);
+        this.check("tool_calls", this.cumulativeToolCalls, this.spec.limits.maxToolCalls);
+        await this.settleBreach();
         return;
       }
 
@@ -166,6 +220,7 @@ export class SessionAccounting {
           costUsd: this.sessionTotal.costUsd,
         });
         this.checkCost();
+        await this.settleBreach();
         return;
       }
 
@@ -216,6 +271,8 @@ export class SessionAccounting {
       totalOutputTokens: this.total.outputTokens,
       ...(this.total.costUsd === null ? {} : { totalCostUsd: this.total.costUsd.toFixed(4) }),
       totalTurns: this.cumulativeTurns,
+      totalModelCalls: this.cumulativeModelCalls,
+      totalToolCalls: this.cumulativeToolCalls,
     };
   }
 
@@ -230,10 +287,49 @@ export class SessionAccounting {
   private check(which: BudgetExceededError["which"], value: number, limit: number): void {
     if (this.breach || value <= limit) return;
     this.breach = new BudgetExceededError(
-      `The ${this.spec.role} session reached its ${LIMIT_LABELS[which]} ceiling: ${value} of ${limit}.`,
+      `${SCOPE_LABELS[which]} reached its ${LIMIT_LABELS[which]} ceiling: ${formatBudget(value)} of ${formatBudget(limit)}.`,
       which,
     );
-    void this.writeBreach(value, limit);
+    this.breachDetail = { value, limit };
+  }
+
+  /** The pre-session form: the ceiling was reached before this session existed. */
+  private checkExhausted(which: BudgetExceededError["which"], value: number, limit: number): void {
+    if (this.breach || value < limit) return;
+    this.breach = new BudgetExceededError(
+      `This job has already spent its ${LIMIT_LABELS[which]} ceiling: ${formatBudget(value)} of ${formatBudget(limit)}. ` +
+        `No ${this.spec.role} session was started.`,
+      which,
+    );
+    this.breachDetail = { value, limit };
+  }
+
+  /**
+   * Persists the totals, then says what stopped the session.
+   *
+   * The order is the point. A job about to move to `budget_exceeded` must leave
+   * behind the counters that justify it, and persisting after the announcement
+   * would leave a timeline claiming a ceiling the job row does not show. The
+   * `agent.budget_exceeded` write is best effort on top of that: it is a
+   * description of a decision that has already been made durable.
+   */
+  private async settleBreach(): Promise<void> {
+    const breach = this.breach;
+    const detail = this.breachDetail;
+    if (!breach || !detail || this.breachSettled) return;
+    this.breachSettled = true;
+
+    await this.ctx.recordAgentUsage(this.usagePatch());
+    try {
+      await this.write("agent.budget_exceeded", breach.message, {
+        budget: breach.which,
+        budgetValue: detail.value,
+        budgetLimit: detail.limit,
+      });
+    } catch (error) {
+      if (error instanceof LeaseLostError) throw error;
+      this.ctx.log.warn({ err: error }, "could not record the budget breach");
+    }
   }
 
   private checkCost(): void {
@@ -251,20 +347,6 @@ export class SessionAccounting {
     }
 
     this.check("cost", this.total.costUsd, limit);
-  }
-
-  private async writeBreach(value: number, limit: number): Promise<void> {
-    const breach = this.breach;
-    if (!breach) return;
-    try {
-      await this.write("agent.budget_exceeded", breach.message, {
-        budget: breach.which,
-        budgetValue: value,
-        budgetLimit: limit,
-      });
-    } catch (error) {
-      this.ctx.log.warn({ err: error }, "could not record the budget breach");
-    }
   }
 
   private write(
@@ -309,6 +391,25 @@ const LIMIT_LABELS: Record<BudgetExceededError["which"], string> = {
   tool_calls: "tool call",
   turns: "turn",
 };
+
+/**
+ * Whose ceiling it was, said in the message rather than left to be inferred.
+ *
+ * Three of these are the job's and count every session and every attempt; the
+ * turn ceiling is this session's alone. A breach message that did not say which
+ * would send someone looking for two hundred turns in one conversation.
+ */
+const SCOPE_LABELS: Record<BudgetExceededError["which"], string> = {
+  cost: "This job",
+  model_calls: "This job",
+  tool_calls: "This job",
+  turns: "This session",
+};
+
+/** Whole numbers stay whole; spend keeps the cents that made it a ceiling. */
+function formatBudget(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(4);
+}
 
 function parseStoredCost(value: string | null | undefined): number | null {
   if (value === null || value === undefined || value.trim() === "") return 0;

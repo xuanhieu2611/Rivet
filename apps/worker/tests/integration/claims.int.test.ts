@@ -1,4 +1,12 @@
-import { appendEvent, claimJob, heartbeat, reclaimExpiredJobs, transitionJob } from "@rivet/core";
+import {
+  appendEvent,
+  claimJob,
+  heartbeat,
+  isJobExpired,
+  reclaimExpiredJobs,
+  remainingJobMs,
+  transitionJob,
+} from "@rivet/core";
 import { TransitionConflictError } from "@rivet/core";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -56,6 +64,50 @@ describe("exclusive claim", () => {
     // One claim, so one increment. The loser wrote nothing at all.
     expect(row.attemptCount).toBe(1);
     expect((await eventTypes(job.id)).filter((type) => type === "job.claimed")).toHaveLength(1);
+  });
+});
+
+describe("the job deadline", () => {
+  it("is established once, from the database clock, and survives a reclaim", async () => {
+    const job = await createTestJob({ maxDurationSeconds: 3_600 });
+
+    const first = await claimJob(job.id, "worker-a", 1);
+    expect(first).not.toBeNull();
+    const deadline = (await readJob(job.id)).deadlineAt;
+    expect(deadline).not.toBeNull();
+    // From `now()` in Postgres, not from the worker's own clock.
+    expect(deadline!.getTime()).toBeGreaterThan(Date.now());
+
+    // `kill -9` on worker A: the lease simply runs out and the sweeper puts the
+    // job back with a new dispatch generation.
+    await sleep(1_100);
+    await reclaimExpiredJobs(testQueue.queue, { maxAttempts: 3 });
+    const second = await claimJob(job.id, "worker-b", 30, 1);
+    expect(second).not.toBeNull();
+
+    // The whole point of the column: a crash does not buy another hour. Worker B
+    // inherits what is left of worker A's, and `started_at` is unchanged too.
+    const row = await readJob(job.id);
+    expect(row.deadlineAt).toEqual(deadline);
+    expect(row.startedAt).toEqual(first!.startedAt);
+    expect(second!.deadlineAt).toEqual(deadline);
+  });
+
+  it("hands a reclaimed attempt only the time that is left", async () => {
+    const job = await createTestJob({ maxDurationSeconds: 2 });
+    await claimJob(job.id, "worker-a", 1);
+
+    await sleep(2_100);
+    await reclaimExpiredJobs(testQueue.queue, { maxAttempts: 3 });
+    const claimed = await claimJob(job.id, "worker-b", 30, 1);
+
+    // The claim still succeeds - the deadline is not a claim precondition, and
+    // making it one would leave nobody to record why the job stopped. What the
+    // replacement gets is a budget of zero, which the processor turns into
+    // `timed_out` before it provisions anything.
+    expect(claimed).not.toBeNull();
+    expect(remainingJobMs(claimed!)).toBe(0);
+    expect(isJobExpired(claimed!)).toBe(true);
   });
 });
 

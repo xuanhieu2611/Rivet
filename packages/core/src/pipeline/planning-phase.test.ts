@@ -143,7 +143,7 @@ function harness(planner: ScriptedPlanner) {
 
   const context: PhaseContext = {
     job: JOB,
-    phase: { status: "planning", label: "Create plan", durationMs: 0 },
+    phase: { status: "planning", label: "Create plan", durationMs: 0, recovery: "replay" },
     sandboxes: holder,
     signal: controller.signal,
     log: { debug: () => undefined, info: () => undefined, warn: () => undefined },
@@ -237,9 +237,34 @@ describe("planningPhase", () => {
       message: "Implementation plan recorded.",
       data: { artifactId: 42, artifactType: "implementation_plan", agentRole: "planner" },
     });
+    // Three writes, and the first one is the point: the model call is persisted
+    // when the turn starts rather than when it is reported, so the planner
+    // spends from the same durable job counters the implementation session will.
     expect(test.usages).toEqual([
-      { totalInputTokens: 1, totalOutputTokens: 2, totalCostUsd: "0.0000", totalTurns: 0 },
-      { totalInputTokens: 1, totalOutputTokens: 2, totalCostUsd: "0.0000", totalTurns: 1 },
+      {
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCostUsd: "0.0000",
+        totalTurns: 0,
+        totalModelCalls: 1,
+        totalToolCalls: 0,
+      },
+      {
+        totalInputTokens: 1,
+        totalOutputTokens: 2,
+        totalCostUsd: "0.0000",
+        totalTurns: 0,
+        totalModelCalls: 1,
+        totalToolCalls: 0,
+      },
+      {
+        totalInputTokens: 1,
+        totalOutputTokens: 2,
+        totalCostUsd: "0.0000",
+        totalTurns: 1,
+        totalModelCalls: 1,
+        totalToolCalls: 0,
+      },
     ]);
     expect(planner.stopCount).toBe(1);
   });

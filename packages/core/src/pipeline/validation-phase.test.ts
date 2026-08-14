@@ -103,7 +103,7 @@ function harness(options: { respond?: Responder; baseline?: BaselineOutcome | nu
 
   const ctx: PhaseContext = {
     job: JOB,
-    phase: { status: "testing", label: "Validate change", durationMs: 0 },
+    phase: { status: "testing", label: "Validate change", durationMs: 0, recovery: "replay" },
     sandboxes: holder,
     signal: controller.signal,
     log: { debug: () => undefined, info: () => undefined, warn: () => undefined },

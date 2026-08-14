@@ -29,6 +29,7 @@ export * from "./events/validation-log";
 export * from "./jobs/agent-usage";
 export * from "./jobs/cancel";
 export * from "./jobs/claims";
+export * from "./jobs/deadline";
 export * from "./jobs/enqueue";
 export * from "./jobs/failure";
 export * from "./jobs/job-service";

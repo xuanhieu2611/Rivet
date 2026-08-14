@@ -640,6 +640,33 @@ The recovery vocabulary is deliberately small: `replay`, `checkpoint`, and `reco
 Every phase declares one. M6 uses the first two; the third exists so adding the first GitHub call in
 M9 becomes a compile-time decision rather than an accidental replay policy.
 
+**Budgets are the job's now, not the attempt's.** `jobs.total_model_calls` and
+`jobs.total_tool_calls` join the token, cost and turn totals as counters `SessionAccounting` seeds
+from the claimed row and writes back under the lease - on `turn_started` and `tool_started` rather
+than only on a reported usage event, because those are the moments the ceilings are compared
+against. `runAgentSession` builds the accounting **before** `coding.start`, so a job with no room
+for another call is refused without a provider round trip; a ceiling crossed mid-session persists
+the totals that justify it and only then writes `agent.budget_exceeded`. `maxTurns` stays
+per-session and says so in the breach message, because it lives on `AgentOptions` and asks whether
+one conversation stopped getting anywhere. Making planning a real session in Stage 4 also made
+`planning -> budget_exceeded` reachable, and it was not a legal edge: `ALLOWED_TRANSITIONS` gains
+it, without which a planner that crossed a ceiling threw inside its own failure path and was
+redelivered to breach again.
+
+`jobs.deadline_at` is fixed by the first claim from Postgres `now()` and coalesced by every later
+one, for the same reason `started_at` is - except that this one is a ceiling, and a ceiling that
+moved on each claim is one a crash could reset. The processor's whole-run timer becomes
+`remainingJobMs(claimed)`, and a claim with nothing left fails with `timed_out` **before** the
+pipeline is built, so a job whose hour ran out while it waited for a free worker does not pull an
+image and start a model session to be told it is out of time. `jobs/deadline.ts` owns that
+arithmetic and the recovery prompt's wall-clock line, which now subtracts from the same deadline
+rather than from this attempt's start.
+
+`Phase.recovery` is required, so the three-word vocabulary is enforced by the compiler rather than
+by this document. Every phase declares `replay` except `implementing`, whose turn checkpoints are a
+durable cursor; nothing declares `reconcile_external`, and a test asserts that - it is the assertion
+M9 has to change deliberately when `finalizing` grows a push.
+
 ## Stage 9 - web surface
 
 The job detail page adds two small surfaces:

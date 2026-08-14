@@ -127,7 +127,12 @@ function harness(options: HarnessOptions = {}) {
 
   const ctx: PhaseContext = {
     job: options.baseCommitSha ? { ...JOB, baseCommitSha: options.baseCommitSha } : JOB,
-    phase: { status: "provisioning", label: "Provision sandbox", durationMs: 0 },
+    phase: {
+      status: "provisioning",
+      label: "Provision sandbox",
+      durationMs: 0,
+      recovery: "replay",
+    },
     sandboxes: holder,
     signal: controller.signal,
     log: { debug: () => undefined, info: () => undefined, warn: () => undefined },

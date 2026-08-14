@@ -10,16 +10,27 @@ import { and, eq, sql } from "drizzle-orm";
  */
 export type AgentUsagePatch = Pick<
   Omit<Partial<NewJob>, "status">,
-  "totalInputTokens" | "totalOutputTokens" | "totalCostUsd" | "totalTurns"
+  | "totalInputTokens"
+  | "totalOutputTokens"
+  | "totalCostUsd"
+  | "totalTurns"
+  | "totalModelCalls"
+  | "totalToolCalls"
 >;
 
 /**
  * Persists the cumulative agent usage for a job, fenced on its lease.
  *
- * The implementing phase seeds its totals from the claimed job row and writes
- * the running total after each completed usage event. That means an interrupted
- * session does not lose the usage it already reported, and a reclaimed attempt
- * continues from the totals left by its predecessor.
+ * Every session - planner or implementer, first attempt or fifth - seeds its
+ * totals from the claimed job row and writes the running total after each
+ * completed usage event. That means an interrupted session does not lose the
+ * usage it already reported, and a reclaimed attempt continues from the totals
+ * left by its predecessor rather than being handed a fresh budget.
+ *
+ * Model and tool calls are here for that reason and not merely for reporting:
+ * they are the counters the job's own `max_model_calls` and `max_tool_calls`
+ * ceilings are compared against, so a crash that reset them would be a way to
+ * buy more budget by dying.
  *
  * `false` means the worker no longer owns the job. Callers turn that into a
  * `LeaseLostError` and stop writing, just like `recordProvisioning` does.

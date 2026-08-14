@@ -36,6 +36,7 @@ const PHASE = {
   status: "provisioning",
   label: "Provision sandbox",
   durationMs: 0,
+  recovery: "replay",
 } as const;
 
 const INPUT: PhaseExecInput = {
