@@ -47,6 +47,7 @@ const OPTIONS_BASE = {
   cloneTimeoutMs: 180_000,
   installTimeoutMs: 300_000,
   baselineTimeoutMs: 300_000,
+  diffMaxBytes: 1_048_576,
 };
 
 /** The repository the fake sandbox pretends to hold, unless a test says otherwise. */

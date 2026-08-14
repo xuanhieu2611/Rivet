@@ -278,6 +278,9 @@ truncates `assistant_message` to `previewMaxBytes`, so what is retained is the s
 
 ## Stage 5 - `testing` becomes validation
 
+**Done.** `packages/core/src/pipeline/validation-phase.ts`, plus the shared probe in
+`project-probe.ts` and the rewiring in `phases.ts`.
+
 New `packages/core/src/pipeline/validation-phase.ts`. This is the milestone's centre of gravity.
 
 1. `git add -A`, then `git diff --cached` and `git diff --cached --numstat`. Persist the diff as a
@@ -307,6 +310,35 @@ a green badge as a claim that was never checked.
 
 The comparison itself is a pure function over `(baseline, exitCode)` and is unit-tested as a matrix
 with no database, no container and no model.
+
+As built, with four additions the stage did not spell out.
+
+**Detection moved into `project-probe.ts`, shared with `analyzing`.** "Re-run the same script the
+baseline ran" was the requirement, and two phases deciding that separately is how they stop deciding
+it the same way - a manifest the session edited, a lockfile it added, and the comparison is between
+two different commands. `baselinePhase` now calls the same probe and composes its own sentence out
+of the same reason clause, which is also why its four skip messages changed wording.
+
+**`testing` is wired to the agent, exactly as `implementing` is.** Validation's first act is to fail
+a job whose diff is empty. That is right for a session that changed nothing and wrong for a pipeline
+that never had a session: it would be validating the absence of a phase, and every job under
+`RIVET_AGENT=off` would fail with `no_changes_produced` while nothing was wrong. Production is
+unaffected - `parseWorkerConfig` already refuses that mode there - and the M2-era sandbox suite
+keeps meaning what it meant. The guard-table test asserts the pairing in both directions.
+
+**The diff read has its own bound, `RIVET_DIFF_MAX_BYTES` (1MB), above the artifact bound.** The
+ordinary transcript cap is 64KB, below the artifact bound's 256KB, so reading a diff through it
+would deliver an already-clipped diff to `recordArtifact` - which would then record the clipped
+length as the true size, the exact thing `byte_size` exists to prevent. Truncation stays the
+artifact writer's decision. When the sandbox clips it anyway the phase says so on the artifact's
+metadata and message rather than quietly understating it.
+
+**A null baseline is `unverified`, and a failure to stage is fatal.** Null is not `skipped` but it
+supports no attribution either, so it collapses into the same green outcome and the message says
+which of the two it was. `git add -A` exiting non-zero is the one command here whose failure stops
+the phase: an unstaged tree produces an empty `git diff --cached`, so continuing would report
+`no_changes_produced` for a session that may have changed a great deal, and a wrong answer about the
+work is worse than no answer about it.
 
 ## Stage 6 - `finalizing` becomes real
 

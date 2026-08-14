@@ -1,8 +1,9 @@
 import { commandKilledError } from "../sandbox/errors";
-import { problem, splitLines } from "./command-output";
-import type { PhaseContext, PhaseExecInput, RecordedCommand } from "./phase-context";
+import { problem } from "./command-output";
+import type { PhaseContext } from "./phase-context";
 import type { PipelineOptions } from "./phases";
-import { detectPackageManager, type ProjectPlan, readScript, REPO_DIRNAME } from "./project";
+import { probeProject } from "./project-probe";
+import { REPO_DIRNAME } from "./project";
 
 /**
  * Phase two: run the repository's own tests before Rivet has changed anything.
@@ -35,24 +36,29 @@ import { detectPackageManager, type ProjectPlan, readScript, REPO_DIRNAME } from
  */
 
 /**
- * The manifest is read with a cap of its own, well above the default.
+ * The script this milestone knows to look for. Per-repo config is Milestone 7.
  *
- * The default output cap is tuned for transcripts, and a `package.json` clipped
- * at 64KB is not a smaller manifest - it is invalid JSON. A repository with a
- * manifest bigger than this exists, but it does not exist yet.
+ * Exported because `testing` has to re-run exactly this one for its comparison
+ * to mean anything, and two phases naming the same string separately is how they
+ * stop naming the same string.
  */
-const MANIFEST_MAX_BYTES = 1_048_576;
-
-/** The script this milestone knows to look for. Per-repo config is Milestone 7. */
-const BASELINE_SCRIPT = "test";
+export const BASELINE_SCRIPT = "test";
 
 export function baselinePhase(options: PipelineOptions): (ctx: PhaseContext) => Promise<void> {
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
 
   return async function baseline(ctx: PhaseContext): Promise<void> {
-    const plan = await readProject(ctx, options, repoDir);
-    if (!plan) return;
+    const probe = await probeProject(ctx, {
+      repoDir,
+      commandTimeoutMs: options.commandTimeoutMs,
+      script: BASELINE_SCRIPT,
+    });
+    if (!probe.plan) {
+      await skip(ctx, `No baseline was established: ${probe.reason}.`);
+      return;
+    }
 
+    const plan = probe.plan;
     const command = plan.runScript(BASELINE_SCRIPT);
     const result = await ctx.exec({
       argv: command,
@@ -97,101 +103,8 @@ export function baselinePhase(options: PipelineOptions): (ctx: PhaseContext) => 
   };
 }
 
-/**
- * Works out what to run, or records why there is nothing to.
- *
- * Returns `null` for every "there is no baseline to establish" answer, having
- * already written the event that says so. None of those are job failures: a
- * repository with no tests is not a broken job, and neither is one whose
- * manifest this milestone could not make sense of after an install that
- * plainly could. The reason is on the timeline either way.
- *
- * The package manager is re-detected here rather than carried over from
- * `provisioning`. One cheap `ls` beats threading state between phases through a
- * column another phase wrote, and it keeps this phase runnable on its own -
- * which is what Milestone 6 will need when it resumes a job into an existing
- * sandbox.
- */
-async function readProject(
-  ctx: PhaseContext,
-  options: PipelineOptions,
-  repoDir: string,
-): Promise<ProjectPlan | null> {
-  const listing = await run(ctx, {
-    argv: ["ls", "-1", "-a", repoDir],
-    cwd: repoDir,
-    timeoutMs: options.commandTimeoutMs,
-  });
-  guard(ctx, listing);
-
-  const plan = listing.exitCode === 0 ? detectPackageManager(splitLines(listing.stdout)) : null;
-  if (!plan) {
-    return skip(ctx, `Could not read the repository root, so no baseline was established.`);
-  }
-
-  const manifest = await run(ctx, {
-    argv: ["cat", "package.json"],
-    cwd: repoDir,
-    timeoutMs: options.commandTimeoutMs,
-    maxOutputBytes: MANIFEST_MAX_BYTES,
-  });
-  guard(ctx, manifest);
-
-  if (manifest.exitCode !== 0 || manifest.truncated) {
-    return skip(ctx, `Could not read package.json, so no baseline was established.`);
-  }
-
-  const script = parseManifest(manifest.stdout);
-  if (script === undefined) {
-    return skip(ctx, `package.json is not readable as JSON, so no baseline was established.`);
-  }
-  if (script === null) {
-    return skip(
-      ctx,
-      `No \`${BASELINE_SCRIPT}\` script in package.json; there is no baseline to establish.`,
-    );
-  }
-
-  return plan;
-}
-
-/**
- * `undefined` for unparseable, `null` for absent, the script otherwise.
- *
- * Three answers rather than two because they are three different facts, and the
- * timeline says which. Note that unparseable should be impossible here - the
- * install in `provisioning` already read this file successfully - so it means
- * something stranger than a bad manifest, and it still is not worth failing a
- * job over.
- */
-function parseManifest(text: string): string | null | undefined {
-  try {
-    return readScript(JSON.parse(text), BASELINE_SCRIPT);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Records that there is no baseline, and why. Always returns `null`. */
-async function skip(ctx: PhaseContext, message: string): Promise<null> {
+/** Records that there is no baseline, and why. Never a job failure. */
+async function skip(ctx: PhaseContext, message: string): Promise<void> {
   await ctx.event({ type: "baseline.recorded", message, data: { baseline: "skipped" } });
   ctx.log.info({ reason: message }, "no baseline established");
-  return null;
-}
-
-/** One command, recorded whatever it did. */
-function run(ctx: PhaseContext, input: PhaseExecInput): Promise<RecordedCommand> {
-  return ctx.exec(input);
-}
-
-/**
- * Stops the phase for the two things that are the sandbox's fault.
- *
- * Everything else about a command in this phase is information rather than
- * failure, so this deliberately says nothing about exit codes.
- */
-function guard(ctx: PhaseContext, result: RecordedCommand): void {
-  ctx.signal.throwIfAborted();
-  const killed = commandKilledError(result);
-  if (killed) throw killed;
 }

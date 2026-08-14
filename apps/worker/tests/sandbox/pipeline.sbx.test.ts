@@ -53,6 +53,7 @@ function startRealWorker(suite: string): { queue: TestQueue; worker: TestWorker 
     cloneTimeoutMs: 30_000,
     installTimeoutMs: 30_000,
     baselineTimeoutMs: 30_000,
+    diffMaxBytes: 262_144,
     maxOutputBytes: 16_384,
   };
   const provider = new DockerSandboxProvider({
@@ -70,6 +71,7 @@ function startRealWorker(suite: string): { queue: TestQueue; worker: TestWorker 
     cloneTimeoutMs: sandboxConfig.cloneTimeoutMs,
     installTimeoutMs: sandboxConfig.installTimeoutMs,
     baselineTimeoutMs: sandboxConfig.baselineTimeoutMs,
+    diffMaxBytes: sandboxConfig.diffMaxBytes,
   });
   const testWorker = startTestWorker({
     queue: testQueue.queue,
@@ -108,7 +110,10 @@ describe("real sandbox pipeline", () => {
     expect(
       commands.some(
         (command) =>
-          command.phase === "testing" &&
+          // `analyzing`, not `testing`: Milestone 5 moved the baseline ahead of
+          // every phase that can change a file, which is what PRD §11 C asked
+          // for all along.
+          command.phase === "analyzing" &&
           command.argv[0] === "npm" &&
           command.argv[1] === "run" &&
           command.argv[2] === "test",

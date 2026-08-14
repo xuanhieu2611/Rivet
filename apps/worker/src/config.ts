@@ -119,6 +119,17 @@ export interface SandboxConfig {
   baselineTimeoutMs: number;
   /** Cap on each of stdout and stderr, per command, before truncation. */
   maxOutputBytes: number;
+  /**
+   * Cap on one `git diff` read, which is deliberately not `maxOutputBytes`.
+   *
+   * The ordinary cap is tuned for transcripts and sits below the artifact bound,
+   * so reading a diff through it would clip the diff before `recordArtifact`
+   * ever saw it - and the stored `byte_size` would then record the clipped
+   * length as the true one. Keep this above `RIVET_ARTIFACT_MAX_BYTES` so that
+   * truncation is the artifact writer's decision and stays honest about what it
+   * truncated.
+   */
+  diffMaxBytes: number;
 }
 
 /**
@@ -250,6 +261,10 @@ const schema = z.object({
   SANDBOX_INSTALL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(300_000),
   SANDBOX_BASELINE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(300_000),
   SANDBOX_MAX_OUTPUT_BYTES: z.coerce.number().int().min(1_024).max(4_194_304).default(65_536),
+  // 1MB, four times the artifact bound, so that a diff big enough to be
+  // truncated is truncated by the artifact writer - which records how big it
+  // really was - rather than by the container's transcript cap, which does not.
+  RIVET_DIFF_MAX_BYTES: z.coerce.number().int().min(1_024).max(16_777_216).default(1_048_576),
 
   // --- coding agent (M4) -----------------------------------------------
   RIVET_AGENT: z.enum(AGENT_MODES).default("pi"),
@@ -333,6 +348,7 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
       installTimeoutMs: parsed.data.SANDBOX_INSTALL_TIMEOUT_MS,
       baselineTimeoutMs: parsed.data.SANDBOX_BASELINE_TIMEOUT_MS,
       maxOutputBytes: parsed.data.SANDBOX_MAX_OUTPUT_BYTES,
+      diffMaxBytes: parsed.data.RIVET_DIFF_MAX_BYTES,
     },
     agent: {
       mode: parsed.data.RIVET_AGENT,

@@ -26,8 +26,10 @@ Docker sandbox and made provisioning and baseline testing real. Milestone 3 made
 event log observable through a resumable SSE stream, live status, timeline, and command log.
 Milestone 4 added the Pi adapter and made `implementing` real: Pi runs in the trusted worker while
 its four tools operate inside the job's sandbox. Milestone 5 moved the baseline to `analyzing`,
-where it runs before anything is edited, and made `planning` say plainly that it produced nothing.
-Validation, review, and finalization remain simulated until the rest of Milestone 5 and Milestone 8.
+where it runs before anything is edited, made `planning` say plainly that it produced nothing, and
+turned `testing` into validation: it keeps the session's diff as an artifact, re-runs the baseline's
+own suite, and compares the two. Review and finalization remain simulated until the rest of
+Milestone 5 and Milestone 8.
 
 ## What exists today
 
@@ -280,12 +282,14 @@ Milestone 2 made provisioning and the baseline real sandbox work, Milestone 4 ma
 real Pi session when an agent is supplied, and Milestone 5 moved the baseline onto `analyzing` so it
 measures the repository before the session edits it. Planning now runs a body that records one
 `plan.deferred` event and returns, rather than sleeping for two seconds as though a plan were being
-made; testing, reviewing and finalizing are still simulated. Those three sleeps total about 9
-seconds, which is still roughly the right length to watch a job cross the dashboard. The
-`RIVET_AGENT=off` integration configuration deliberately leaves implementing simulated as well, so
-lifecycle tests need no model key. That is the entire reason `runPipeline` takes its clock, its
-sleep, its callbacks and its fault injector as arguments rather than importing them: the same runner
-drives the demo at `speed: 1` and the unit tests at `speed: 0`.
+made. Testing is validation: it stages the working tree, keeps the diff and its stats as artifacts,
+re-runs the script the baseline ran, and compares the two. Reviewing and finalizing are still
+simulated. The `RIVET_AGENT=off` integration configuration deliberately leaves implementing
+simulated, and leaves testing simulated with it - validating a run that never had a session would be
+validating the absence of a phase, and every job would fail with `no_changes_produced` while nothing
+was wrong - so lifecycle tests need no model key. That is the entire reason `runPipeline` takes its
+clock, its sleep, its callbacks and its fault injector as arguments rather than importing them: the
+same runner drives the demo at `speed: 1` and the unit tests at `speed: 0`.
 
 Seven fault-injection modes exist so the recovery machinery and the sandbox failure taxonomy have
 something to recover from on demand: `throw` (retryable), `fatal` (terminal), `hang` (ignores the
@@ -556,6 +560,12 @@ core - `packages/core` holds no policy. `byte_size` records the size of what arr
 size of what was stored, which is the whole reason it is a column: a 4MB diff kept as 256KB is a
 fact a reader should get off the row without fetching either version, and `truncated` says the gap
 in the middle is Rivet's.
+
+That honesty depends on one thing outside the writer: `RIVET_DIFF_MAX_BYTES`, which caps how much
+diff text may cross the sandbox boundary at once, has to sit **above** the artifact bound. It
+defaults to 1MB against the artifact bound's 256KB. Read a diff through the ordinary 64KB transcript
+cap instead and it arrives already clipped, so `byte_size` records the clipped length as the true
+one - the exact failure the column exists to prevent.
 
 Reads are split. `listArtifacts()` returns metadata without content, because the page that renders
 the timeline should not pull a diff into every render; `getArtifact()` returns one artifact's

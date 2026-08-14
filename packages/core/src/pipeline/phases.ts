@@ -7,6 +7,7 @@ import { implementingPhase } from "./implementing-phase";
 import type { PhaseContext } from "./phase-context";
 import { planningPhase } from "./planning-phase";
 import { provisioningPhase } from "./provisioning-phase";
+import { validationPhase } from "./validation-phase";
 
 /**
  * What a job actually does, as a list.
@@ -71,6 +72,18 @@ export interface PipelineOptions {
    * would be Rivet calling a perfectly normal project broken.
    */
   baselineTimeoutMs: number;
+  /**
+   * Cap on how much diff text may cross the sandbox boundary at once.
+   *
+   * Distinct from the artifact bound, and deliberately above it. The artifact
+   * bound decides what is *stored* and is applied by `recordArtifact`, which
+   * also records the true size it was applied to. This one decides what the
+   * container is allowed to print, and a diff clipped here would arrive already
+   * shortened - so `byte_size` would record the clipped length as the real one,
+   * which is the exact thing that column exists to prevent. Set it below the
+   * artifact bound and every large diff quietly lies about its size.
+   */
+  diffMaxBytes: number;
   /** Passed to every sandbox. Empty at Milestone 2, and that is the point. */
   env?: Record<string, string>;
   /**
@@ -126,7 +139,7 @@ const PHASE_TEMPLATE: readonly Phase[] = [
   { status: "analyzing", label: "Establish test baseline", durationMs: 3_000 },
   { status: "planning", label: "Create plan", durationMs: 0 },
   { status: "implementing", label: "Implement change", durationMs: 5_000 },
-  { status: "testing", label: "Run tests", durationMs: 4_000 },
+  { status: "testing", label: "Validate change", durationMs: 4_000 },
   { status: "reviewing", label: "Review patch", durationMs: 3_000 },
   { status: "finalizing", label: "Finalize", durationMs: 2_000 },
 ];
@@ -150,12 +163,12 @@ export function simulatedPipeline(): readonly Phase[] {
  * `provisioning` creates a container, clones the repository and installs its
  * dependencies; `analyzing` runs the repository's own suite and records the
  * baseline; `planning` records that it produced nothing; `implementing` runs a
- * coding session, but only when a worker was given a harness to run it with.
- * `testing`, `reviewing` and `finalizing` are the remainder of Milestone 5 and
- * still sleep, and there is nothing clever about those sleeps in the meantime -
- * which is why this returns the same seven statuses in the same order however
- * it is configured, and why one guard-table test walks every pipeline this file
- * can build.
+ * coding session and `testing` judges what it did, but both only when a worker
+ * was given a harness to run one with. `reviewing` and `finalizing` still sleep,
+ * and there is nothing clever about those sleeps in the meantime - which is why
+ * this returns the same seven statuses in the same order however it is
+ * configured, and why one guard-table test walks every pipeline this file can
+ * build.
  *
  * The baseline is wired to `analyzing` rather than `testing` because that is
  * what it was always for. PRD §11 C asks whether the repository was healthy
@@ -170,13 +183,28 @@ export function simulatedPipeline(): readonly Phase[] {
  * Leaving `implementing` simulated when there is no agent is what keeps
  * `pnpm test:integration` runnable with no model key: `RIVET_AGENT=off` omits
  * the field, the sleep stays, and thirty-odd lifecycle tests stay cheap.
+ *
+ * `testing` is wired to the same condition, and that pairing is deliberate
+ * rather than convenient. Validation's first act is to fail a job whose diff is
+ * empty, which is exactly the right answer for a session that changed nothing
+ * and exactly the wrong one for a pipeline that never had a session: it would be
+ * validating the absence of a phase rather than the result of one, and every job
+ * on a keyless laptop would fail with `no_changes_produced` while nothing was
+ * wrong. Production is unaffected either way, because `parseWorkerConfig`
+ * refuses `RIVET_AGENT=off` under `NODE_ENV=production` - a worker that cannot
+ * write code is not a worker that should be judging code.
  */
 export function buildPipeline(options: PipelineOptions): readonly Phase[] {
   const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {
     provisioning: provisioningPhase(options),
     analyzing: baselinePhase(options),
     planning: planningPhase(),
-    ...(options.agent ? { implementing: implementingPhase(options.agent, options) } : {}),
+    ...(options.agent
+      ? {
+          implementing: implementingPhase(options.agent, options),
+          testing: validationPhase(options),
+        }
+      : {}),
   };
 
   return PHASE_TEMPLATE.map((phase) => {

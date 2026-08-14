@@ -3,6 +3,7 @@ import {
   AgentFailedError,
   AgentUnavailableError,
   buildPipeline,
+  listArtifacts,
   listCommands,
   requestJobCancellation,
   requestJobRun,
@@ -45,6 +46,18 @@ const LISTING = ".\n..\n.git\npackage.json\npackage-lock.json\nREADME.md\ntest.j
 const TRACKED = "package.json\npackage-lock.json\nREADME.md\ntest.js\n";
 const MANIFEST = JSON.stringify({ name: "rivet-agent-fixture", scripts: { test: "node test.js" } });
 
+/** What the fixture's `testing` phase finds staged, so a run has something to validate. */
+const DIFF = [
+  "diff --git a/test.js b/test.js",
+  "--- a/test.js",
+  "+++ b/test.js",
+  "@@ -1 +1 @@",
+  "-const ok = false;",
+  "+const ok = true;",
+  "",
+].join("\n");
+const NUMSTAT = "1\t1\ttest.js\n";
+
 const PIPELINE_OPTIONS: Omit<PipelineOptions, "sandbox" | "agent"> = {
   image: "node@sha256:test",
   workdir: "/home/node/workspace",
@@ -55,6 +68,7 @@ const PIPELINE_OPTIONS: Omit<PipelineOptions, "sandbox" | "agent"> = {
   cloneTimeoutMs: 500,
   installTimeoutMs: 500,
   baselineTimeoutMs: 500,
+  diffMaxBytes: 65_536,
 };
 
 const AGENT_OPTIONS: Omit<AgentOptions, "coding"> = {
@@ -93,8 +107,10 @@ afterEach(async () => {
   worker = undefined;
 });
 
-function fixtureProvider(): FakeSandboxProvider {
+/** `first` is consulted ahead of the fixture's own answers, which is how a test varies one. */
+function fixtureProvider(first: ScriptedCommand[] = []): FakeSandboxProvider {
   const script: ScriptedCommand[] = [
+    ...first,
     {
       match: (argv) => argv[0] === "git" && argv[1] === "rev-parse",
       stdout: `${COMMIT}\n`,
@@ -114,6 +130,15 @@ function fixtureProvider(): FakeSandboxProvider {
       match: (argv) => argv[0] === "npm" && argv[1] === "run",
       stdout: "fixture tests passed\n",
     },
+    // Validation's three commands. Without a diff to find, every scripted
+    // session here would end in `no_changes_produced` - which is the correct
+    // answer for a session that changed nothing and the wrong one for a fake
+    // whose edits never touched a real filesystem.
+    {
+      match: (argv) => argv[0] === "git" && argv[1] === "diff" && argv.includes("--numstat"),
+      stdout: NUMSTAT,
+    },
+    { match: (argv) => argv[0] === "git" && argv[1] === "diff", stdout: DIFF },
   ];
 
   return new FakeSandboxProvider({
@@ -380,5 +405,100 @@ describe("coding-agent execution through the worker", () => {
     expect(timedOut.failureReason).toContain("budget");
     expect(agent.sessions[0]?.stopped).toBe(true);
     expect((await eventTypes(job.id)).filter((type) => type === "job.completed")).toHaveLength(0);
+  });
+});
+
+/**
+ * The opinion Milestone 5 added, through the real processor.
+ *
+ * The green path is already covered above - every completing test in this file
+ * now walks validation on its way there. What is left is the half that matters
+ * as much and is easy to leave untested: a run that produced nothing, and a run
+ * that produced something worse than nothing. An M5 that can only report success
+ * has not validated anything.
+ */
+describe("validation through the worker", () => {
+  it("records the comparison and keeps the diff on a green run", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({ script: [successfulSession()] });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    await waitForStatus(job.id, "completed");
+    const events = await readEvents(job.id);
+    const artifacts = await listArtifacts(job.id);
+
+    // The fixture's suite passes before and after, which is the path a feature
+    // request takes rather than the path a bug fix does.
+    expect(events.find((event) => event.type === "validation.recorded")?.data).toMatchObject({
+      validation: "verified",
+      filesChanged: 1,
+      insertions: 1,
+      deletions: 1,
+    });
+    expect(artifacts.map((artifact) => artifact.type)).toEqual(["diff", "diff_stat"]);
+    expect(artifacts[0]?.byteSize).toBe(Buffer.byteLength(DIFF, "utf8"));
+    // Every artifact row has an event pointing at it, and it resolves.
+    const recorded = events.filter((event) => event.type === "artifact.recorded");
+    expect(recorded.map((event) => event.data?.artifactId)).toEqual(
+      artifacts.map((artifact) => artifact.id),
+    );
+  });
+
+  it("fails a session that changed nothing with no_changes_produced", async () => {
+    // The most interesting failure this milestone can surface: a session that
+    // ended cleanly while the diff is empty did not do the task, and it will do
+    // the same thing again on a second attempt. Terminal, therefore, and the
+    // attempt count is the proof.
+    const sandbox = fixtureProvider([
+      { match: (argv) => argv[0] === "git" && argv[1] === "diff", stdout: "" },
+    ]);
+    const agent = new FakeCodingAgent({ script: [successfulSession()] });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const failed = await waitForStatus(job.id, "failed");
+    expect(failed.failureCategory).toBe("no_changes_produced");
+    expect(failed.attemptCount).toBe(1);
+    expect(await listArtifacts(job.id)).toEqual([]);
+  });
+
+  it("fails a session that broke a green suite, and keeps the diff that broke it", async () => {
+    // Two runs of the same command with two different answers: green at
+    // `analyzing`, red at `testing`. That is a regression, and the diff is the
+    // most valuable thing to keep from it.
+    let suiteRuns = 0;
+    const sandbox = fixtureProvider([
+      {
+        match: (argv) => argv[0] === "npm" && argv[1] === "run" && suiteRuns++ > 0,
+        exitCode: 1,
+        stdout: "1 failed | 4 passed\n",
+      },
+    ]);
+    const agent = new FakeCodingAgent({ script: [successfulSession()] });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const failed = await waitForStatus(job.id, "failed");
+    expect(failed.failureCategory).toBe("validation_failed");
+    expect(failed.attemptCount).toBe(1);
+
+    const events = await readEvents(job.id);
+    expect(events.find((event) => event.type === "baseline.recorded")?.data).toMatchObject({
+      baseline: "passed",
+    });
+    expect(events.find((event) => event.type === "validation.recorded")?.data).toMatchObject({
+      validation: "regressed",
+    });
+    expect((await listArtifacts(job.id)).map((artifact) => artifact.type)).toEqual([
+      "diff",
+      "diff_stat",
+    ]);
   });
 });

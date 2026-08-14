@@ -131,6 +131,7 @@ const { phases, phaseFactory, sandbox } = ((): {
     cloneTimeoutMs: config.sandbox.cloneTimeoutMs,
     installTimeoutMs: config.sandbox.installTimeoutMs,
     baselineTimeoutMs: config.sandbox.baselineTimeoutMs,
+    diffMaxBytes: config.sandbox.diffMaxBytes,
   };
 
   return {

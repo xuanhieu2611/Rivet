@@ -76,6 +76,7 @@ export const TEST_CONFIG: WorkerConfig = {
     installTimeoutMs: 5_000,
     baselineTimeoutMs: 5_000,
     maxOutputBytes: 16_384,
+    diffMaxBytes: 262_144,
   },
   // `off` for the same reason the sandbox is: this suite is about the lease,
   // the queue and the recovery paths, and it runs in CI with no model key. A

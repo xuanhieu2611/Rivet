@@ -1,9 +1,16 @@
 import { isTerminal } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
+import type { CodingAgent } from "../agent/coding-agent";
 import { ALLOWED_TRANSITIONS } from "../jobs/transitions";
 import type { SandboxProvider } from "../sandbox/sandbox";
-import { buildPipeline, finalPhaseStatus, type Phase, simulatedPipeline } from "./phases";
+import {
+  buildPipeline,
+  finalPhaseStatus,
+  type Phase,
+  type PipelineOptions,
+  simulatedPipeline,
+} from "./phases";
 
 /**
  * The pipeline and the guard table are two descriptions of the same lifecycle,
@@ -23,20 +30,28 @@ const STUB_PROVIDER: SandboxProvider = {
   reap: () => Promise.resolve([]),
 };
 
+/** Enough of a harness to build a pipeline; nothing here ever starts a session. */
+const STUB_AGENT: CodingAgent = {
+  start: () => Promise.reject(new Error("not used")),
+};
+
+const SANDBOX_OPTIONS: PipelineOptions = {
+  sandbox: STUB_PROVIDER,
+  image: "node@sha256:deadbeef",
+  workdir: "/home/node/workspace",
+  memoryBytes: 2_147_483_648,
+  nanoCpus: 2_000_000_000,
+  pidsLimit: 512,
+  commandTimeoutMs: 120_000,
+  cloneTimeoutMs: 180_000,
+  installTimeoutMs: 300_000,
+  baselineTimeoutMs: 300_000,
+  diffMaxBytes: 1_048_576,
+};
+
 const PIPELINES: Record<string, readonly Phase[]> = {
   simulated: simulatedPipeline(),
-  sandbox: buildPipeline({
-    sandbox: STUB_PROVIDER,
-    image: "node@sha256:deadbeef",
-    workdir: "/home/node/workspace",
-    memoryBytes: 2_147_483_648,
-    nanoCpus: 2_000_000_000,
-    pidsLimit: 512,
-    commandTimeoutMs: 120_000,
-    cloneTimeoutMs: 180_000,
-    installTimeoutMs: 300_000,
-    baselineTimeoutMs: 300_000,
-  }),
+  sandbox: buildPipeline(SANDBOX_OPTIONS),
 };
 
 describe.each(Object.entries(PIPELINES))("%s pipeline", (_name, phases) => {
@@ -122,10 +137,35 @@ describe("buildPipeline", () => {
   it("makes provisioning, analyzing and planning real and leaves the rest simulated", () => {
     const real = PIPELINES.sandbox!.filter((phase) => phase.run).map((phase) => phase.status);
     // In pipeline order, which is also the assertion that the baseline moved:
-    // it is `analyzing` that does real work now, and `testing` that does not
-    // yet. `implementing` is absent because this pipeline was built without an
-    // agent. This list is how a phase quietly acquiring a body gets noticed.
+    // it is `analyzing` that does real work now. `implementing` and `testing`
+    // are both absent because this pipeline was built without an agent. This
+    // list is how a phase quietly acquiring a body gets noticed.
     expect(real).toEqual(["provisioning", "analyzing", "planning"]);
+  });
+
+  it("makes implementing and testing real together, and only with an agent", () => {
+    // The pairing is the point. Validation's first act is to fail a job whose
+    // diff is empty, which is the right answer for a session that changed
+    // nothing and the wrong one for a pipeline that never had a session - so a
+    // build with a harness gets both bodies, and a build without gets neither.
+    const withAgent = buildPipeline({
+      ...SANDBOX_OPTIONS,
+      agent: {
+        coding: STUB_AGENT,
+        sessionTimeoutMs: 900_000,
+        maxTurns: 40,
+        previewMaxBytes: 2_048,
+        fileMaxBytes: 262_144,
+      },
+    });
+
+    expect(withAgent.filter((phase) => phase.run).map((phase) => phase.status)).toEqual([
+      "provisioning",
+      "analyzing",
+      "planning",
+      "implementing",
+      "testing",
+    ]);
   });
 
   it("does not share phase objects with the simulated pipeline", () => {

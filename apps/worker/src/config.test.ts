@@ -51,6 +51,9 @@ describe("parseWorkerConfig", () => {
         installTimeoutMs: 300_000,
         baselineTimeoutMs: 300_000,
         maxOutputBytes: 65_536,
+        // Above `artifactMaxBytes` on purpose: a diff clipped by the container's
+        // transcript cap would record its clipped length as its true size.
+        diffMaxBytes: 1_048_576,
       },
       agent: {
         mode: "pi",
