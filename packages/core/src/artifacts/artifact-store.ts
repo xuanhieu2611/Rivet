@@ -1,6 +1,13 @@
-import type { ArtifactType, JobArtifact, JobArtifactSummary, JobStatus } from "@rivet/contracts";
+import {
+  parseSerializedImplementationPlan,
+  type ArtifactType,
+  type ImplementationPlan,
+  type JobArtifact,
+  type JobArtifactSummary,
+  type JobStatus,
+} from "@rivet/contracts";
 import { db, type Executor, type JobArtifactRow, jobArtifacts } from "@rivet/database";
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, desc, eq, gt } from "drizzle-orm";
 
 import { assertActiveLease } from "../jobs/lease";
 import { truncate } from "../sandbox/command-log";
@@ -40,6 +47,8 @@ export interface RecordArtifactInput {
    */
   maxBytes: number;
   metadata?: Record<string, unknown>;
+  /** When true, reject content above the bound instead of truncating it. */
+  requireComplete?: boolean;
   /** When present, the artifact row is fenced on this active lease. */
   leaseOwner?: string;
 }
@@ -69,6 +78,11 @@ export async function recordArtifact(
   }
 
   const byteSize = Buffer.byteLength(input.content, "utf8");
+  if (input.requireComplete && byteSize > input.maxBytes) {
+    throw new ArtifactTooLargeError(
+      `The ${input.type} artifact is ${byteSize} bytes, above the complete ${input.maxBytes}-byte limit.`,
+    );
+  }
   const bounded = truncate(input.content, input.maxBytes);
 
   const [row] = await executor
@@ -90,6 +104,54 @@ export async function recordArtifact(
     throw new Error("Insert into job_artifacts returned no row.");
   }
   return toJobArtifact(row);
+}
+
+/** A complete structured plan recovered from the append-only artifact store. */
+export interface StoredImplementationPlan {
+  artifactId: number;
+  plan: ImplementationPlan;
+}
+
+/** The writer refuses a complete artifact rather than silently clipping it. */
+export class ArtifactTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ArtifactTooLargeError";
+  }
+}
+
+/**
+ * Finds the newest complete, parseable implementation plan.
+ *
+ * A newer malformed row does not make an older valid plan disappear from the
+ * recovery context. The artifact itself remains visible for diagnosis, while
+ * callers receive the latest value that can actually be trusted.
+ */
+export async function readLatestImplementationPlan(
+  jobId: string,
+  executor: Executor = db,
+): Promise<StoredImplementationPlan | null> {
+  const rows = await executor
+    .select({
+      id: jobArtifacts.id,
+      content: jobArtifacts.content,
+      truncated: jobArtifacts.truncated,
+    })
+    .from(jobArtifacts)
+    .where(and(eq(jobArtifacts.jobId, jobId), eq(jobArtifacts.type, "implementation_plan")))
+    .orderBy(desc(jobArtifacts.id));
+
+  for (const row of rows) {
+    if (row.truncated) continue;
+    try {
+      return { artifactId: row.id, plan: parseSerializedImplementationPlan(row.content) };
+    } catch {
+      // The next older plan is still a valid recovery input if this row was
+      // written by an interrupted or newer producer.
+    }
+  }
+
+  return null;
 }
 
 export interface ListArtifactsOptions {

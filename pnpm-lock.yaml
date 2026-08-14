@@ -187,9 +187,15 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.84.1
         version: 0.84.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3)
+      '@rivet/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@rivet/core':
         specifier: workspace:*
         version: link:../core
+      typebox:
+        specifier: 1.3.7
+        version: 1.3.7
     devDependencies:
       '@rivet/config':
         specifier: workspace:*

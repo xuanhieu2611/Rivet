@@ -1,7 +1,7 @@
 import type { Executor, NewJobArtifactRow } from "@rivet/database";
 import { describe, expect, it, vi } from "vitest";
 
-import { getArtifact, recordArtifact } from "./artifact-store";
+import { ArtifactTooLargeError, getArtifact, recordArtifact } from "./artifact-store";
 
 /**
  * The writer's own rules, with no database.
@@ -65,6 +65,24 @@ describe("recordArtifact", () => {
     // kept as 100 bytes is a fact a reader gets off the row without fetching.
     expect(artifact.byteSize).toBe(5_000);
     expect(artifact.byteSize).toBeGreaterThan(Buffer.byteLength(stored, "utf8"));
+  });
+
+  it("rejects a complete artifact instead of truncating it", async () => {
+    const capture = capturingExecutor();
+
+    await expect(
+      recordArtifact(
+        {
+          ...INPUT,
+          type: "implementation_plan",
+          content: "x".repeat(101),
+          maxBytes: 100,
+          requireComplete: true,
+        },
+        capture.executor,
+      ),
+    ).rejects.toBeInstanceOf(ArtifactTooLargeError);
+    expect(capture.values).toEqual([]);
   });
 
   it("counts the size in bytes rather than characters", async () => {

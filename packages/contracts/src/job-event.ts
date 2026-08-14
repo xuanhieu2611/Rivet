@@ -86,14 +86,7 @@ export const JOB_EVENT_TYPES = [
   "agent.budget_exceeded",
 
   // --- validation and artifacts (M5) ------------------------------------
-  /**
-   * `planning` ran and deliberately produced nothing.
-   *
-   * The status stays in the walk because M6 fills this body with a real plan
-   * artifact; the event exists so the timeline says the phase was skipped rather
-   * than implying a plan was made. Better than a two-second sleep, which is a
-   * lie told to whoever is watching.
-   */
+  /** Historical rows from the pre-M6 simulated planning body. */
   "plan.deferred",
   /** A durable output was persisted: its id, type and true byte size. Never its content. */
   "artifact.recorded",
@@ -337,6 +330,8 @@ export type JobEventData = {
   // --- coding agent (M4) -----------------------------------------------
   /** The harness's session id, on every `agent.*` row, so one job's sessions stay separable. */
   sessionId?: string;
+  /** The explicit session role, so planner and implementer runs stay distinguishable. */
+  agentRole?: "planner" | "implementer";
   /** The model id as configured, e.g. `deepseek/deepseek-v4-flash`. */
   model?: string;
   provider?: string;
@@ -476,6 +471,7 @@ const jobEventDataSchema = z
     commitSha: z.string().optional(),
     baseline: z.enum(["passed", "failed", "skipped"]).optional(),
     sessionId: z.string().optional(),
+    agentRole: z.enum(["planner", "implementer"]).optional(),
     model: z.string().optional(),
     provider: z.string().optional(),
     toolNames: z.array(z.string()).optional(),
@@ -572,6 +568,7 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.commitSha === undefined ? {} : { commitSha: value.commitSha }),
     ...(value.baseline === undefined ? {} : { baseline: value.baseline }),
     ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId }),
+    ...(value.agentRole === undefined ? {} : { agentRole: value.agentRole }),
     ...(value.model === undefined ? {} : { model: value.model }),
     ...(value.provider === undefined ? {} : { provider: value.provider }),
     ...(value.toolNames === undefined ? {} : { toolNames: value.toolNames }),

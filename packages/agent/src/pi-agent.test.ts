@@ -1,7 +1,7 @@
 import { AgentFailedError, AgentUnavailableError } from "@rivet/core";
 import { describe, expect, it } from "vitest";
 
-import { classifyHarnessError, RIVET_TOOL_NAMES } from "./pi-agent";
+import { classifyHarnessError, RIVET_PLANNER_TOOL_NAMES, RIVET_TOOL_NAMES } from "./pi-agent";
 
 /**
  * The parts of the adapter that can be tested with no key and no SDK.
@@ -61,5 +61,17 @@ describe("RIVET_TOOL_NAMES", () => {
     // list that drifts out of order would turn that check into a coin flip.
     expect([...RIVET_TOOL_NAMES]).toEqual(["bash", "edit", "read", "write"]);
     expect([...RIVET_TOOL_NAMES]).toEqual([...RIVET_TOOL_NAMES].sort());
+  });
+});
+
+describe("RIVET_PLANNER_TOOL_NAMES", () => {
+  it("is exactly the planner's read-only tools, sorted", () => {
+    expect([...RIVET_PLANNER_TOOL_NAMES]).toEqual([
+      "list_files",
+      "read",
+      "search_text",
+      "submit_plan",
+    ]);
+    expect([...RIVET_PLANNER_TOOL_NAMES]).toEqual([...RIVET_PLANNER_TOOL_NAMES].sort());
   });
 });

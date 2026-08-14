@@ -1,4 +1,4 @@
-import type { AgentToolbox, CodingAgentSpec } from "@rivet/core";
+import type { AgentToolbox, CodingAgentSpec, PlannerAgentToolbox } from "@rivet/core";
 import { describe, expect, it } from "vitest";
 
 import { FakeCodingAgent } from "./fake-agent";
@@ -15,6 +15,7 @@ import { FakeCodingAgent } from "./fake-agent";
  */
 
 const SPEC: CodingAgentSpec = {
+  role: "implementer",
   workdir: "/home/node/workspace/repo",
   task: { title: "Fix the off-by-one", description: "sum() is wrong." },
   context: "",
@@ -25,9 +26,20 @@ const SPEC: CodingAgentSpec = {
 };
 
 const TOOLBOX: AgentToolbox = {
+  role: "implementer",
   readFile: () => Promise.resolve({ content: "", truncated: false }),
   writeFile: () => Promise.resolve(),
   exec: () => Promise.reject(new Error("not scripted")),
+};
+
+const PLANNER_SPEC: CodingAgentSpec = { ...SPEC, role: "planner" };
+
+const PLANNER_TOOLBOX: PlannerAgentToolbox = {
+  role: "planner",
+  listFiles: () => Promise.resolve("src/index.ts"),
+  readFile: () => Promise.resolve({ content: "source", truncated: false }),
+  searchText: () => Promise.resolve("src/index.ts:1:source"),
+  submitPlan: () => Promise.resolve(),
 };
 
 async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
@@ -54,6 +66,29 @@ describe("FakeCodingAgent", () => {
 
     expect(events).toHaveLength(2);
     expect(agent.starts[0]?.task.title).toBe("Fix the off-by-one");
+  });
+
+  it("submits a deterministic plan for a planner without a provider", async () => {
+    let submitted: unknown;
+    const plannerTools: PlannerAgentToolbox = {
+      ...PLANNER_TOOLBOX,
+      submitPlan: (value) => {
+        submitted = value;
+        return Promise.resolve();
+      },
+    };
+    const agent = new FakeCodingAgent();
+    const session = await agent.start(PLANNER_SPEC, plannerTools, new AbortController().signal);
+
+    await collect(session.run(new AbortController().signal));
+
+    expect(submitted).toBeTypeOf("object");
+    expect(submitted).toHaveProperty("problemInterpretation");
+    expect(submitted).toHaveProperty("relevantComponents");
+    expect(submitted).toHaveProperty("reproductionStrategy");
+    expect(submitted).toHaveProperty("implementationApproach");
+    expect(submitted).toHaveProperty("validationPlan");
+    expect(submitted).toHaveProperty("riskAreas");
   });
 
   it("runs a script's tool usage against the real toolbox", async () => {

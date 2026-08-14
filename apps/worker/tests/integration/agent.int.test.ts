@@ -301,7 +301,7 @@ describe("coding-agent execution through the worker", () => {
       stopReason: "aborted",
     });
     expect(events.map((event) => event.type)).not.toContain("job.completed");
-    expect(agent.sessions[0]?.stopped).toBe(true);
+    expect(agent.sessions.at(-1)?.stopped).toBe(true);
   });
 
   it("lands in budget_exceeded when a scripted session crosses the tool ceiling", async () => {
@@ -350,7 +350,7 @@ describe("coding-agent execution through the worker", () => {
     expect(
       (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
     ).toHaveLength(0);
-    expect(agent.sessions[0]?.stopped).toBe(true);
+    expect(agent.sessions.at(-1)?.stopped).toBe(true);
   });
 
   it("retries a provider 429 and completes the next scripted attempt", async () => {
@@ -368,7 +368,8 @@ describe("coding-agent execution through the worker", () => {
 
     const completed = await waitForStatus(job.id, "completed");
     expect(completed.attemptCount).toBe(2);
-    expect(agent.starts).toHaveLength(2);
+    // Each attempt runs one planner and one implementation session.
+    expect(agent.starts).toHaveLength(4);
     expect(
       (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
     ).toHaveLength(1);
@@ -387,7 +388,7 @@ describe("coding-agent execution through the worker", () => {
     const failed = await waitForStatus(job.id, "failed");
     expect(failed.failureCategory).toBe("agent_failed");
     expect(failed.attemptCount).toBe(1);
-    expect(agent.starts).toHaveLength(1);
+    expect(agent.starts).toHaveLength(2);
     expect(
       (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
     ).toHaveLength(0);
@@ -404,7 +405,7 @@ describe("coding-agent execution through the worker", () => {
     const timedOut = await waitForStatus(job.id, "timed_out");
     expect(timedOut.failureCategory).toBe("timed_out");
     expect(timedOut.failureReason).toContain("budget");
-    expect(agent.sessions[0]?.stopped).toBe(true);
+    expect(agent.sessions.at(-1)?.stopped).toBe(true);
     expect((await eventTypes(job.id)).filter((type) => type === "job.completed")).toHaveLength(0);
   });
 });
@@ -439,18 +440,20 @@ describe("validation through the worker", () => {
       insertions: 1,
       deletions: 1,
     });
-    // Three, in the order the run produced them: `testing` keeps the evidence of
-    // what changed, and `finalizing` keeps the session's own account of it.
+    // Four, in the order the run produced them: planning persists the structured
+    // plan, testing keeps the evidence of what changed, and finalizing keeps the
+    // session's own account of it.
     expect(artifacts.map((artifact) => artifact.type)).toEqual([
+      "implementation_plan",
       "diff",
       "diff_stat",
       "implementation_summary",
     ]);
-    expect(artifacts[0]?.byteSize).toBe(Buffer.byteLength(DIFF, "utf8"));
+    expect(artifacts[1]?.byteSize).toBe(Buffer.byteLength(DIFF, "utf8"));
     // The last thing the model said, read back out of the event log rather than
     // handed across the phase boundary - which is what makes this survive a
     // resume in a process that never ran the session.
-    expect(await getArtifact(job.id, artifacts[2]!.id)).toMatchObject({
+    expect(await getArtifact(job.id, artifacts[3]!.id)).toMatchObject({
       content: "I found the fixture.",
       metadata: { present: true },
       phase: "finalizing",
@@ -491,7 +494,9 @@ describe("validation through the worker", () => {
     const failed = await waitForStatus(job.id, "failed");
     expect(failed.failureCategory).toBe("no_changes_produced");
     expect(failed.attemptCount).toBe(1);
-    expect(await listArtifacts(job.id)).toEqual([]);
+    expect((await listArtifacts(job.id)).map((artifact) => artifact.type)).toEqual([
+      "implementation_plan",
+    ]);
   });
 
   it("fails a session that broke a green suite, and keeps the diff that broke it", async () => {
@@ -524,6 +529,7 @@ describe("validation through the worker", () => {
       validation: "regressed",
     });
     expect((await listArtifacts(job.id)).map((artifact) => artifact.type)).toEqual([
+      "implementation_plan",
       "diff",
       "diff_stat",
     ]);
@@ -555,6 +561,7 @@ describe("validation through the worker", () => {
       validation: "fixed",
     });
     expect(artifacts.map((artifact) => artifact.type)).toEqual([
+      "implementation_plan",
       "diff",
       "diff_stat",
       "implementation_summary",
@@ -603,6 +610,7 @@ describe("validation through the worker", () => {
     expect(events.some((event) => event.type === "agent.session_ended")).toBe(true);
     expect(events.some((event) => event.type === "validation.recorded")).toBe(false);
     expect((await listArtifacts(job.id)).map((artifact) => artifact.type)).toEqual([
+      "implementation_plan",
       "diff",
       "diff_stat",
     ]);

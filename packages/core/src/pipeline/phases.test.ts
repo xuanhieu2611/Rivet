@@ -98,9 +98,8 @@ describe.each(Object.entries(PIPELINES))("%s pipeline", (_name, phases) => {
   it("gives every phase a label, and a sleep only where a sleep is honest", () => {
     for (const phase of phases) {
       expect(phase.label.length).toBeGreaterThan(0);
-      // `planning` is the deliberate zero: Milestone 5 replaced its two-second
-      // sleep with an event saying no plan was made, and a phase that announces
-      // it did nothing must not also spend two seconds appearing to work. Every
+      // The simulated planner is a zero-duration placeholder because the
+      // infrastructure-free pipeline has no agent session behind it. Every
       // other simulated phase still stands in for work a later milestone does,
       // so a zero there would be a phase that had quietly stopped existing.
       if (phase.status === "planning") {
@@ -134,13 +133,12 @@ describe("simulatedPipeline", () => {
 });
 
 describe("buildPipeline", () => {
-  it("makes provisioning, analyzing and planning real and leaves the rest simulated", () => {
+  it("makes provisioning and analyzing real without an agent", () => {
     const real = PIPELINES.sandbox!.filter((phase) => phase.run).map((phase) => phase.status);
     // In pipeline order, which is also the assertion that the baseline moved:
-    // it is `analyzing` that does real work now. `implementing` and `testing`
-    // are both absent because this pipeline was built without an agent. This
-    // list is how a phase quietly acquiring a body gets noticed.
-    expect(real).toEqual(["provisioning", "analyzing", "planning"]);
+    // it is `analyzing` that does real work now. Planning is omitted when there
+    // is no agent because there is no plan session to run.
+    expect(real).toEqual(["provisioning", "analyzing"]);
   });
 
   it("makes implementing, testing and finalizing real together, and only with an agent", () => {

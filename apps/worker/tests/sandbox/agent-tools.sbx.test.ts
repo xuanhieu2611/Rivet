@@ -51,6 +51,7 @@ function toolLayer(
   let commandNumber = 0;
 
   const toolbox: AgentToolbox = {
+    role: "implementer",
     readFile: (path, signal) =>
       sandbox.getFile(path, { maxBytes: options.fileMaxBytes ?? 4_096 }, signal),
     writeFile: (path, content, signal) => sandbox.putFile(path, content, signal),

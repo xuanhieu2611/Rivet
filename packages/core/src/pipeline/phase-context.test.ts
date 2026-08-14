@@ -292,6 +292,18 @@ describe("PhaseContext artifacts", () => {
     });
   });
 
+  it("passes complete-artifact requests through to the bounded writer", async () => {
+    const test = harness();
+
+    await test.context.artifact({
+      type: "implementation_plan",
+      content: '{"problemInterpretation":"ok"}',
+      requireComplete: true,
+    });
+
+    expect(test.artifacts[0]?.requireComplete).toBe(true);
+  });
+
   it("keeps the content out of the event, which is read in full on every render", async () => {
     const test = harness();
 

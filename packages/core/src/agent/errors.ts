@@ -65,8 +65,16 @@ export class AgentSessionTimedOutError extends TerminalJobError {
   }
 }
 
+/** The planner ended without submitting a valid structured plan. */
+export class PlanNotProducedError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "plan_not_produced", options);
+  }
+}
+
 /** The categories this layer raises, for the tests that prove the table in the docs. */
 export const AGENT_FAILURE_CATEGORIES = [
   "agent_unavailable",
   "agent_failed",
+  "plan_not_produced",
 ] as const satisfies readonly FailureCategory[];

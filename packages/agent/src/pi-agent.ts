@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Type } from "typebox";
 import type * as Pi from "@earendil-works/pi-coding-agent";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import {
@@ -12,11 +13,13 @@ import {
   type CodingAgentSession,
   type CodingAgentSpec,
   type CodingAgentStopReason,
+  type ImplementerAgentToolbox,
+  type PlannerAgentToolbox,
 } from "@rivet/core";
 
 import { EventBuffer } from "./event-buffer";
 import { emptyUsage, PiEventMapper } from "./event-mapper";
-import { createToolOperations, withToolCall } from "./tools";
+import { createPlannerReadOperations, createToolOperations, withToolCall } from "./tools";
 
 /**
  * The Pi adapter: the only file in Rivet that knows Pi exists.
@@ -42,8 +45,15 @@ import { createToolOperations, withToolCall } from "./tools";
  * construction, that those are the only four tools the session actually holds.
  */
 
-/** The four, and only the four. Sorted, because the assertion compares sorted. */
+/** The implementer's four tools, sorted because the assertion compares sorted lists. */
 export const RIVET_TOOL_NAMES = ["bash", "edit", "read", "write"] as const;
+/** The planner's four read-only tools, sorted for the same assertion. */
+export const RIVET_PLANNER_TOOL_NAMES = [
+  "list_files",
+  "read",
+  "search_text",
+  "submit_plan",
+] as const;
 
 /** The slice of a pino logger this adapter uses. Structured first, message second. */
 export interface AgentLogger {
@@ -99,6 +109,82 @@ function loadPi(): Promise<typeof Pi> {
   return piModule;
 }
 
+function toolNamesForRole(role: CodingAgentSpec["role"]): readonly string[] {
+  return role === "planner" ? RIVET_PLANNER_TOOL_NAMES : RIVET_TOOL_NAMES;
+}
+
+function createListFilesTool(pi: typeof Pi, toolbox: PlannerAgentToolbox, signal: AbortSignal) {
+  return pi.defineTool({
+    name: "list_files",
+    label: "List files",
+    description: "List tracked repository files for planning. This is read-only.",
+    promptSnippet: "List tracked repository files",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, toolSignal) {
+      const content = await toolbox.listFiles(toolSignal ?? signal);
+      return {
+        content: [{ type: "text", text: content || "(no tracked files)" }],
+        details: {},
+      };
+    },
+  });
+}
+
+function createSearchTextTool(pi: typeof Pi, toolbox: PlannerAgentToolbox, signal: AbortSignal) {
+  return pi.defineTool({
+    name: "search_text",
+    label: "Search text",
+    description: "Search tracked repository text for a literal or regular expression pattern.",
+    promptSnippet: "Search tracked repository text",
+    parameters: Type.Object({
+      query: Type.String({ minLength: 1, maxLength: 500, description: "The text to search for" }),
+    }),
+    async execute(_toolCallId, params, toolSignal) {
+      const content = await toolbox.searchText(params.query, toolSignal ?? signal);
+      return {
+        content: [{ type: "text", text: content || "(no matches)" }],
+        details: {},
+      };
+    },
+  });
+}
+
+function createSubmitPlanTool(pi: typeof Pi, toolbox: PlannerAgentToolbox, signal: AbortSignal) {
+  const item = Type.Array(Type.String({ minLength: 1, maxLength: 500 }), {
+    minItems: 1,
+    maxItems: 12,
+  });
+
+  return pi.defineTool({
+    name: "submit_plan",
+    label: "Submit implementation plan",
+    description:
+      "Submit the complete structured implementation plan. This must be the planner's final action.",
+    promptSnippet: "Submit the structured implementation plan",
+    promptGuidelines: [
+      "Use submit_plan only after inspecting enough repository evidence.",
+      "Include all six sections with concrete, bounded items.",
+      "Do not replace submit_plan with an assistant message containing JSON.",
+    ],
+    parameters: Type.Object({
+      problemInterpretation: Type.String({ minLength: 1, maxLength: 4_000 }),
+      relevantComponents: item,
+      reproductionStrategy: item,
+      implementationApproach: item,
+      validationPlan: item,
+      riskAreas: item,
+    }),
+    async execute(_toolCallId, params, toolSignal) {
+      await toolbox.submitPlan(params, toolSignal ?? signal);
+      return {
+        content: [{ type: "text", text: "Implementation plan accepted." }],
+        details: params,
+        terminate: true,
+      };
+    },
+  });
+}
+
 export class PiCodingAgent implements CodingAgent {
   constructor(private readonly options: PiCodingAgentOptions) {}
 
@@ -119,19 +205,15 @@ export class PiCodingAgent implements CodingAgent {
 
     let fatal: unknown;
     const mapper = new PiEventMapper(spec.previewMaxBytes);
-    const operations = createToolOperations({
-      toolbox: tools,
-      repoDir: spec.workdir,
-      outputMaxBytes: this.options.outputMaxBytes,
-      commandTimeoutMs: spec.commandTimeoutMs,
-      signal,
-      onFatal: (error) => {
-        fatal ??= error;
-      },
-      onCommand: (toolCallId, command) => {
-        if (toolCallId) mapper.recordCommand(toolCallId, command.commandExecutionId);
-      },
-    });
+    const customTools: Pi.ToolDefinition[] = [];
+    const expectedToolNames = toolNamesForRole(spec.role);
+
+    if (spec.role !== tools.role) {
+      await rm(cwd, { recursive: true, force: true });
+      throw new AgentFailedError(
+        `The ${spec.role} session received the ${tools.role} toolbox. Role and capabilities must match.`,
+      );
+    }
 
     const modelRuntime = await pi.ModelRuntime.create({
       // Rivet's own credential file, in Rivet's own directory. The key itself
@@ -157,37 +239,64 @@ export class PiCodingAgent implements CodingAgent {
       );
     }
 
-    /**
-     * The harness's own shell tool, with one thing added that it has no way to
-     * pass on its own.
-     *
-     * `BashOperations.exec` receives a command, a directory and some options -
-     * and no identifier for the tool call it belongs to, so the `job_commands`
-     * row it produces has nothing to correlate it with the `agent.tool_started`
-     * event on the timeline. Wrapping `execute` puts the id into async context
-     * for the duration of the call, which stays correct however the harness
-     * decides to schedule its tools. Spreading the definition rather than
-     * rebuilding it is the same move Pi's own sandboxing extension makes, and
-     * for the same reason: the schema, the description and the guidelines are
-     * part of the harness's prompting and are not Rivet's to rewrite.
-     */
-    const bashTool = pi.createBashToolDefinition(spec.workdir, {
-      operations: operations.bash,
-      // No `PI_*` variables. They describe a session running on the host, and
-      // the shell they would describe it to is inside a container.
-      exposeSessionEnvironment: false,
-    });
-    const bash = {
-      ...bashTool,
-      execute: (
-        toolCallId: string,
-        params: Parameters<typeof bashTool.execute>[1],
-        abort: Parameters<typeof bashTool.execute>[2],
-        onUpdate: Parameters<typeof bashTool.execute>[3],
-        ctx: Parameters<typeof bashTool.execute>[4],
-      ) =>
-        withToolCall(toolCallId, () => bashTool.execute(toolCallId, params, abort, onUpdate, ctx)),
-    };
+    if (spec.role === "implementer") {
+      const implementerTools = tools as ImplementerAgentToolbox;
+      const operations = createToolOperations({
+        toolbox: implementerTools,
+        repoDir: spec.workdir,
+        outputMaxBytes: this.options.outputMaxBytes,
+        commandTimeoutMs: spec.commandTimeoutMs,
+        signal,
+        onFatal: (error) => {
+          fatal ??= error;
+        },
+        onCommand: (toolCallId, command) => {
+          if (toolCallId) mapper.recordCommand(toolCallId, command.commandExecutionId);
+        },
+      });
+
+      const bashTool = pi.createBashToolDefinition(spec.workdir, {
+        operations: operations.bash,
+        exposeSessionEnvironment: false,
+      });
+      const bash = {
+        ...bashTool,
+        execute: (
+          toolCallId: string,
+          params: Parameters<typeof bashTool.execute>[1],
+          abort: Parameters<typeof bashTool.execute>[2],
+          onUpdate: Parameters<typeof bashTool.execute>[3],
+          ctx: Parameters<typeof bashTool.execute>[4],
+        ) =>
+          withToolCall(toolCallId, () =>
+            bashTool.execute(toolCallId, params, abort, onUpdate, ctx),
+          ),
+      };
+
+      customTools.push(
+        pi.defineTool(pi.createReadToolDefinition(spec.workdir, { operations: operations.read })),
+        pi.defineTool(pi.createWriteToolDefinition(spec.workdir, { operations: operations.write })),
+        pi.defineTool(pi.createEditToolDefinition(spec.workdir, { operations: operations.edit })),
+        pi.defineTool(bash),
+      );
+    } else {
+      const plannerTools = tools as PlannerAgentToolbox;
+      const readOperations = createPlannerReadOperations({
+        toolbox: plannerTools,
+        repoDir: spec.workdir,
+        signal,
+        onFatal: (error) => {
+          fatal ??= error;
+        },
+      });
+
+      customTools.push(
+        pi.defineTool(pi.createReadToolDefinition(spec.workdir, { operations: readOperations })),
+        createListFilesTool(pi, plannerTools, signal),
+        createSearchTextTool(pi, plannerTools, signal),
+        createSubmitPlanTool(pi, plannerTools, signal),
+      );
+    }
 
     const { session } = await pi.createAgentSession({
       cwd,
@@ -198,20 +307,12 @@ export class PiCodingAgent implements CodingAgent {
       // inventing a checkpoint format nothing reads is how it stops being one.
       sessionManager: pi.SessionManager.inMemory(),
 
-      // An explicit allowlist, and deliberately **not** `noTools: "all"`. In
-      // this version the harness turns `noTools: "all"` into an empty allowed
-      // set, and an empty allowed set denies every name - including the custom
-      // tools registered on the next line. The result is a session with no
-      // tools at all: a model that can do nothing, and an integration that
-      // looks configured. Naming the four is what actually works, because
-      // custom tools override same-named built-ins in the registry.
-      tools: [...RIVET_TOOL_NAMES],
-      customTools: [
-        pi.defineTool(pi.createReadToolDefinition(spec.workdir, { operations: operations.read })),
-        pi.defineTool(pi.createWriteToolDefinition(spec.workdir, { operations: operations.write })),
-        pi.defineTool(pi.createEditToolDefinition(spec.workdir, { operations: operations.edit })),
-        pi.defineTool(bash),
-      ],
+      // An explicit allowlist, and deliberately **not** `noTools: "all"`.
+      // It names both built-ins and custom tools. Custom tools are registered
+      // below, and no harness default outside this role's list can become active
+      // accidentally.
+      tools: [...expectedToolNames],
+      customTools,
     });
 
     // The assertion the containment argument rests on.
@@ -222,12 +323,12 @@ export class PiCodingAgent implements CodingAgent {
     // allowlist and a custom registry interact, fails one job loudly here
     // instead of quietly handing a model a shell on the worker.
     const active = [...session.getActiveToolNames()].sort();
-    if (active.join(",") !== [...RIVET_TOOL_NAMES].join(",")) {
+    if (active.join(",") !== [...expectedToolNames].join(",")) {
       session.dispose();
       await rm(cwd, { recursive: true, force: true });
       throw new AgentFailedError(
-        `The coding session came up holding [${active.join(", ")}] instead of ` +
-          `[${RIVET_TOOL_NAMES.join(", ")}]. Every tool a session holds must run inside the ` +
+        `The ${spec.role} session came up holding [${active.join(", ")}] instead of ` +
+          `[${expectedToolNames.join(", ")}]. Every tool a session holds must run inside the ` +
           `job's sandbox, so this one is refused rather than run.`,
       );
     }

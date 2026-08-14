@@ -20,6 +20,7 @@ import type {
  */
 
 const SPEC: CodingAgentSpec = {
+  role: "implementer",
   workdir: "/home/node/workspace/repo",
   task: { title: "Fix the off-by-one in sum()", description: "The last element is dropped." },
   context: "package manager: pnpm\nbaseline: failed",

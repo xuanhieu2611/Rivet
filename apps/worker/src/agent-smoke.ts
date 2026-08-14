@@ -88,6 +88,7 @@ async function main(): Promise<void> {
     await writeFixture(sandbox, repoDir, controller.signal);
 
     const tools: AgentToolbox = {
+      role: "implementer",
       readFile: (path, signal) => sandbox!.getFile(path, { maxBytes: fileMaxBytes }, signal),
       writeFile: (path, content, signal) => sandbox!.putFile(path, content, signal),
       exec: async (input) => {
@@ -120,6 +121,7 @@ async function main(): Promise<void> {
       },
     });
     const spec: CodingAgentSpec = {
+      role: "implementer",
       workdir: repoDir,
       task: {
         title: "Fix the off-by-one in sum()",

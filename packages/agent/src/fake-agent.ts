@@ -1,3 +1,4 @@
+import type { ImplementationPlan } from "@rivet/contracts";
 import type {
   AgentToolbox,
   CodingAgent,
@@ -5,6 +6,7 @@ import type {
   CodingAgentSession,
   CodingAgentSpec,
   CodingAgentUsage,
+  ImplementerAgentToolbox,
 } from "@rivet/core";
 
 /**
@@ -25,6 +27,8 @@ import type {
 export interface ScriptedSession {
   /** Yielded in order, before the script's own ending. */
   events: CodingAgentEvent[];
+  /** A valid plan submitted automatically when this is used for a planner. */
+  plan?: ImplementationPlan | null;
   /** Thrown instead of finishing, for the provider-failure paths. */
   throws?: Error;
   /** Awaited before each event, so a test can interleave a cancel. */
@@ -44,15 +48,26 @@ export interface ScriptedSession {
    * reaches the sandbox. A script that wants to exercise the toolbox - write a
    * file, run a command, watch a `job_commands` row appear - does it here.
    */
-  useTools?: (tools: AgentToolbox, signal: AbortSignal) => Promise<void>;
+  useTools?: (tools: ImplementerAgentToolbox, signal: AbortSignal) => Promise<void>;
 }
 
 export interface FakeCodingAgentOptions {
-  /** One entry per session, in the order they are started. */
+  /** One entry per implementation session, in the order they are started. */
   script?: ScriptedSession[];
+  /** The planning session, or a deterministic valid plan when omitted. */
+  plannerScript?: ScriptedSession;
   /** Every `start()` fails with this. */
   startFails?: Error;
 }
+
+const DEFAULT_PLAN: ImplementationPlan = {
+  problemInterpretation: "The requested change needs a focused repository investigation.",
+  relevantComponents: ["The files implicated by the task"],
+  reproductionStrategy: ["Run the repository baseline and a targeted check"],
+  implementationApproach: ["Make the smallest evidence-based change"],
+  validationPlan: ["Run the targeted test suite"],
+  riskAreas: ["Existing behavior outside the requested path"],
+};
 
 export class FakeCodingAgent implements CodingAgent {
   /** Every spec passed to `start`, in order. */
@@ -74,15 +89,24 @@ export class FakeCodingAgent implements CodingAgent {
     // `agent.start(...).catch(...)` does not also have to wrap the call.
     if (signal.aborted) return Promise.reject(signal.reason as Error);
     if (this.options.startFails) return Promise.reject(this.options.startFails);
+    if (spec.role !== tools.role) {
+      return Promise.reject(
+        new Error(`The ${spec.role} session received the ${tools.role} toolbox.`),
+      );
+    }
 
-    const index = this.starts.length;
+    const implementationIndex = this.starts.filter((start) => start.role === "implementer").length;
     this.starts.push(spec);
 
-    const session = new FakeCodingAgentSession(
-      `fake-session-${this.nextId++}`,
-      this.options.script?.[index] ?? { events: [] },
-      tools,
-    );
+    const scriptedPlanner = this.options.script?.[0];
+    const script =
+      spec.role === "planner"
+        ? (this.options.plannerScript ??
+          (scriptedPlanner?.plan !== undefined
+            ? scriptedPlanner
+            : { events: [], plan: DEFAULT_PLAN }))
+        : (this.options.script?.[implementationIndex] ?? { events: [] });
+    const session = new FakeCodingAgentSession(`fake-session-${this.nextId++}`, script, tools);
     this.sessions.push(session);
     return Promise.resolve(session);
   }
@@ -105,7 +129,13 @@ export class FakeCodingAgentSession implements CodingAgentSession {
   async *run(signal: AbortSignal): AsyncIterable<CodingAgentEvent> {
     signal.throwIfAborted();
 
-    if (this.script.useTools) await this.script.useTools(this.tools, signal);
+    if (this.tools.role === "planner" && this.script.plan !== null) {
+      const plan = this.script.plan ?? DEFAULT_PLAN;
+      await this.tools.submitPlan(plan, signal);
+    }
+    if (this.tools.role === "implementer" && this.script.useTools) {
+      await this.script.useTools(this.tools, signal);
+    }
 
     let turns = 0;
     let usage = emptyUsage();

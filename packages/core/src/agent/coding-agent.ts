@@ -33,7 +33,12 @@ import type { RecordedCommand } from "../pipeline/phase-context";
  * a forgotten ceiling is a session that runs until someone notices the bill.
  * `apps/worker` reads these from the environment and passes them in.
  */
+export const CODING_AGENT_ROLES = ["planner", "implementer"] as const;
+export type CodingAgentRole = (typeof CODING_AGENT_ROLES)[number];
+
 export interface CodingAgentSpec {
+  /** The explicit workflow role controls the session's capability set. */
+  role: CodingAgentRole;
   /** The repository directory, as an absolute path inside the sandbox. */
   workdir: string;
   /** What the agent is being asked to do. Built by the phase, never by the adapter. */
@@ -185,46 +190,41 @@ export type CodingAgentEvent =
     };
 
 /**
- * What a session's tools are allowed to do.
+ * The read-only capabilities of a planning session.
  *
  * Supplied by the phase, which is the entire containment story: the harness
- * runs on the worker host, holding the model key, with no permission system of
- * its own, and the only reason that is acceptable is that every action it can
- * take goes through these three methods and therefore into the job's container.
- * An adapter that reaches for `node:fs` or `child_process` has defeated this,
- * and no test can tell you that - reviewing the adapter is what tells you that.
+ * runs on the worker host, holding the model key, and every planner action
+ * reaches either the sandbox or the validated plan handoff. Every method that
+ * is missing here is a capability the model does not have.
  *
- * Three methods rather than the six or seven a harness's tool set wants,
- * because the rest are compositions: "does this file exist and can I read it"
- * is a `readFile` that throws, and "make this directory" is implied by
- * `writeFile`, which creates the parents it needs. Every method that is missing
- * here is a capability the model does not have.
+ * The command methods are implemented with fixed Git argv in the phase, not
+ * with a shell string supplied by the model. `submitPlan` is the only
+ * worker-side capability: it validates a structured value and hands it back to
+ * the phase for persistence.
  */
-export interface AgentToolbox {
-  /**
-   * Reads a file from inside the sandbox.
-   *
-   * `truncated` rather than an error for a large file: a model that asked for a
-   * 40MB log should be told it got the first part of one, not have its session
-   * fail. The bound itself is the phase's, from configuration.
-   */
+export interface PlannerAgentToolbox {
+  readonly role: "planner";
+  listFiles(signal: AbortSignal): Promise<string>;
   readFile(path: string, signal: AbortSignal): Promise<AgentFileRead>;
+  searchText(query: string, signal: AbortSignal): Promise<string>;
+  submitPlan(value: unknown, signal: AbortSignal): Promise<void>;
+}
 
-  /** Writes a file inside the sandbox, creating parent directories as needed. */
+/**
+ * The sandbox-backed capabilities of an implementation session.
+ *
+ * The file methods and command execution are supplied by the phase, so the
+ * adapter cannot widen them without changing the port itself.
+ */
+export interface ImplementerAgentToolbox {
+  readonly role: "implementer";
+  readFile(path: string, signal: AbortSignal): Promise<AgentFileRead>;
   writeFile(path: string, content: string, signal: AbortSignal): Promise<void>;
-
-  /**
-   * Runs a command in the sandbox, exactly as a Rivet phase would.
-   *
-   * Deliberately the phase's own `ctx.exec`, which is why an agent's shell
-   * commands produce the same `command.started` / `command.completed` events
-   * and the same `job_commands` transcript row that `provisioning` produces,
-   * with no new event types and no second code path. A shell command the model
-   * ran and a shell command Rivet ran are the same kind of fact about the job,
-   * and they should be indistinguishable on the timeline.
-   */
   exec(input: AgentExecInput): Promise<RecordedCommand>;
 }
+
+/** The role-specific capability boundary passed to an adapter. */
+export type AgentToolbox = PlannerAgentToolbox | ImplementerAgentToolbox;
 
 export interface AgentFileRead {
   content: string;

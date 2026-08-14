@@ -44,6 +44,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const recorded: Harness["recorded"] = [];
 
   const toolbox: AgentToolbox = {
+    role: "implementer",
     readFile: (path) => {
       const content = files.get(path);
       if (content === undefined) {

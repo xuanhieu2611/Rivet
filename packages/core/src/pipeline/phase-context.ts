@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   ArtifactType,
   CheckpointKind,
+  ImplementationPlan,
   JobDetail,
   JobEventData,
   JobEventType,
@@ -10,7 +11,7 @@ import type {
 } from "@rivet/contracts";
 import { db, type Database } from "@rivet/database";
 
-import { recordArtifact } from "../artifacts/artifact-store";
+import { readLatestImplementationPlan, recordArtifact } from "../artifacts/artifact-store";
 import {
   recordCheckpoint,
   type JobCheckpoint,
@@ -95,6 +96,15 @@ export interface PhaseContext {
   readBaseline(): Promise<BaselineOutcome | null>;
 
   /**
+   * The latest valid structured implementation plan, or null when none exists.
+   *
+   * The plan is read back from its ordinary artifact row rather than kept in
+   * process memory, so a fresh implementation session receives the same durable
+   * value after a worker restart.
+   */
+  readImplementationPlan?: () => Promise<ImplementationPlan | null>;
+
+  /**
    * The last thing the coding session said, or null if it never said anything.
    *
    * The implementation summary, read back for the same reason the baseline is:
@@ -117,6 +127,8 @@ export interface PhaseContext {
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
   /** Records cumulative coding-agent usage. Throws `LeaseLostError` if the lease is gone. */
   recordAgentUsage(patch: AgentUsagePatch): Promise<void>;
+  /** Reads the current in-run usage totals, including another phase's session. */
+  readAgentUsage?: () => AgentUsageTotals;
 
   /**
    * Persists a complete workspace snapshot at a safe recovery boundary.
@@ -127,6 +139,13 @@ export interface PhaseContext {
    * validation and the `checkpoint.created` event stay in the checkpoint store.
    */
   checkpoint(input: PhaseCheckpointInput): Promise<JobCheckpoint>;
+}
+
+/** Cumulative model totals shared by planner and implementation sessions in one run. */
+export interface AgentUsageTotals {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: string;
 }
 
 /** The slice of a pino logger a phase uses. Structured first, message second. */
@@ -175,6 +194,8 @@ export interface PhaseArtifactInput {
   content: string;
   /** Type-specific structure, e.g. the parsed `--numstat` totals on a `diff_stat`. */
   metadata?: Record<string, unknown>;
+  /** Reject rather than truncate content that must remain a complete value. */
+  requireComplete?: boolean;
   /** One line for the timeline. Defaults to a statement of the type and size. */
   message?: string;
 }
@@ -242,6 +263,11 @@ export function createPhaseContextFactory(
   const { job, leaseOwner, sandboxes, signal, log } = options;
   let currentBaseCommitSha = job.baseCommitSha;
   let currentEnvFingerprint = job.envFingerprint;
+  let currentAgentUsage: AgentUsageTotals = {
+    totalInputTokens: job.totalInputTokens ?? 0,
+    totalOutputTokens: job.totalOutputTokens ?? 0,
+    totalCostUsd: job.totalCostUsd ?? "0",
+  };
   const appendOwnedEvent = (input: PhaseEventInput) =>
     database.transaction((tx) => appendEvent({ ...input, jobId: job.id, leaseOwner }, tx));
 
@@ -355,6 +381,7 @@ export function createPhaseContextFactory(
             content: input.content,
             maxBytes: options.artifactMaxBytes,
             ...(input.metadata ? { metadata: input.metadata } : {}),
+            ...(input.requireComplete ? { requireComplete: true } : {}),
             leaseOwner,
           },
           tx,
@@ -390,6 +417,11 @@ export function createPhaseContextFactory(
 
     readBaseline() {
       return readBaseline(job.id, database);
+    },
+
+    async readImplementationPlan() {
+      const stored = await readLatestImplementationPlan(job.id, database);
+      return stored?.plan ?? null;
     },
 
     readSummary() {
@@ -429,6 +461,15 @@ export function createPhaseContextFactory(
           `Job ${job.id} is no longer leased by ${leaseOwner}; agent usage stood down.`,
         );
       }
+      currentAgentUsage = {
+        totalInputTokens: patch.totalInputTokens ?? currentAgentUsage.totalInputTokens,
+        totalOutputTokens: patch.totalOutputTokens ?? currentAgentUsage.totalOutputTokens,
+        totalCostUsd: patch.totalCostUsd ?? currentAgentUsage.totalCostUsd,
+      };
+    },
+
+    readAgentUsage() {
+      return { ...currentAgentUsage };
     },
 
     checkpoint(input) {

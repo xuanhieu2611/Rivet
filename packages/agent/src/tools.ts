@@ -7,7 +7,8 @@ import type {
   WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 import {
-  type AgentToolbox,
+  type ImplementerAgentToolbox,
+  type PlannerAgentToolbox,
   commandKilledError,
   type RecordedCommand,
   SandboxFileError,
@@ -36,7 +37,7 @@ import { AgentPathError, resolveInside } from "./paths";
 
 export interface ToolLayerOptions {
   /** What the tools are allowed to do, supplied by the phase. */
-  toolbox: AgentToolbox;
+  toolbox: ImplementerAgentToolbox;
   /** The repository, as an absolute path inside the sandbox. */
   repoDir: string;
   /** Cap on what one shell command may hand back to the model. */
@@ -81,6 +82,13 @@ export interface ToolOperations {
   write: WriteOperations;
   edit: EditOperations;
   bash: BashOperations;
+}
+
+export interface PlannerReadLayerOptions {
+  toolbox: PlannerAgentToolbox;
+  repoDir: string;
+  signal: AbortSignal;
+  onFatal: (error: unknown) => void;
 }
 
 /**
@@ -289,6 +297,32 @@ export function createToolOperations(options: ToolLayerOptions): ToolOperations 
       // timeline. It is not worth failing a tool call the model is waiting on.
     }
   }
+}
+
+/** Read-only file operations used by the planner role. */
+export function createPlannerReadOperations(options: PlannerReadLayerOptions): ReadOperations {
+  const readFile = async (path: string): Promise<Buffer> => {
+    const absolute = resolveInside(options.repoDir, path);
+    try {
+      const file = await options.toolbox.readFile(absolute, options.signal);
+      const content = file.truncated
+        ? `${file.content}\n[rivet: this file was truncated; the rest was not read]`
+        : file.content;
+      return Buffer.from(content, "utf8");
+    } catch (error) {
+      if (error instanceof SandboxFileError || error instanceof AgentPathError) throw error;
+      if (!options.signal.aborted) options.onFatal(error);
+      throw error;
+    }
+  };
+
+  return {
+    readFile,
+    access: (path) => {
+      resolveInside(options.repoDir, path);
+      return Promise.resolve();
+    },
+  };
 }
 
 /**

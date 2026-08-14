@@ -130,10 +130,9 @@ export interface AgentOptions {
  * end to end at `speed: 1`, about the right length to watch a job cross the
  * dashboard without getting bored or missing it.
  *
- * `planning` is the one exception, and deliberately so: Milestone 5 gives it a
- * body that records that no plan was made, and a phase whose whole content is
- * "nothing happened here yet" must not also sleep for two seconds pretending
- * otherwise. See `planning-phase.ts`.
+ * `planning` remains zero-duration in the simulated pipeline because there is
+ * no agent session behind it. A real pipeline supplies the dedicated planner
+ * body through `buildPipeline()`. See `planning-phase.ts`.
  */
 const PHASE_TEMPLATE: readonly Phase[] = [
   { status: "provisioning", label: "Provision sandbox", durationMs: 2_000 },
@@ -163,13 +162,12 @@ export function simulatedPipeline(): readonly Phase[] {
  *
  * `provisioning` creates a container, clones the repository and installs its
  * dependencies; `analyzing` runs the repository's own suite and records the
- * baseline; `planning` records that it produced nothing; `implementing` runs a
- * coding session, `testing` judges what it did and `finalizing` records what it
- * said and what the run came to - but those three only when a worker was given a
- * harness to run a session with. `reviewing` still sleeps, and there is nothing
- * clever about that sleep in the meantime - which is why this returns the same
- * seven statuses in the same order however it is configured, and why one
- * guard-table test walks every pipeline this file can build.
+ * baseline; a configured agent makes `planning` run a dedicated read-only
+ * planner, `implementing` run a coding session, `testing` judge what it did and
+ * `finalizing` record what it said and what the run came to. `reviewing` still
+ * sleeps, and there is nothing clever about that sleep in the meantime. Without
+ * an agent, planning, implementation, validation and finalization remain
+ * simulated so the infrastructure-free worker path stays usable.
  *
  * The baseline is wired to `analyzing` rather than `testing` because that is
  * what it was always for. PRD §11 C asks whether the repository was healthy
@@ -203,9 +201,9 @@ export function buildPipeline(options: PipelineOptions): readonly Phase[] {
   const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {
     provisioning: provisioningPhase(options),
     analyzing: baselinePhase(options),
-    planning: planningPhase(),
     ...(options.agent
       ? {
+          planning: planningPhase(options.agent, options),
           implementing: implementingPhase(options.agent, options),
           testing: validationPhase(options),
           finalizing: finalizingPhase(),

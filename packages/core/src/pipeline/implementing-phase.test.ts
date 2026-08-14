@@ -1,4 +1,4 @@
-import type { JobDetail } from "@rivet/contracts";
+import type { ImplementationPlan, JobDetail } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
 import { AgentSessionTimedOutError } from "../agent/errors";
@@ -8,6 +8,7 @@ import type {
   CodingAgentEvent,
   CodingAgentSession,
   CodingAgentSpec,
+  ImplementerAgentToolbox,
 } from "../agent/coding-agent";
 import type { BaselineOutcome } from "../events/baseline-log";
 import { BudgetExceededError, JobCancelledError } from "../jobs/failure";
@@ -86,7 +87,7 @@ class ScriptedAgent implements CodingAgent {
       events?: CodingAgentEvent[];
       throws?: Error;
       hang?: boolean;
-      useTools?: (tools: AgentToolbox, signal: AbortSignal) => Promise<void>;
+      useTools?: (tools: ImplementerAgentToolbox, signal: AbortSignal) => Promise<void>;
     } = {},
   ) {}
 
@@ -111,13 +112,15 @@ class ScriptedSession implements CodingAgentSession {
       events?: CodingAgentEvent[];
       throws?: Error;
       hang?: boolean;
-      useTools?: (tools: AgentToolbox, signal: AbortSignal) => Promise<void>;
+      useTools?: (tools: ImplementerAgentToolbox, signal: AbortSignal) => Promise<void>;
     },
     private readonly tools: AgentToolbox,
   ) {}
 
   async *run(signal: AbortSignal): AsyncIterable<CodingAgentEvent> {
-    if (this.script.useTools) await this.script.useTools(this.tools, signal);
+    if (this.script.useTools && this.tools.role === "implementer") {
+      await this.script.useTools(this.tools, signal);
+    }
     for (const event of this.script.events ?? []) {
       signal.throwIfAborted();
       yield event;
@@ -148,6 +151,7 @@ function harness(
     respond?: Responder;
     /** What `analyzing` recorded, or an error to prove the builder survives one. */
     baseline?: BaselineOutcome | null | Error;
+    implementationPlan?: ImplementationPlan | null;
   } = {},
 ) {
   const holder = new SandboxHolder();
@@ -229,6 +233,9 @@ function harness(
       options.baseline instanceof Error
         ? Promise.reject(options.baseline)
         : Promise.resolve(options.baseline ?? null),
+    ...(options.implementationPlan === undefined
+      ? {}
+      : { readImplementationPlan: () => Promise.resolve(options.implementationPlan ?? null) }),
 
     // The session is what produces both of these. Reading either one here would
     // be this phase asking about its own output before it exists.
@@ -438,6 +445,28 @@ describe("implementingPhase", () => {
     expect(context).toContain("/home/node/workspace/repo");
     expect(context).toContain("corepack pnpm run test");
     expect(context).toContain("src/sum.ts");
+  });
+
+  it("includes the latest persisted implementation plan in the fresh context", async () => {
+    const agent = new ScriptedAgent();
+    const test = harness({
+      agent,
+      implementationPlan: {
+        problemInterpretation: "The fixture has an off-by-one sum.",
+        relevantComponents: ["src/sum.ts"],
+        reproductionStrategy: ["Run the fixture test."],
+        implementationApproach: ["Correct the arithmetic."],
+        validationPlan: ["Run the fixture test again."],
+        riskAreas: ["Other callers may rely on the current result."],
+      },
+    });
+
+    await test.run();
+
+    const context = agent.specs[0]?.context ?? "";
+    expect(context).toContain("# Persisted implementation plan");
+    expect(context).toContain("The fixture has an off-by-one sum.");
+    expect(context).toContain("- Correct the arithmetic.");
   });
 
   it("passes the job's own ceilings into the session spec", async () => {

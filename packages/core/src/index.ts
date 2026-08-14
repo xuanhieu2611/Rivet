@@ -36,6 +36,7 @@ export * from "./jobs/provisioning";
 export * from "./jobs/sweeper";
 export * from "./jobs/transitions";
 export * from "./pipeline/baseline-phase";
+export * from "./pipeline/agent-session";
 export * from "./pipeline/command-output";
 export * from "./pipeline/finalizing-phase";
 export * from "./pipeline/implementing-phase";

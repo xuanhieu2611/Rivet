@@ -28,10 +28,13 @@ export {
   classifyHarnessError,
   PiCodingAgent,
   type PiCodingAgentOptions,
+  RIVET_PLANNER_TOOL_NAMES,
   RIVET_TOOL_NAMES,
 } from "./pi-agent";
 export {
+  createPlannerReadOperations,
   createToolOperations,
+  type PlannerReadLayerOptions,
   type ToolLayerOptions,
   type ToolOperations,
   withToolCall,
