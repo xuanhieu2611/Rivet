@@ -15,6 +15,7 @@
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
     "test:sandbox": "turbo run test:sandbox",
+    "test:streaming": "turbo run test:streaming",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:generate": "pnpm --filter @rivet/database db:generate",

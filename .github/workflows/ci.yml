@@ -176,3 +176,45 @@ jobs:
 
       - name: Sandbox tests
         run: pnpm test:sandbox
+
+  streaming:
+    name: Streaming
+    runs-on: ubuntu-latest
+    # The streaming suite needs only Postgres. It has its own job because it
+    # truncates the same tables as the worker integration suite.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rivet_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/rivet_test
+      DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@localhost:5432/rivet_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The suite applies the committed migrations itself, just like the worker
+      # integration suite. There is no Redis or Docker dependency here.
+      - name: Streaming tests
+        run: pnpm test:streaming
