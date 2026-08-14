@@ -21,6 +21,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { deriveLiveAgentUsage, type InitialAgentUsage, type LiveAgentUsage } from "./agent-usage";
 import {
   createJobLiveState,
   jobEventsUrl,
@@ -39,6 +40,7 @@ interface JobLiveContextValue {
   connection: StreamConnectionState;
   events: readonly JobEvent[];
   commands: readonly LiveCommand[];
+  usage: LiveAgentUsage;
   lastEventId: number | null;
   requestCommandDetails: (commandId: number) => void;
   retryCommandDetails: (commandId: number) => void;
@@ -51,6 +53,7 @@ interface JobLiveProviderProps {
   initialStatus: JobStatus;
   initialEvents: readonly SerializedJobEvent[];
   initialCommandSummaries: readonly SerializedJobCommandSummary[];
+  initialUsage: InitialAgentUsage;
   children: ReactNode;
 }
 
@@ -66,8 +69,18 @@ export function JobLiveProvider({
   initialStatus,
   initialEvents,
   initialCommandSummaries,
+  initialUsage,
   children,
 }: JobLiveProviderProps) {
+  const initialUsageEvents = useMemo(
+    () => initialEvents.map(parseSerializedJobEvent),
+    [initialEvents],
+  );
+  const initialUsageRef = useRef<InitialAgentUsage | null>(null);
+  const initialUsageEventsRef = useRef<readonly JobEvent[] | null>(null);
+  initialUsageRef.current ??= initialUsage;
+  initialUsageEventsRef.current ??= initialUsageEvents;
+
   const [state, dispatch] = useReducer(
     jobLiveReducer,
     { initialStatus, initialEvents, initialCommandSummaries } satisfies InitialStateInput,
@@ -254,6 +267,15 @@ export function JobLiveProvider({
 
   const events = useMemo(() => selectJobLiveEvents(state), [state]);
   const commands = useMemo(() => selectJobLiveCommands(state), [state]);
+  const usage = useMemo(
+    () =>
+      deriveLiveAgentUsage(
+        initialUsageRef.current ?? initialUsage,
+        initialUsageEventsRef.current ?? [],
+        events,
+      ),
+    [events, initialUsage],
+  );
   const requestCommandDetails = useCallback(
     (commandId: number) => dispatch({ type: "command.detail.requested", commandId }),
     [],
@@ -268,6 +290,7 @@ export function JobLiveProvider({
       connection: state.connection,
       events,
       commands,
+      usage,
       lastEventId: state.lastEventId,
       requestCommandDetails,
       retryCommandDetails,
@@ -278,6 +301,7 @@ export function JobLiveProvider({
       requestCommandDetails,
       retryCommandDetails,
       state.connection,
+      usage,
       state.lastEventId,
       state.status,
     ],

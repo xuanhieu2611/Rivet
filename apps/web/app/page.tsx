@@ -46,7 +46,7 @@ export default async function DashboardPage() {
           <h2 className="text-base font-medium">Nothing queued</h2>
           <p className="text-muted-foreground mx-auto mt-2 max-w-md text-sm">
             Describe a change and point Rivet at a repository. A worker picks it up and walks it
-            through the pipeline; the coding agent itself arrives in Milestone 4.
+            through the pipeline; when configured, the coding agent works inside the job sandbox.
           </p>
           <Button asChild className="mt-6">
             <Link href="/jobs/new">Create the first job</Link>

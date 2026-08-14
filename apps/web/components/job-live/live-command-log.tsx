@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { formatCommandDuration, formatTimeOfDay } from "@/lib/format";
 import { statusLabel } from "@/lib/job-status";
 
+import { commandAnchorId } from "./command-anchor";
 import { useJobLive } from "./job-live-provider";
 import type { LiveCommand } from "./stream-state";
 
@@ -41,9 +42,17 @@ function LiveCommandRow({ command }: { command: LiveCommand }) {
     }
   }
 
+  const anchorId =
+    command.executionId !== null
+      ? commandAnchorId(command.executionId)
+      : commandId === null
+        ? undefined
+        : commandAnchorId(String(commandId));
+
   return (
     <details
-      className="group rounded-lg border bg-muted/20"
+      id={anchorId}
+      className="group scroll-mt-20 rounded-lg border bg-muted/20"
       onToggle={handleToggle}
       data-command-id={commandId === null ? undefined : String(commandId)}
       data-command-status={command.status}

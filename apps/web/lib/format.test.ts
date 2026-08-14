@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatCommandDuration, formatElapsed } from "./format";
+import { formatAgentCost, formatCommandDuration, formatElapsed, formatTokenCount } from "./format";
 
 const started = new Date("2026-01-01T00:00:00.000Z");
 
@@ -12,6 +12,18 @@ describe("formatCommandDuration", () => {
   it("uses compact seconds for longer commands", () => {
     expect(formatCommandDuration(1_500)).toBe("1.5s");
     expect(formatCommandDuration(12_000)).toBe("12s");
+  });
+});
+
+describe("agent usage formatting", () => {
+  it("keeps token totals readable without compacting small values", () => {
+    expect(formatTokenCount(0)).toBe("0");
+    expect(formatTokenCount(1_204)).toBe("1,204");
+  });
+
+  it("keeps sub-cent usage visible", () => {
+    expect(formatAgentCost("0.0031")).toBe("$0.0031");
+    expect(formatAgentCost("not-a-number")).toBe("not-a-number");
   });
 });
 
