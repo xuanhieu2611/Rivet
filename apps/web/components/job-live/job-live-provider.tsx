@@ -86,8 +86,11 @@ export function JobLiveProvider({
   const cursorRef = useRef<number | null>(state.lastEventId);
   const sourceRef = useRef<EventSource | null>(null);
   const detailRequestsRef = useRef(new Set<string>());
+  const mountedRef = useRef(false);
+  const activeJobIdRef = useRef(jobId);
   const finishedRef = useRef(false);
   const refreshedRef = useRef(false);
+  activeJobIdRef.current = jobId;
 
   useEffect(() => {
     if (state.lastEventId !== null && state.lastEventId > (cursorRef.current ?? -1)) {
@@ -96,16 +99,24 @@ export function JobLiveProvider({
   }, [state.lastEventId]);
 
   useEffect(() => {
-    let disposed = false;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
+  // Keep in-flight transcript requests alive when another command changes the
+  // detail map. Cancelling their callbacks here would leave them stuck loading.
+  useEffect(() => {
     for (const [commandId, request] of state.commandDetailsById) {
       if (request.status !== "loading") continue;
 
-      const requestKey = `${jobId}:${String(commandId)}`;
+      const requestJobId = jobId;
+      const requestKey = `${requestJobId}:${String(commandId)}`;
       if (detailRequestsRef.current.has(requestKey)) continue;
       detailRequestsRef.current.add(requestKey);
 
-      void fetch(`/api/jobs/${encodeURIComponent(jobId)}/commands/${String(commandId)}`)
+      void fetch(`/api/jobs/${encodeURIComponent(requestJobId)}/commands/${String(commandId)}`)
         .then(async (response) => {
           if (!response.ok) {
             throw new Error(`Transcript request failed with status ${String(response.status)}.`);
@@ -114,10 +125,11 @@ export function JobLiveProvider({
           return parseSerializedJobCommand(body);
         })
         .then((command) => {
-          if (!disposed) dispatch({ type: "command.detail.received", command });
+          if (!mountedRef.current || activeJobIdRef.current !== requestJobId) return;
+          dispatch({ type: "command.detail.received", command });
         })
         .catch((error: unknown) => {
-          if (disposed) return;
+          if (!mountedRef.current || activeJobIdRef.current !== requestJobId) return;
           const message = error instanceof Error ? error.message : "Could not load transcript.";
           dispatch({ type: "command.detail.failed", commandId, error: message });
         })
@@ -125,10 +137,6 @@ export function JobLiveProvider({
           detailRequestsRef.current.delete(requestKey);
         });
     }
-
-    return () => {
-      disposed = true;
-    };
   }, [jobId, state.commandDetailsById]);
 
   useEffect(() => {
