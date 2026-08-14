@@ -4,10 +4,10 @@ import { and, eq } from "drizzle-orm";
 /**
  * The columns that describe what a run is executing in.
  *
- * This is the fourth - and, at Milestone 2, the last - place in `packages/`
- * that issues an `.update(jobs)`. The other three are `transitions.ts` (status,
- * and only status), `claims.ts` (the lease) and `cancel.ts` (the cancel stamp).
- * Adding one is not free, so it is worth writing down why this is not smuggled
+ * This is one of five places in `packages/` that issues an `.update(jobs)`.
+ * The other four are `transitions.ts` (status, and only status), `claims.ts`
+ * (the lease), `cancel.ts` (the cancel stamp), and `agent-usage.ts` (model
+ * totals). Adding one is not free, so it is worth writing down why this is not smuggled
  * onto the next phase's transition patch instead:
  *
  * - `base_commit_sha` becomes true when `git rev-parse` answers, not when the

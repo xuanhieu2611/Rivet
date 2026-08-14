@@ -1,7 +1,9 @@
 import type { JobStatus } from "@rivet/contracts";
 
+import type { CodingAgent } from "../agent/coding-agent";
 import type { SandboxProvider } from "../sandbox/sandbox";
 import { baselinePhase } from "./baseline-phase";
+import { implementingPhase } from "./implementing-phase";
 import type { PhaseContext } from "./phase-context";
 import { provisioningPhase } from "./provisioning-phase";
 
@@ -70,6 +72,35 @@ export interface PipelineOptions {
   baselineTimeoutMs: number;
   /** Passed to every sandbox. Empty at Milestone 2, and that is the point. */
   env?: Record<string, string>;
+  /**
+   * The coding agent, if this worker has one.
+   *
+   * One optional field carrying every required bound, rather than five loose
+   * optional fields. The grouping is what makes "an agent arrives with all of
+   * its ceilings or not at all" a thing the type system enforces: a worker
+   * cannot supply a harness and forget the session deadline, which would be a
+   * model running until the job's own budget ran out.
+   */
+  agent?: AgentOptions;
+}
+
+/**
+ * The agent half of a pipeline's configuration.
+ *
+ * Every bound is required, the same rule `SandboxSpec` follows. A default here
+ * would be policy in the package that holds no policy, and the failure mode of
+ * a forgotten ceiling is a session that runs until someone reads the bill.
+ */
+export interface AgentOptions {
+  coding: CodingAgent;
+  /** The session's own deadline, distinct from the job's `max_duration_seconds`. */
+  sessionTimeoutMs: number;
+  /** Ceiling on turns, alongside the per-job ceilings the job row carries. */
+  maxTurns: number;
+  /** Cap on any single piece of session text that reaches the timeline. */
+  previewMaxBytes: number;
+  /** Cap on one file read out of the sandbox. */
+  fileMaxBytes: number;
 }
 
 /**
@@ -108,20 +139,26 @@ export function simulatedPipeline(): readonly Phase[] {
 }
 
 /**
- * The same seven phases, with the ones Milestone 2 made real given a body.
+ * The same seven phases, with the ones that have been made real given a body.
  *
  * `provisioning` creates a container, clones the repository and installs its
  * dependencies; `testing` runs the repository's own suite and records what it
- * found. `analyzing`, `planning`, `implementing`, `reviewing` and `finalizing`
- * stay simulated until Milestones 4 and 5, and there is nothing clever about
- * their sleeps in the meantime - which is why this returns the same seven
- * statuses in the same order either way, and why one guard-table test walks
- * both pipelines.
+ * found; `implementing` runs a coding session, but only when a worker was
+ * given a harness to run it with. `analyzing`, `planning`, `reviewing` and
+ * `finalizing` stay simulated until Milestone 5, and there is nothing clever
+ * about their sleeps in the meantime - which is why this returns the same seven
+ * statuses in the same order however it is configured, and why one guard-table
+ * test walks every pipeline this file can build.
+ *
+ * Leaving `implementing` simulated when there is no agent is what keeps
+ * `pnpm test:integration` runnable with no model key: `RIVET_AGENT=off` omits
+ * the field, the sleep stays, and thirty-odd lifecycle tests stay cheap.
  */
 export function buildPipeline(options: PipelineOptions): readonly Phase[] {
   const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {
     provisioning: provisioningPhase(options),
     testing: baselinePhase(options),
+    ...(options.agent ? { implementing: implementingPhase(options.agent, options) } : {}),
   };
 
   return PHASE_TEMPLATE.map((phase) => {

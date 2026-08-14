@@ -4,6 +4,7 @@ import type { JobDetail, JobEventData, JobEventType } from "@rivet/contracts";
 import { db, type Database } from "@rivet/database";
 
 import { appendEvent } from "../events/event-service";
+import { type AgentUsagePatch, recordAgentUsage as persistAgentUsage } from "../jobs/agent-usage";
 import { LeaseLostError } from "../jobs/failure";
 import { type ProvisioningPatch, recordProvisioning } from "../jobs/provisioning";
 import { recordCommand } from "../sandbox/command-log";
@@ -56,6 +57,8 @@ export interface PhaseContext {
 
   /** Records what the run is executing in. Throws `LeaseLostError` if the lease is gone. */
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
+  /** Records cumulative coding-agent usage. Throws `LeaseLostError` if the lease is gone. */
+  recordAgentUsage(patch: AgentUsagePatch): Promise<void>;
 }
 
 /** The slice of a pino logger a phase uses. Structured first, message second. */
@@ -76,9 +79,20 @@ export interface PhaseExecInput {
   maxOutputBytes?: number;
 }
 
-/** An `ExecResult` plus the id of the row holding its transcript. */
+/** An `ExecResult` plus the ids that make its transcript findable. */
 export interface RecordedCommand extends ExecResult {
   commandId: number;
+  /**
+   * The correlation id stamped on this command's `command.started`,
+   * `command.completed` and `command.failed` events.
+   *
+   * Returned rather than kept private because a caller may need to point at
+   * this command from an event of its own - the coding agent's shell tool does
+   * exactly that, so that one `agent.tool_started` row and the command
+   * lifecycle it caused are the same thing on the timeline rather than two
+   * unrelated entries that happen to be adjacent.
+   */
+  commandExecutionId: string;
 }
 
 export interface PhaseEventInput {
@@ -209,7 +223,7 @@ export function createPhaseContextFactory(
         return recorded;
       });
 
-      return { ...result, commandId: command.id };
+      return { ...result, commandId: command.id, commandExecutionId };
     },
 
     async event(input) {
@@ -232,6 +246,15 @@ export function createPhaseContextFactory(
         // is write into a run that is not ours.
         throw new LeaseLostError(
           `Job ${job.id} is no longer leased by ${leaseOwner}; provisioning stood down.`,
+        );
+      }
+    },
+
+    async recordAgentUsage(patch) {
+      const held = await persistAgentUsage(job.id, leaseOwner, patch, database);
+      if (!held) {
+        throw new LeaseLostError(
+          `Job ${job.id} is no longer leased by ${leaseOwner}; agent usage stood down.`,
         );
       }
     },

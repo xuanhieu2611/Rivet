@@ -1,0 +1,27 @@
+{
+  "name": "@rivet/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@rivet/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@rivet/config": "workspace:*",
+    "@types/node": "^24.13.3",
+    "eslint": "^10.8.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

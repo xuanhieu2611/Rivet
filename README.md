@@ -15,27 +15,26 @@ boundary is the point of the project, and it is what the architecture is organiz
 
 ## Status
 
-**Milestone 3 - real-time execution timeline - is complete.** Creating a job now gives a worker a
-real Docker container, clones the requested repository and branch, resolves the commit, installs
-dependencies, and runs the repository's baseline test script. Every command records its argv,
-duration, exit code, separate stdout and stderr, and bounded transcript. A red baseline is recorded
-without blaming the job. CPU, memory, PID and command-time limits are enforced.
+**Milestone 4 - coding-agent integration - is complete.** A Docker-backed job now provisions a
+repository, records its baseline, and gives the `implementing` phase to a Pi session running in the
+trusted worker. Pi has exactly four tools - `read`, `write`, `edit`, and `bash` - and every one is
+backed by the job's sandbox. The OpenRouter credential stays on the worker host; it never enters the
+container that runs cloned repository code.
 
-The job detail page replays the append-only Postgres event log over SSE, updates its status,
-timeline, and command log in place, and reconnects from the last durable event id after a network
-interruption. Hidden tabs close their stream, terminal jobs drain cleanup events briefly, and the
-final refresh synchronizes server-rendered metadata. Command rows appear when execution starts;
-bounded transcripts are fetched lazily at completion or when opened. Output is not streamed byte by
-byte.
+The append-only Postgres event log records session starts, turns, completed assistant messages, tool
+calls, usage, budget breaches, and session endings. Shell calls also use the existing command
+ledger, so their bounded transcripts are visible through the same live SSE timeline and lazy command
+log as Rivet's own provisioning and test commands. Usage totals are persisted under the worker
+lease, and cancellation, job deadlines, budget ceilings, retryable provider outages, and terminal
+provider configuration errors all follow the existing lifecycle machinery.
 
-The processor destroys the container after success, failure, cancellation, timeout, lease loss and
-shutdown. A reaper removes what a `kill -9` leaves behind. The sandbox suite proves those claims
-against Docker, Postgres, Redis and a hermetic git fixture; the streaming suite proves the live
-route against local Postgres. Analysis, planning, implementation, review and finalization are still
-simulated until the coding agent arrives in Milestones 4 and 5; there is no model call yet.
+Analysis, planning, review, and finalization remain simulated until their later milestones. The
+integration suite uses a scripted agent with real Postgres, Redis, BullMQ, and the production
+worker; the sandbox suite exercises the tool layer against Docker. `pnpm demo:agent` runs one real
+Pi session against a tiny fixture repository and prints its transcript locally.
 
-See [docs/architecture.md](docs/architecture.md) for how the pieces fit together and what will have
-to move as later milestones land.
+See [docs/architecture.md](docs/architecture.md) for how the pieces fit together and
+[docs/plans/milestone-4.md](docs/plans/milestone-4.md) for the committed M4 record.
 
 ## Prerequisites
 
@@ -85,14 +84,24 @@ pnpm dev
 `pnpm dev` starts two processes: the Next.js app on <http://localhost:3000> and the worker.
 
 The demo is watching a job run. Create one from **New job** with a public Node repository and you
-land on its detail page. The worker creates a sandbox, clones and installs the repository, records
-the resolved commit and environment fingerprint, runs its baseline tests, and then moves through the
-five still-simulated phases. The job detail page shows the command ledger and bounded transcripts
-live over SSE, with a connection indicator and durable reconnect cursor. Commands become visible
-when they start, and their separate stdout/stderr transcripts load when they complete or when you
-open a row. The stream does not send output bytes as they are produced. Cancel it partway through
-and the running command and container are stopped. To demo recovery, disable the browser network
-briefly, then restore it and watch the missed events replay without duplicate timeline rows.
+land on its detail page. With Docker and `RIVET_AGENT=pi` configured, the worker creates a sandbox,
+clones and installs the repository, records the resolved commit and environment fingerprint, runs
+its baseline tests, then starts Pi in the worker with sandbox-backed tools. The job detail page
+shows the agent timeline, command ledger, and bounded transcripts live over SSE, with a connection
+indicator and durable reconnect cursor. Cancel it partway through and the running command, session,
+and container are stopped. To demo recovery, disable the browser network briefly, then restore it
+and watch the missed events replay without duplicate timeline rows.
+
+For the model-backed fixture demo without creating a database job, put `OPENROUTER_API_KEY` in
+`.env.local` and run:
+
+```bash
+pnpm demo:agent
+```
+
+It creates a disposable Docker sandbox, asks Pi to fix a one-line `sum()` bug, runs the fixture
+test, and prints the session events and final usage. The command is local-only and is not part of
+CI.
 
 To watch the recovery machinery instead, break a job on purpose. Set `RIVET_FAULT_PHASE=testing`
 with one of the `RIVET_FAULT_MODE` values and restart the worker: `throw` retries the job with
@@ -104,10 +113,11 @@ command-level timeouts. `.env.example` documents all seven.
 
 ## Running the integration suite
 
-34 tests against real Postgres, real Redis and real BullMQ workers, in about 15 seconds. It needs
-both services on localhost, because every case truncates `jobs` and `job_events` - which is also why
-it refuses to run against any host that is not plainly local, and why it deliberately does not read
-`.env.local`.
+The integration suite runs against real Postgres, real Redis, and real BullMQ workers. It includes
+scripted-agent completion, cancellation, budgets, provider retry classification, and job deadlines.
+It needs both services on localhost, because every case truncates `jobs` and `job_events` - which is
+also why it refuses to run against any host that is not plainly local, and why it deliberately does
+not read `.env.local`.
 
 ```bash
 # macOS, via Homebrew
@@ -144,9 +154,10 @@ hatch. Run it separately from the integration suite because both suites truncate
 ## Running the sandbox suite
 
 This suite needs the same local Postgres and Redis services plus a running Docker daemon. It
-creates, kills and removes containers, exercises every resource limit, and drives a temporary
-repository through a real BullMQ worker. Its git fixture is served from a temporary directory by
-`git daemon`, so clone, install and test are hermetic and need no public network.
+creates, kills and removes containers, exercises every resource limit, drives a temporary repository
+through a real BullMQ worker, and runs the sandbox-backed coding-agent tool layer without a model.
+Its git fixture is served from a temporary directory by `git daemon`, so clone, install and test are
+hermetic and need no public network.
 
 ```bash
 docker version # must include a Server section
@@ -186,7 +197,12 @@ documents every worker tuning variable with the reasoning behind its default.
 | `DATABASE_URL_UNPOOLED` | yes for migrations | `pnpm db:migrate`, `pnpm db:studio` | Neon's **direct** endpoint. Migrations fall back to `DATABASE_URL` when it is unset, which is how CI passes a single URL |
 | `REDIS_URL`             | yes                | the app and the worker, at runtime  | Upstash, for BullMQ. `rediss://` (two s) is TLS, which Upstash requires                                                  |
 | `WORKER_*`              | no                 | the worker                          | Concurrency, lease, heartbeat, sweep interval, attempt ceiling, shutdown grace. Defaults are in `.env.example`           |
-| `RIVET_*`               | no                 | the worker                          | Sandbox mode, pipeline speed for five simulated phases, and fault injection                                              |
+| `RIVET_SANDBOX`         | no                 | the worker                          | `docker` or `off`; `off` selects the simulated sandbox pipeline                                                          |
+| `RIVET_AGENT`           | no                 | the worker                          | `pi` or `off`; `off` keeps `implementing` simulated and is refused in production                                         |
+| `RIVET_MODEL`           | no                 | the worker                          | Model id; defaults to `deepseek/deepseek-v4-flash`                                                                       |
+| `RIVET_MODEL_PROVIDER`  | no                 | the worker                          | Provider id; defaults to `openrouter`                                                                                    |
+| `OPENROUTER_API_KEY`    | when agent is `pi` | the worker host                     | Provider credential; never passed into a sandbox                                                                         |
+| `AGENT_*`               | no                 | the worker                          | Session timeout, turns, tool/file output caps, and the isolated Pi home directory                                        |
 | `SANDBOX_*`             | no                 | the worker                          | Image, workdir, resource ceilings, command budgets and output cap                                                        |
 | `DOCKER_HOST`           | no                 | the worker and sandbox tests        | Overrides the local Docker socket                                                                                        |
 
@@ -207,6 +223,7 @@ Every command is run from the repository root. Turborepo fans them out across th
 | Command                 | What it does                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------- |
 | `pnpm dev`              | Runs the Next.js dev server **and** the worker                                  |
+| `pnpm demo:agent`       | Runs one real Pi session against a disposable fixture in Docker                 |
 | `pnpm build`            | Production build of every workspace. Needs no database and no Redis             |
 | `pnpm lint`             | ESLint across every workspace                                                   |
 | `pnpm typecheck`        | `tsc --noEmit` across every workspace                                           |
@@ -229,7 +246,8 @@ apps/
 packages/
   config/              shared tsconfig and ESLint bases
   contracts/           zod schemas and response types shared by client and server
-  core/                all domain logic: jobs, transitions, events, pipeline, the queue port
+  agent/               the Pi adapter, scripted fake, and sandbox-backed tool layer
+  core/                all domain logic: jobs, transitions, events, pipeline, and ports
   database/            Drizzle schema, migrations and the pg client
   queue/               the BullMQ adapter, an in-memory fake, and the Redis connection
   sandbox/             the dockerode adapter, scripted fake, and lazy Docker client
@@ -274,8 +292,9 @@ built before any agent behaviour.
       commands, capture output, enforce timeouts and resource limits, tear down cleanly.
 - [x] **M3 - Real-time execution timeline.** A Postgres-backed SSE event stream, reconnect cursor,
       live timeline, connection indicator, and lazy command log with bounded transcripts.
-- [ ] **M4 - Coding-agent integration.** A `CodingAgentAdapter` over the Pi harness, started
-      programmatically inside the sandbox against the cloned repository.
+- [x] **M4 - Coding-agent integration.** A Pi session starts programmatically in the worker with
+      exactly four sandbox-backed tools, durable agent events and usage, budget enforcement,
+      cancellation and provider failure classification; `pnpm demo:agent` proves the live adapter.
 - [ ] **M5 - First autonomous coding job.** One implementation session solves a trivial fixture bug
       unattended, with budget tracking and the final diff persisted.
 - [ ] **M6 - Planning, persistence and recovery.** Checkpoints, resumable jobs, and surviving a

@@ -61,6 +61,8 @@ function harness(options: { respond?: Responder } = {}) {
   const sandbox: Sandbox = {
     id: "c0ffee0c0ffee0c0ffee",
     exec: () => Promise.reject(new Error("the phase must go through ctx.exec")),
+    getFile: () => Promise.reject(new Error("the baseline phase reads no files")),
+    putFile: () => Promise.reject(new Error("the baseline phase writes no files")),
     destroy: () => Promise.resolve(),
   };
   holder.set(sandbox);
@@ -93,6 +95,7 @@ function harness(options: { respond?: Responder } = {}) {
         oomKilled: false,
         durationMs: 5,
         commandId: executed.length,
+        commandExecutionId: `exec-${executed.length}`,
         ...scripted,
       };
       return Promise.resolve(result);
@@ -104,6 +107,7 @@ function harness(options: { respond?: Responder } = {}) {
     },
 
     recordProvisioning: () => Promise.resolve(),
+    recordAgentUsage: () => Promise.resolve(),
   };
 
   return {

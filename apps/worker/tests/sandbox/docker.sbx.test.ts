@@ -141,6 +141,107 @@ describe("Docker sandbox adapter", () => {
     expect(etc.exitCode).not.toBe(0);
   });
 
+  it("moves a file into the container and reads it back byte for byte", async () => {
+    const sandbox = await create();
+    // Multi-byte, a newline, and a quote: everything that would have to be
+    // escaped if this went through a shell, which is exactly why it does not.
+    const content = 'const gr\u00fc\u00dfe = "hello";\n\u00e9\u00e8\u00ea\n';
+
+    await sandbox.putFile("/home/node/workspace/repo/src/greet.ts", content, controller.signal);
+    const read = await sandbox.getFile(
+      "/home/node/workspace/repo/src/greet.ts",
+      { maxBytes: 4_096 },
+      controller.signal,
+    );
+
+    expect(read).toEqual({ content, truncated: false });
+  });
+
+  it("creates the parent directories and leaves them owned by the container user", async () => {
+    // Docker extracts an archive as root and honours the ownership in it. A
+    // file the agent writes and then cannot overwrite is the failure this
+    // prevents, and it only shows up against a real daemon.
+    const sandbox = await create();
+
+    await sandbox.putFile("/home/node/workspace/repo/a/b/c/deep.txt", "deep\n", controller.signal);
+    const owner = await exec(sandbox, [
+      "stat",
+      "-c",
+      "%u:%g",
+      "/home/node/workspace/repo/a/b/c/deep.txt",
+    ]);
+    const overwrite = await exec(sandbox, [
+      "sh",
+      "-c",
+      "echo more >> /home/node/workspace/repo/a/b/c/deep.txt",
+    ]);
+
+    expect(owner.stdout.trim()).toBe("1000:1000");
+    expect(overwrite.exitCode).toBe(0);
+  });
+
+  it("overwrites an existing file rather than appending to it", async () => {
+    const sandbox = await create();
+    const path = "/home/node/workspace/repo/twice.txt";
+
+    await sandbox.putFile(path, "first\n", controller.signal);
+    await sandbox.putFile(path, "second\n", controller.signal);
+
+    expect(await sandbox.getFile(path, { maxBytes: 4_096 }, controller.signal)).toEqual({
+      content: "second\n",
+      truncated: false,
+    });
+  });
+
+  it("reads an empty file without claiming it was truncated", async () => {
+    const sandbox = await create();
+    await sandbox.putFile("/home/node/workspace/empty.txt", "", controller.signal);
+
+    expect(
+      await sandbox.getFile("/home/node/workspace/empty.txt", { maxBytes: 16 }, controller.signal),
+    ).toEqual({ content: "", truncated: false });
+  });
+
+  it("stops at maxBytes on a file far larger than the cap", async () => {
+    const sandbox = await create();
+    await exec(sandbox, [
+      "node",
+      "-e",
+      'require("fs").writeFileSync("/home/node/workspace/big.txt", "A".repeat(4 * 1024 * 1024))',
+    ]);
+
+    const read = await sandbox.getFile(
+      "/home/node/workspace/big.txt",
+      { maxBytes: 1_024 },
+      controller.signal,
+    );
+
+    expect(read.truncated).toBe(true);
+    expect(read.content).toBe("A".repeat(1_024));
+  });
+
+  it("reports a missing path and a directory as file errors, not job failures", async () => {
+    // Neither is a reason to fail a job: a model guessing at a path gets a tool
+    // result it can correct. That is why `SandboxFileError` sits outside the
+    // retryable and terminal hierarchy.
+    const sandbox = await create();
+
+    await expect(
+      sandbox.getFile("/home/node/workspace/nope.txt", { maxBytes: 16 }, controller.signal),
+    ).rejects.toMatchObject({ name: "SandboxFileError", reason: "not_found" });
+    await expect(
+      sandbox.getFile("/home/node/workspace", { maxBytes: 16 }, controller.signal),
+    ).rejects.toMatchObject({ name: "SandboxFileError", reason: "not_a_file" });
+  });
+
+  it("refuses to write a path that names a directory", async () => {
+    const sandbox = await create();
+
+    await expect(
+      sandbox.putFile("/home/node/workspace/repo/", "x", controller.signal),
+    ).rejects.toMatchObject({ name: "SandboxFileError", reason: "not_a_file" });
+  });
+
   it("reaps a terminal job's container and spares a live job's container", async () => {
     await resetDatabase();
     const terminal = await createJob({

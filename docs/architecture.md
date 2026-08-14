@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, at the end of Milestone 3, and names the
+This document describes Rivet **as it exists today**, at the end of Milestone 4, and names the
 places where the current shape is a deliberate shortcut rather than the intended end state. It is
 updated as each milestone lands rather than describing a system that does not exist yet.
 
@@ -23,9 +23,10 @@ that run a coding agent inside disposable sandboxes:
 Milestone 0 built the leftmost column: a UI, an API, and durable job state. Milestone 1 built the
 queue, the worker, and everything that makes a job survive the worker dying. Milestone 2 built the
 Docker sandbox and made provisioning and baseline testing real. Milestone 3 made the append-only
-event log observable through a resumable SSE stream, live status, timeline, and command log. The
-coding agent and model arrive in Milestones 4 and 5; the five phases that need them remain simulated
-until then.
+event log observable through a resumable SSE stream, live status, timeline, and command log.
+Milestone 4 added the Pi adapter and made `implementing` real: Pi runs in the trusted worker while
+its four tools operate inside the job's sandbox. Analysis, planning, review, and finalization remain
+simulated until later milestones.
 
 ## What exists today
 
@@ -37,6 +38,7 @@ until then.
 | Domain logic  | `packages/core`      | Jobs, transitions, claims, cancellation, the event log, the pipeline    |
 | Queue adapter | `packages/queue`     | BullMQ over Redis behind core's `JobQueue` port, plus an in-memory fake |
 | Sandbox       | `packages/sandbox`   | Dockerode behind core's `SandboxProvider` port, plus a scripted fake    |
+| Coding agent  | `packages/agent`     | Pi adapter, scripted fake, event mapper, and sandbox-backed tools       |
 | Contracts     | `packages/contracts` | Zod schemas, job/event/command contracts, and the status enum           |
 | Data access   | `packages/database`  | Drizzle schema, generated migrations, the `pg` pool                     |
 | Shared config | `packages/config`    | The tsconfig and ESLint bases every workspace extends                   |
@@ -195,6 +197,39 @@ Docker's state rather than guessed from exit code 137. A non-zero command exit i
 exception: provisioning interprets it as failure, while a red baseline records `failed` and lets the
 job continue.
 
+### The coding-agent boundary
+
+The worker holds the Pi session and the provider credential. The session's host working directory is
+an empty, per-job scratch directory, so Pi cannot discover a developer's `~/.pi` configuration or a
+repository on the worker filesystem. The repository is visible only through four custom tool
+operations:
+
+```text
+Pi session on worker
+  read / write / edit / bash
+              │
+              ▼
+        AgentToolbox
+       ┌──────┴──────┐
+       │             │
+  getFile/putFile  ctx.exec
+       │             │
+       └──────┬──────┘
+              ▼
+       job's Docker container
+```
+
+Pi's schemas and descriptions remain Pi's. Rivet replaces only the operations underneath them, and
+asserts after session construction that the active tool names are exactly `bash`, `edit`, `read`,
+and `write`. Pi's `bash` operation receives an environment assembled from the worker process; Rivet
+intentionally ignores it and passes no worker environment to the sandbox. This is what keeps
+`OPENROUTER_API_KEY` out of arbitrary repository processes.
+
+This contains the **model**, not the **harness**. Pi itself still runs as the worker user in the
+trusted process and has no general permission system. A future hardened deployment must protect the
+worker process too; the M4 boundary proves that repository code cannot use the provider key through
+the sandbox and that an accidentally enabled Pi built-in tool fails the active-tool assertion.
+
 ## The worker
 
 `apps/worker` is a long-running Node process. There is no build step - `tsx src/index.ts` - which
@@ -206,7 +241,9 @@ Its configuration is parsed through Zod at startup and never read again; anythin
 non-zero rather than booting. That is not ceremony. A worker running with a heartbeat interval
 longer than its lease will have jobs reclaimed out from under it while it is perfectly healthy, and
 the resulting duplicate execution presents as data corruption with nothing visibly broken. Making
-that configuration impossible to start is far cheaper than making it possible to debug.
+that configuration impossible to start is far cheaper than making it possible to debug. The same
+startup boundary refuses `RIVET_AGENT=pi` without its OpenRouter key and refuses `RIVET_AGENT=off`
+in production, so a worker cannot silently claim that a simulated implementing phase did real work.
 
 One run, end to end:
 
@@ -223,7 +260,7 @@ message {jobId}
       ▼                                       │
  runPipeline: for each phase                  │
    transitionJob(from -> phase.status)  ◀─────┘  aborts the run on lease loss
-   sleep(durationMs * speed)                     or a cancel request
+   real body or sleep(durationMs * speed)        timeout or a cancel request
    appendEvent(phase.completed)
       │
       ▼
@@ -236,12 +273,14 @@ for a job that finished ten minutes ago are all harmless, because the claim is w
 to act and the claim is a compare-and-swap.
 
 The pipeline itself is seven phases - provision, analyze, plan, implement, test, review, finalize.
-Milestone 2 made provisioning and testing real sandbox work; analyzing, planning, implementing,
-reviewing and finalizing remain simulated until later milestones. The five simulated phases total
-about 15 seconds, which is still roughly the right length to watch a job cross the dashboard. That
-is the entire reason `runPipeline` takes its clock, its sleep, its callbacks and its fault injector
-as arguments rather than importing them: the same runner drives the demo at `speed: 1` and the unit
-tests at `speed: 0`.
+Milestone 2 made provisioning and testing real sandbox work, and Milestone 4 made implementing a
+real Pi session when an agent is supplied. Analyzing, planning, reviewing and finalizing remain
+simulated until later milestones. The four simulated phases total about 10 seconds, which is still
+roughly the right length to watch a job cross the dashboard. The `RIVET_AGENT=off` integration
+configuration deliberately leaves implementing simulated as well, so lifecycle tests need no model
+key. That is the entire reason `runPipeline` takes its clock, its sleep, its callbacks and its fault
+injector as arguments rather than importing them: the same runner drives the demo at `speed: 1` and
+the unit tests at `speed: 0`.
 
 Seven fault-injection modes exist so the recovery machinery and the sandbox failure taxonomy have
 something to recover from on demand: `throw` (retryable), `fatal` (terminal), `hang` (ignores the
@@ -489,6 +528,13 @@ Command rows remain append-only. `command.started` creates a running UI row with
 durable command row and bounded stdout/stderr transcript are fetched only when needed. M3 does not
 stream output bytes.
 
+M4 adds coarse agent rows to the same log: session start, turn start, completed assistant message,
+tool start and completion, one usage row per turn, budget breach, and session end. Pi token deltas
+are never persisted. A shell tool's lifecycle still goes through `PhaseContext.exec`, so its command
+row and `command.*` events are the same durable facts as a command Rivet ran during provisioning or
+baseline testing. The `jobs` row keeps cumulative input tokens, output tokens, and priced cost,
+updated after each usage event under the current lease.
+
 ## Database access
 
 Rivet uses **`drizzle-orm/node-postgres` with a `pg` Pool**, not Neon's HTTP driver.
@@ -538,18 +584,19 @@ needs no environment, which is in turn what makes CI cheap and a fork's pull req
 It covers the guard table, the failure classification, the phase list against the guard table, the
 pipeline runner at `speed: 0`, the config invariant, the in-memory queue and the job service.
 
-`pnpm test:integration` runs 34 tests in about 15 seconds against real Postgres, real Redis and real
-BullMQ workers - `postgres:17` and `redis:8` service containers in CI, local services on a dev
-machine. It is a separate vitest config with no file pattern in common with the default suite, so
-`pnpm test` cannot pick it up by accident. It proves exclusive claims, fencing, retries,
-cancellation, timeouts, crash recovery and the Postgres/Redis reconciliation paths.
+`pnpm test:integration` runs against real Postgres, real Redis and real BullMQ workers -
+`postgres:17` and `redis:8` service containers in CI, local services on a dev machine. It is a
+separate vitest config with no file pattern in common with the default suite, so `pnpm test` cannot
+pick it up by accident. It proves exclusive claims, fencing, retries, cancellation, timeouts, crash
+recovery, Postgres/Redis reconciliation, and the implementing phase with a scripted coding agent.
 
 `pnpm test:sandbox` is the third, non-overlapping suite. It uses the real Docker daemon plus local
 Postgres and Redis. It proves stream separation, non-zero exits, truncation, command timeouts,
-memory and PID limits, uid 1000, cleanup and reaping, then drives a hermetic repository through the
-real worker to `completed`. Its git daemon serves temporary bare repositories only; no public
-network or package registry is involved. The suite refuses a non-local Docker host unless the caller
-explicitly opts in, just as the integration suite refuses remote databases.
+memory and PID limits, uid 1000, cleanup and reaping, drives a hermetic repository through the real
+worker to `completed`, and exercises the four sandbox-backed coding-agent tools without a model. Its
+git daemon serves temporary bare repositories only; no public network or package registry is
+involved. The suite refuses a non-local Docker host unless the caller explicitly opts in, just as
+the integration suite refuses remote databases.
 
 `pnpm test:streaming` is the fourth suite, in `apps/web/tests/streaming`. It uses real Postgres but
 no Redis or Docker and calls the route handler directly with `Request` objects. It proves SSE
@@ -570,10 +617,11 @@ while `.env.local` on every dev machine points at the real Neon database.
 
 Named so their absence reads as a decision rather than an oversight: no authentication or `user_id`
 (Milestone 9 brings GitHub identity), no `repository_id` foreign key (there is no Repository table
-to point at, so the job stores a plain `repo_url`), no model call of any kind (M4), no checkpoints
-or resumable jobs (M6), no transactional outbox (see the dual-write section for why), and no
-deployment. There is a real Docker sandbox, but no coding agent or model yet, and the bridge network
-is not the hardened isolation boundary a production worker needs.
+to point at, so the job stores a plain `repo_url`), no completion detection or diff persistence
+(M5), no checkpoints or resumable jobs (M6), no transactional outbox (see the dual-write section for
+why), and no deployment. The Pi implementation session is real, but analysis, planning, review, and
+finalization are still simulated, and the bridge network is not the hardened isolation boundary a
+production worker needs.
 
 The stream targets a long-lived Node.js host. Native EventSource reconnect makes interruptions safe,
 but a deployment platform that buffers or caps long responses can still terminate it. Before public
@@ -581,7 +629,8 @@ deployment, Rivet needs a streaming-capable host or a dedicated event gateway. T
 must not move event authority out of Postgres.
 
 Milestone 1's simulation knobs now have a narrower job: phase durations and `RIVET_PIPELINE_SPEED`
-remain for the five phases that are still simulated, while the fault modes also exercise real
-sandbox failure categories. The `simulated_failure` category is gone. Everything around them -
-claiming, leasing, heartbeating, transitioning, retrying, cancelling, recovering - is designed to
-survive the real phase bodies unchanged, which is the actual deliverable of the milestone.
+remain for the four phases that are still simulated, while the fault modes also exercise real
+sandbox and coding-agent failure categories. The `simulated_failure` category is gone. Everything
+around them - claiming, leasing, heartbeating, transitioning, retrying, cancelling, recovering - is
+designed to survive the real phase bodies unchanged, which is the actual deliverable of the
+milestone.

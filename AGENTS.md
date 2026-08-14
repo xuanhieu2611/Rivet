@@ -12,11 +12,12 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 3 is complete.** Jobs execute. Creating one enqueues it, a worker claims
-it under a Postgres lease, provisions a sandbox, records a baseline, walks the seven-phase pipeline,
-heartbeats while it runs, and lands it in a terminal status. Retries, cancellation, timeouts, and
-crash recovery all work and are covered by the integration suites. The five phases that do not yet
-need a coding agent remain simulated, and there is no model call until Milestones 4 and 5.
+**Current state: Milestone 4 is complete.** Jobs execute. Creating one enqueues it, a worker claims
+it under a Postgres lease, provisions a sandbox, records a baseline, runs a Pi coding session during
+`implementing`, heartbeats while it runs, and lands it in a terminal status. Retries, cancellation,
+timeouts, crash recovery, agent budgets, usage persistence, and provider failure classification all
+work and are covered by the unit and integration suites. Analysis, planning, review, and
+finalization remain simulated until later milestones.
 
 `packages/sandbox` is real; `buildPipeline()` gives `provisioning` and `testing` real bodies -
 create a container, clone the repository, resolve the commit, install dependencies, then run the
@@ -47,7 +48,9 @@ pnpm lint                # eslint, type-aware
 pnpm typecheck           # tsc --noEmit across every workspace
 pnpm test                # vitest across every workspace; no database, no Redis
 pnpm test:integration    # the *.int.test.ts suite; needs a LOCAL Postgres and Redis
+pnpm test:sandbox        # the *.sbx.test.ts suite; needs LOCAL Postgres, Redis and Docker
 pnpm test:streaming      # the web SSE suite; needs LOCAL Postgres, no Redis or Docker
+pnpm demo:agent          # one real Pi session against a disposable Docker fixture
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 
@@ -73,9 +76,11 @@ Turbo caches aggressively. Add `--force` when you need to prove something from c
 
 ### Running the integration suite locally
 
-34 tests in `apps/worker/tests/integration/*.int.test.ts`, about 15 seconds, against real Postgres,
-real Redis, and real BullMQ workers. They need both services on localhost. On this machine that is
-Homebrew's `postgresql@17` and `redis`:
+The integration suite in `apps/worker/tests/integration/*.int.test.ts` runs against real Postgres,
+real Redis, and real BullMQ workers. It covers the lease and queue lifecycle plus scripted-agent
+completion, cancellation, budgets, provider retries, terminal provider failures, and deadlines. The
+cases need both services on localhost. On this machine that is Homebrew's `postgresql@17` and
+`redis`:
 
 ```bash
 brew services start postgresql@17
@@ -105,11 +110,11 @@ set. It truncates `jobs` and `job_events`, so run it separately from the worker 
 Milestone 2 makes a job's sandbox a real container, so Docker Desktop is a prerequisite alongside
 Postgres and Redis - but only for running jobs for real. `pnpm build`, `pnpm test`, `pnpm lint` and
 `pnpm typecheck` still run with no database, no Redis **and no Docker daemon**, which is the
-property CI's `verify` job exists to protect. `RIVET_SANDBOX=off` selects the simulated pipeline and
-is what the integration suite runs under, so that suite still needs only Postgres and Redis. It is
-the one configuration `parseWorkerConfig` refuses under `NODE_ENV=production`: a worker that
-completes every job in twenty-one seconds without doing any work looks perfectly healthy, and that
-is the worst failure mode on offer.
+property CI's `verify` job exists to protect. `RIVET_SANDBOX=off` selects the simulated sandbox
+pipeline and `RIVET_AGENT=off` selects the simulated implementing phase. Those are what the
+integration suite runs under, so it still needs only Postgres and Redis. They are the configurations
+`parseWorkerConfig` refuses under `NODE_ENV=production`: a worker that completes a job without
+touching a repository looks perfectly healthy, and that is the worst failure mode on offer.
 
 ```bash
 brew install --cask docker-desktop   # needs sudo, so run it from a terminal that can prompt
@@ -160,9 +165,10 @@ says what it wanted.
 ```
 apps/web            Next.js 16 App Router. Pages and route handlers. No business logic.
 apps/worker         Long-running Node process. BullMQ Worker, heartbeat, sweeper, reaper, faults.
-packages/core       All domain logic: jobs/, events/, pipeline/, queue/, sandbox/ (the two ports).
+packages/core       All domain logic: agent/, jobs/, events/, pipeline/, queue/, sandbox/ (three ports).
 packages/queue      BullMQ adapter for the port, an in-memory fake, the lazy ioredis connection.
 packages/sandbox    dockerode adapter for the sandbox port, a scripted fake, the lazy Docker client.
+packages/agent      Pi adapter for the coding-agent port, a scripted fake, the lazily-loaded SDK.
 packages/contracts  Zod schemas, the job status enum, JobSummary / JobDetail / JobEvent.
 packages/database   Drizzle schema, generated migrations, the pg Pool. Neon Postgres.
 packages/config     tsconfig + ESLint bases that every workspace extends.
@@ -190,29 +196,42 @@ re-enqueues it. Read `docs/architecture.md` before changing anything in that loo
 
 ### Invariants that are easy to break
 
-**`packages/core` imports no `next/*`, no `bullmq`, no `ioredis`, no `dockerode`, and reads no
-`process.env`.** All five rules exist for one reason: core is shared by two deployables and must not
-depend on either one's framework or on the delivery mechanism. Configuration arrives as function
-arguments, which is what lets the whole pipeline run in under a millisecond at `speed: 0` with no
-fake timers and no sleeping in CI - and it is why `PipelineOptions` carries the image, the limits
-and all four timeouts rather than defaulting any of them here. A default limit in the package that
-is supposed to hold no policy is how a container ends up unbounded. Core declares the `JobQueue` and
-`Sandbox` ports; `packages/queue` and `packages/sandbox` are the only packages that know Redis and
-Docker exist. Every module lives under `jobs/`, `events/`, `pipeline/`, `queue/` or `sandbox/` - a
-file at the top level next to `index.ts` is the first sign the package is becoming a junk drawer.
+**`packages/core` imports no `next/*`, no `bullmq`, no `ioredis`, no `dockerode`, no
+`@earendil-works/*`, and reads no `process.env`.** All six rules exist for one reason: core is
+shared by two deployables and must not depend on either one's framework or on the delivery
+mechanism. Configuration arrives as function arguments, which is what lets the whole pipeline run in
+under a millisecond at `speed: 0` with no fake timers and no sleeping in CI - and it is why
+`PipelineOptions` carries the image, the limits and all four timeouts rather than defaulting any of
+them here. A default limit in the package that is supposed to hold no policy is how a container ends
+up unbounded. Core declares the `JobQueue`, `Sandbox` and `CodingAgent` ports; `packages/queue`,
+`packages/sandbox` and `packages/agent` are the only packages that know Redis, Docker and Pi exist.
+Every module lives under `agent/`, `jobs/`, `events/`, `pipeline/`, `queue/` or `sandbox/` - a file
+at the top level next to `index.ts` is the first sign the package is becoming a junk drawer.
+
+**The model key stays on the worker host, and the container never sees a credential.** The harness
+runs in the worker process; its four tools - `read`, `write`, `edit`, `bash` - end at
+`AgentToolbox`, whose implementations are the phase's own `ctx.exec` and the sandbox's
+`getFile`/`putFile`. Two things keep that true and both are easy to undo by being helpful. Pi's
+`bash` tool hands its operations an `env` built from the worker's own `process.env`; forwarding it
+would put `OPENROUTER_API_KEY` inside a container running arbitrary cloned code, so it is ignored,
+always. And after `createAgentSession` returns, `PiCodingAgent` asserts that
+`session.getActiveToolNames()` is exactly those four and fails the job otherwise - which is the
+difference between believing no host-side tool survived and knowing it. Be honest about what this
+buys: it contains the _model_, not the harness. Nothing sandboxes the harness process itself.
 
 **`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
 merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, so a caller cannot
-sneak a status through the patch. There are exactly four `.update(jobs)` sites in `packages/`, and
-the other three touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
-`cancel_requested_at`, and `jobs/provisioning.ts` writes `sandbox_id`, `base_commit_sha` and
-`env_fingerprint` fenced on `lease_owner`. That fourth one takes the same patch type, so it cannot
-touch `status` either; it exists because those columns become true when a command answers, not when
-the job later changes phase, and a fact recorded at a moment that has nothing to do with the fact is
-how a timeline starts lying. Stamping a cancel is deliberately not a status change; the job reaches
-`cancelled` through the worker's own transition under its own lease. Every status change is a
-compare-and-swap on the expected `from` status, optionally fenced on `lease_owner`, and writes its
-event row in the same transaction. Adding a fourth status writer breaks all of that at once.
+sneak a status through the patch. There are exactly five `.update(jobs)` sites in `packages/`, and
+the other four touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
+`cancel_requested_at`, `jobs/provisioning.ts` writes `sandbox_id`, `base_commit_sha` and
+`env_fingerprint`, and `jobs/agent-usage.ts` writes cumulative model totals fenced on `lease_owner`.
+The last two take the same patch type, so neither can touch `status`; they exist because those facts
+become true when a command or model turn answers, not when the job later changes phase, and a fact
+recorded at a moment that has nothing to do with the fact is how a timeline starts lying. Stamping a
+cancel is deliberately not a status change; the job reaches `cancelled` through the worker's own
+transition under its own lease. Every status change is a compare-and-swap on the expected `from`
+status, optionally fenced on `lease_owner`, and writes its event row in the same transaction. Adding
+another status writer breaks all of that at once.
 
 **`appendEvent()` is the only writer of `job_events`, and it takes an `Executor`.** Pass the
 transaction and the event lands atomically with the status change it describes; pass nothing and it

@@ -29,10 +29,28 @@ export function formatTimeOfDay(value: Date): string {
 }
 
 const usdFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const preciseUsdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4,
+});
+const tokenFormatter = new Intl.NumberFormat("en-US");
 
 export function formatUsd(value: string): string {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? usdFormatter.format(parsed) : value;
+}
+
+/** Formats model token totals without hiding small but meaningful counts. */
+export function formatTokenCount(value: number): string {
+  return tokenFormatter.format(Math.max(0, Math.round(value)));
+}
+
+/** Keeps sub-cent model usage visible in the job header. */
+export function formatAgentCost(value: string): string {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? preciseUsdFormatter.format(parsed) : value;
 }
 
 /** `3600` -> `"1h 0m"`, `90` -> `"1m 30s"`. */

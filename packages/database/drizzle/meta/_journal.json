@@ -22,6 +22,13 @@
       "when": 1786647732243,
       "tag": "0002_clean_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786687364871,
+      "tag": "0003_blushing_hellion",
+      "breakpoints": true
     }
   ]
 }

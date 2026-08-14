@@ -102,6 +102,8 @@ export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
   command_timed_out: "Command timed out",
   oom_killed: "Out of memory",
   sandbox_leaked: "Sandbox leaked",
+  agent_unavailable: "Agent provider unavailable",
+  agent_failed: "Agent failed",
   unknown: "Unknown",
 };
 
@@ -137,4 +139,16 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "command.completed": "bg-sky-500/40",
   "command.failed": "bg-red-500",
   "baseline.recorded": "bg-sky-500",
+  // The agent's own entries read as progress, because that is what they are.
+  // Only the two that end something get a colour of their own, and a tool call
+  // that errored is deliberately not one of them: the model reads the error and
+  // tries something else, which is the loop working rather than failing.
+  "agent.session_started": "bg-violet-500",
+  "agent.turn_started": "bg-sky-500/40",
+  "agent.message": "bg-sky-500",
+  "agent.tool_started": "bg-sky-500",
+  "agent.tool_completed": "bg-sky-500/40",
+  "agent.usage": "bg-muted-foreground/40",
+  "agent.session_ended": "bg-muted-foreground/40",
+  "agent.budget_exceeded": "bg-amber-500",
 };

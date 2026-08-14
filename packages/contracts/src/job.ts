@@ -104,6 +104,12 @@ export interface JobDetail extends JobSummary {
   maxCostUsd: string;
   maxModelCalls: number;
   maxToolCalls: number;
+  /** Cumulative input tokens reported by coding-agent sessions. */
+  totalInputTokens: number;
+  /** Cumulative output tokens reported by coding-agent sessions. */
+  totalOutputTokens: number;
+  /** Cumulative priced usage, as a decimal string from Postgres numeric. */
+  totalCostUsd: string;
   startedAt: Date | null;
   completedAt: Date | null;
   finalBranch: string | null;

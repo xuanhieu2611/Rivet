@@ -39,6 +39,28 @@ export class JobTimedOutError extends JobRunError {}
 export class WorkerShuttingDownError extends JobRunError {}
 
 /**
+ * A ceiling from PRD §17 was reached: turns, tool calls, model calls, or spend.
+ *
+ * Its own outcome rather than a terminal failure, because `budget_exceeded` is
+ * a status in its own right and has been since Milestone 0 - a job that ran out
+ * of budget did not go wrong, it was stopped, and the difference is worth a
+ * distinct status on the dashboard. It never retries: a second attempt would
+ * start from zero and spend the same budget reaching the same ceiling.
+ *
+ * `which` is on the error rather than only in the event because the processor
+ * writes `failure_reason` from the message and the phase has already written
+ * the structured `agent.budget_exceeded` row by the time this is thrown.
+ */
+export class BudgetExceededError extends JobRunError {
+  constructor(
+    message: string,
+    readonly which: "cost" | "model_calls" | "tool_calls" | "turns",
+  ) {
+    super(message);
+  }
+}
+
+/**
  * Something went wrong that a fresh attempt might get past.
  *
  * Carries a category for the same reason `TerminalJobError` does: the retry
@@ -69,7 +91,13 @@ export class TerminalJobError extends JobRunError {
 }
 
 export type FailureClass =
-  "retryable" | "terminal" | "cancelled" | "timed_out" | "lease_lost" | "shutting_down";
+  | "retryable"
+  | "terminal"
+  | "cancelled"
+  | "timed_out"
+  | "budget_exceeded"
+  | "lease_lost"
+  | "shutting_down";
 
 /**
  * Sorts an error into one of the six outcomes the processor knows how to handle.
@@ -86,6 +114,7 @@ export function classify(error: unknown): FailureClass {
   if (error instanceof WorkerShuttingDownError) return "shutting_down";
   if (error instanceof JobCancelledError) return "cancelled";
   if (error instanceof JobTimedOutError) return "timed_out";
+  if (error instanceof BudgetExceededError) return "budget_exceeded";
   if (error instanceof RetryableJobError) return "retryable";
   return "terminal";
 }
@@ -102,6 +131,8 @@ export function failureCategoryFor(error: unknown): FailureCategory {
       return "cancelled";
     case "timed_out":
       return "timed_out";
+    case "budget_exceeded":
+      return "budget_exceeded";
     case "terminal":
       return error instanceof TerminalJobError ? error.category : "unknown";
     case "retryable":

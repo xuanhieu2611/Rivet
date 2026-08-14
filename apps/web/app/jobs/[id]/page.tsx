@@ -9,6 +9,7 @@ import { notFound } from "next/navigation";
 import { CancelJobButton } from "@/components/cancel-job-button";
 import { JobLiveProvider } from "@/components/job-live/job-live-provider";
 import { LiveConnectionIndicator, LiveStatusBadge } from "@/components/job-live/live-status-badge";
+import { LiveAgentUsage } from "@/components/job-live/live-agent-usage";
 import { LiveCommandLog } from "@/components/job-live/live-command-log";
 import { LiveExecutionTimeline } from "@/components/job-live/live-execution-timeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,17 +45,35 @@ export default async function JobDetailPage({ params }: PageProps) {
       initialStatus={job.status}
       initialEvents={events.map(serializeJobEvent)}
       initialCommandSummaries={commandSummaries.map(serializeJobCommandSummary)}
+      initialUsage={{
+        totalInputTokens: job.totalInputTokens,
+        totalOutputTokens: job.totalOutputTokens,
+        totalCostUsd: job.totalCostUsd,
+      }}
     >
       <div className="space-y-8">
-        <div className="space-y-3">
-          <Link href="/" className="text-muted-foreground text-xs hover:underline">
-            Back to jobs
-          </Link>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight">{job.title}</h1>
-            <LiveStatusBadge />
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="space-y-3">
+            <Link href="/" className="text-muted-foreground text-xs hover:underline">
+              Back to jobs
+            </Link>
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-2xl font-semibold tracking-tight">{job.title}</h1>
+              <LiveStatusBadge />
+            </div>
+            <p className="text-muted-foreground font-mono text-xs">{job.id}</p>
           </div>
-          <p className="text-muted-foreground font-mono text-xs">{job.id}</p>
+
+          <div className="border-border/70 bg-muted/20 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border px-3 py-2">
+            <div className="flex items-baseline gap-2 text-xs">
+              <span className="text-muted-foreground">Duration</span>
+              <span className="font-mono tabular-nums">
+                {formatElapsed(job.startedAt, job.completedAt)}
+              </span>
+            </div>
+            <span aria-hidden className="bg-border hidden h-4 w-px sm:block" />
+            <LiveAgentUsage />
+          </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">

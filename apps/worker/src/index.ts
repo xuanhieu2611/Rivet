@@ -1,4 +1,11 @@
-import { buildPipeline, type Phase, type SandboxProvider, simulatedPipeline } from "@rivet/core";
+import { PiCodingAgent } from "@rivet/agent";
+import {
+  type AgentOptions,
+  buildPipeline,
+  type Phase,
+  type SandboxProvider,
+  simulatedPipeline,
+} from "@rivet/core";
 import { closeDb } from "@rivet/database";
 import {
   closeJobQueue,
@@ -64,6 +71,41 @@ const runs = new RunRegistry();
  * worker that can still sweep, reclaim and report is more useful than one that
  * refused to boot.
  */
+/**
+ * The coding agent, or nothing at all.
+ *
+ * Constructing this loads no SDK and opens no connection - the harness is
+ * imported on the first session - so a worker with a bad model id still starts,
+ * still sweeps, still reclaims, and fails the first job with a reason rather
+ * than refusing to boot with a stack trace. The one thing that *is* checked at
+ * startup is the key, in `parseWorkerConfig`, because that failure is otherwise
+ * discovered after a container and a clone have already been paid for.
+ *
+ * Under `RIVET_AGENT=off` this is undefined, `PipelineOptions.agent` is absent,
+ * and `implementing` keeps the Milestone 1 sleep. That is what lets the
+ * integration suite run thirty-odd lifecycle cases with no key.
+ */
+const agent: AgentOptions | undefined = (() => {
+  if (config.agent.mode === "off") {
+    log.warn("RIVET_AGENT=off: the implementing phase is simulated, no model will be called");
+    return undefined;
+  }
+
+  return {
+    coding: new PiCodingAgent({
+      model: config.agent.model,
+      provider: config.agent.provider,
+      homeDir: config.agent.homeDir,
+      outputMaxBytes: config.agent.toolOutputMaxBytes,
+      logger: log,
+    }),
+    sessionTimeoutMs: config.agent.sessionTimeoutMs,
+    maxTurns: config.agent.maxTurns,
+    previewMaxBytes: config.agent.previewMaxBytes,
+    fileMaxBytes: config.agent.fileMaxBytes,
+  };
+})();
+
 const { phases, phaseFactory, sandbox } = ((): {
   phases: readonly Phase[];
   phaseFactory?: (injection: FaultInjection) => readonly Phase[];
@@ -79,6 +121,7 @@ const { phases, phaseFactory, sandbox } = ((): {
 
   const provider = new DockerSandboxProvider({ workerId, log });
   const pipelineOptions = {
+    ...(agent ? { agent } : {}),
     image: config.sandbox.image,
     workdir: config.sandbox.workdir,
     memoryBytes: config.sandbox.memoryBytes,
@@ -184,6 +227,8 @@ log.info(
     queue: QUEUE_NAMES.jobRuns,
     sandbox: config.sandbox.mode,
     sandboxImage: config.sandbox.mode === "docker" ? config.sandbox.image : null,
+    agent: config.agent.mode,
+    model: agent ? `${config.agent.provider}/${config.agent.model}` : null,
   },
   "worker started",
 );

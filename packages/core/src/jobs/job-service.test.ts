@@ -30,6 +30,9 @@ const row: Job = {
   maxCostUsd: "5.00",
   maxModelCalls: 200,
   maxToolCalls: 500,
+  totalInputTokens: 0,
+  totalOutputTokens: 0,
+  totalCostUsd: "0.0000",
   startedAt: null,
   completedAt: null,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -105,6 +108,9 @@ describe("row mapping", () => {
     const detail = toJobDetail(row);
     expect(detail.maxCostUsd).toBe("5.00");
     expect(detail.maxDurationSeconds).toBe(3600);
+    expect(detail.totalInputTokens).toBe(0);
+    expect(detail.totalOutputTokens).toBe(0);
+    expect(detail.totalCostUsd).toBe("0.0000");
     expect(detail.startedAt).toBeNull();
     expect(detail.pullRequestUrl).toBeNull();
     expect(detail.createdAt).toBeInstanceOf(Date);

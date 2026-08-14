@@ -1,12 +1,31 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   assertLeaseInvariant,
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_PROVIDER,
   DEFAULT_SANDBOX_IMAGE,
   DEFAULT_SANDBOX_WORKDIR,
-  parseWorkerConfig,
+  parseWorkerConfig as parse,
   WorkerConfigError,
 } from "./config";
+
+/**
+ * A model key, because `RIVET_AGENT` defaults to `pi` and `pi` without a key
+ * refuses to boot.
+ *
+ * Supplied by default here so that every case about leases, sandboxes and
+ * faults keeps saying what it was written to say instead of also being a test
+ * about credentials. The cases that *are* about the key call `parse` directly.
+ */
+const KEYED = { OPENROUTER_API_KEY: "sk-test-not-a-real-key" };
+
+function parseWorkerConfig(env: Record<string, string | undefined> = {}) {
+  return parse({ ...KEYED, ...env });
+}
 
 describe("parseWorkerConfig", () => {
   it("applies every default for an empty environment", () => {
@@ -31,6 +50,17 @@ describe("parseWorkerConfig", () => {
         installTimeoutMs: 300_000,
         baselineTimeoutMs: 300_000,
         maxOutputBytes: 65_536,
+      },
+      agent: {
+        mode: "pi",
+        model: DEFAULT_MODEL,
+        provider: DEFAULT_MODEL_PROVIDER,
+        sessionTimeoutMs: 900_000,
+        maxTurns: 40,
+        toolOutputMaxBytes: 32_768,
+        fileMaxBytes: 262_144,
+        previewMaxBytes: 2_048,
+        homeDir: join(tmpdir(), "rivet-pi"),
       },
     });
   });
@@ -211,6 +241,68 @@ describe("parseWorkerConfig", () => {
       expect(error).toBeInstanceOf(WorkerConfigError);
       expect((error as WorkerConfigError).problems).toHaveLength(2);
     }
+  });
+});
+
+describe("the coding agent", () => {
+  it("defaults to a real agent, so a simulated implementing phase is a decision", () => {
+    // The same rule as the sandbox, for the phase that is the entire point of
+    // the system: a default that happens to be fake is what survives into a
+    // deployment and completes every job without writing any code.
+    expect(parseWorkerConfig().agent.mode).toBe("pi");
+  });
+
+  it("refuses to boot with an agent and no key", () => {
+    // Discovering this on the first job, after a container and a clone have
+    // already been paid for, is a slow way to learn something a startup check
+    // answers instantly - and it burns an attempt doing it.
+    expect(() => parse({})).toThrow(WorkerConfigError);
+    expect(() => parse({})).toThrow(/needs OPENROUTER_API_KEY/);
+  });
+
+  it("needs no key when there is no agent to run", () => {
+    expect(parse({ RIVET_AGENT: "off" }).agent.mode).toBe("off");
+  });
+
+  it("does not demand an OpenRouter key for a provider that is not OpenRouter", () => {
+    // A different provider is a different variable, and belongs to whoever
+    // adds one rather than to a check that would refuse a valid configuration.
+    expect(() => parse({ RIVET_MODEL_PROVIDER: "anthropic" })).not.toThrow();
+  });
+
+  it("refuses to simulate the implementing phase in production", () => {
+    expect(() => parse({ RIVET_AGENT: "off", NODE_ENV: "production" })).toThrow(
+      /without writing any code/,
+    );
+  });
+
+  it("takes the model, its provider and every ceiling from the environment", () => {
+    const config = parseWorkerConfig({
+      RIVET_MODEL: "anthropic/claude-sonnet-5",
+      RIVET_MODEL_PROVIDER: "anthropic",
+      AGENT_SESSION_TIMEOUT_MS: "60000",
+      AGENT_MAX_TURNS: "5",
+      AGENT_TOOL_OUTPUT_MAX_BYTES: "2048",
+      AGENT_FILE_MAX_BYTES: "4096",
+      AGENT_PREVIEW_MAX_BYTES: "256",
+      AGENT_HOME_DIR: "/var/lib/rivet/pi",
+    });
+
+    expect(config.agent).toEqual({
+      mode: "pi",
+      model: "anthropic/claude-sonnet-5",
+      provider: "anthropic",
+      sessionTimeoutMs: 60_000,
+      maxTurns: 5,
+      toolOutputMaxBytes: 2_048,
+      fileMaxBytes: 4_096,
+      previewMaxBytes: 256,
+      homeDir: "/var/lib/rivet/pi",
+    });
+  });
+
+  it("rejects an agent mode that is not one of the two", () => {
+    expect(() => parseWorkerConfig({ RIVET_AGENT: "claude" })).toThrow(WorkerConfigError);
   });
 });
 

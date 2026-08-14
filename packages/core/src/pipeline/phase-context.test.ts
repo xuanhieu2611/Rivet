@@ -58,6 +58,8 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
   const sandbox: Sandbox = {
     id: "sandbox-1",
     exec: sandboxExec,
+    getFile: () => Promise.reject(new Error("the context does not read files")),
+    putFile: () => Promise.reject(new Error("the context does not write files")),
     destroy: () => Promise.resolve(),
   };
   holder.set(sandbox);

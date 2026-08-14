@@ -1,5 +1,15 @@
-import type { ExecRequest, ExecResult, Sandbox, SandboxProvider, SandboxSpec } from "@rivet/core";
+import {
+  type ExecRequest,
+  type ExecResult,
+  type FileRead,
+  type FileReadOptions,
+  type Sandbox,
+  SandboxFileError,
+  type SandboxProvider,
+  type SandboxSpec,
+} from "@rivet/core";
 
+import { namesAFile } from "./paths";
 import { CappedOutput } from "./stream";
 
 /**
@@ -44,6 +54,8 @@ export interface FakeSandboxOptions {
   /** Every `create()` fails with this. Used for the `no-daemon` fault mode. */
   createFails?: Error;
   script?: ScriptedCommand[];
+  /** Files every sandbox starts with, keyed by absolute path. */
+  files?: Record<string, string>;
 }
 
 export class FakeSandboxProvider implements SandboxProvider {
@@ -73,7 +85,9 @@ export class FakeSandboxProvider implements SandboxProvider {
     if (this.options.createFails) return Promise.reject(this.options.createFails);
 
     this.created.push(spec);
-    const sandbox = new FakeSandbox(`fake-sandbox-${this.nextId++}`, spec, this.script);
+    const sandbox = new FakeSandbox(`fake-sandbox-${this.nextId++}`, spec, this.script, {
+      ...this.options.files,
+    });
     this.sandboxes.push(sandbox);
     return Promise.resolve(sandbox);
   }
@@ -107,10 +121,27 @@ export class FakeSandbox implements Sandbox {
     readonly id: string,
     private readonly spec: SandboxSpec,
     private readonly script: ScriptedCommand[],
+    /**
+     * The whole filesystem, as far as this fake is concerned: absolute paths to
+     * contents, with no directories in it at all.
+     *
+     * Directories are implied by the paths that use them, which is a lie the
+     * real adapter does not tell - a container has a real filesystem, and
+     * `putFile` there has to make the parents. What that buys is a tool layer
+     * that can be unit-tested with no Docker, which is the same trade every
+     * other part of this class makes. The `*.sbx.test.ts` suite is the evidence
+     * about Docker; nothing asserted against this map is.
+     */
+    private readonly files: Record<string, string> = {},
   ) {}
 
   get jobId(): string {
     return this.spec.jobId;
+  }
+
+  /** What the sandbox holds now, for asserting on what a phase wrote. */
+  get filesystem(): Readonly<Record<string, string>> {
+    return this.files;
   }
 
   async exec(request: ExecRequest): Promise<ExecResult> {
@@ -132,6 +163,45 @@ export class FakeSandbox implements Sandbox {
       oomKilled: scripted?.oomKilled ?? false,
       durationMs: scripted?.durationMs ?? 1,
     };
+  }
+
+  getFile(path: string, options: FileReadOptions, signal: AbortSignal): Promise<FileRead> {
+    if (signal.aborted) return Promise.reject(signal.reason as Error);
+
+    const content = this.files[path];
+    if (content === undefined) {
+      // A path that is a prefix of a stored one is the closest this map gets to
+      // having a directory, and reporting it as one keeps the tool layer's two
+      // error branches both reachable without Docker.
+      const isDirectory = Object.keys(this.files).some((key) =>
+        key.startsWith(path.endsWith("/") ? path : `${path}/`),
+      );
+      return Promise.reject(
+        isDirectory
+          ? new SandboxFileError(`${path} is a directory, not a file.`, "not_a_file")
+          : new SandboxFileError(`${path} does not exist in the sandbox.`, "not_found"),
+      );
+    }
+
+    // Cut on bytes rather than characters, because that is what the real
+    // adapter's cap counts and a test that disagrees about a multi-byte file
+    // would be testing the fake.
+    const bytes = Buffer.from(content, "utf8");
+    const truncated = bytes.byteLength > options.maxBytes;
+    return Promise.resolve({
+      content: truncated ? bytes.subarray(0, options.maxBytes).toString("utf8") : content,
+      truncated,
+    });
+  }
+
+  putFile(path: string, content: string, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(signal.reason as Error);
+
+    if (!namesAFile(path)) {
+      return Promise.reject(new SandboxFileError(`${path} does not name a file.`, "not_a_file"));
+    }
+    this.files[path] = content;
+    return Promise.resolve();
   }
 
   destroy(): Promise<void> {

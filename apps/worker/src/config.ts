@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { config as loadEnvFile } from "dotenv";
@@ -121,6 +122,53 @@ export interface SandboxConfig {
 }
 
 /**
+ * Whether `implementing` runs a real coding session or the Milestone 1 sleep.
+ *
+ * Exactly the `RIVET_SANDBOX` rule, for exactly the same reason. `off` is what
+ * the integration suite and a laptop with no model key run under, and it is a
+ * legitimate answer in both places; in production it would mean every job
+ * sleeping through the one phase that is supposed to do the work while
+ * reporting `completed`, which is the worst failure mode on offer.
+ */
+export const AGENT_MODES = ["pi", "off"] as const;
+export type AgentMode = (typeof AGENT_MODES)[number];
+
+/**
+ * The default model, and the reason it is this one.
+ *
+ * Cheap enough that a debugging loop is not a budget conversation, present in
+ * the harness's own catalog with its rates - which is what makes a cost ceiling
+ * enforceable rather than aspirational - and trivially swappable for the model
+ * experiments Milestone 10 wants.
+ */
+export const DEFAULT_MODEL = "deepseek/deepseek-v4-flash";
+export const DEFAULT_MODEL_PROVIDER = "openrouter";
+
+export interface AgentConfig {
+  mode: AgentMode;
+  model: string;
+  provider: string;
+  /** The session's own deadline, distinct from the job's `max_duration_seconds`. */
+  sessionTimeoutMs: number;
+  maxTurns: number;
+  /** What one shell command may hand back to the *model*, not what is stored. */
+  toolOutputMaxBytes: number;
+  /** Cap on one file read out of the sandbox. */
+  fileMaxBytes: number;
+  /** Cap on any single piece of session text that reaches the timeline. */
+  previewMaxBytes: number;
+  /**
+   * A Rivet-owned configuration directory for the harness.
+   *
+   * Deliberately not `~/.pi`: a harness pointed at a developer's own config
+   * directory silently mixes that developer's machine into every job the worker
+   * runs, which makes a run unreproducible and is close to the most confusing
+   * bug available here.
+   */
+  homeDir: string;
+}
+
+/**
  * How many heartbeats must be missed before a lease lapses.
  *
  * Three, so that one slow query and one dropped packet are both survivable. Two
@@ -151,6 +199,8 @@ export interface WorkerConfig {
   fault?: FaultConfig;
   /** What a phase with a real body runs in. */
   sandbox: SandboxConfig;
+  /** What runs the `implementing` phase, and the ceilings it runs under. */
+  agent: AgentConfig;
   /** How long to wait for in-flight jobs on SIGTERM before forcing an exit. */
   shutdownGraceMs: number;
   logLevel: LogLevel;
@@ -186,6 +236,18 @@ const schema = z.object({
   SANDBOX_INSTALL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(300_000),
   SANDBOX_BASELINE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(300_000),
   SANDBOX_MAX_OUTPUT_BYTES: z.coerce.number().int().min(1_024).max(4_194_304).default(65_536),
+
+  // --- coding agent (M4) -----------------------------------------------
+  RIVET_AGENT: z.enum(AGENT_MODES).default("pi"),
+  RIVET_MODEL: z.string().min(1).default(DEFAULT_MODEL),
+  RIVET_MODEL_PROVIDER: z.string().min(1).default(DEFAULT_MODEL_PROVIDER),
+  OPENROUTER_API_KEY: z.string().min(1).optional(),
+  AGENT_SESSION_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(7_200_000).default(900_000),
+  AGENT_MAX_TURNS: z.coerce.number().int().min(1).max(1_000).default(40),
+  AGENT_TOOL_OUTPUT_MAX_BYTES: z.coerce.number().int().min(1_024).max(1_048_576).default(32_768),
+  AGENT_FILE_MAX_BYTES: z.coerce.number().int().min(1_024).max(8_388_608).default(262_144),
+  AGENT_PREVIEW_MAX_BYTES: z.coerce.number().int().min(128).max(65_536).default(2_048),
+  AGENT_HOME_DIR: z.string().min(1).default(join(tmpdir(), "rivet-pi")),
 });
 
 /** Every problem with the environment at once, rather than one per restart. */
@@ -257,10 +319,23 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
       baselineTimeoutMs: parsed.data.SANDBOX_BASELINE_TIMEOUT_MS,
       maxOutputBytes: parsed.data.SANDBOX_MAX_OUTPUT_BYTES,
     },
+    agent: {
+      mode: parsed.data.RIVET_AGENT,
+      model: parsed.data.RIVET_MODEL,
+      provider: parsed.data.RIVET_MODEL_PROVIDER,
+      sessionTimeoutMs: parsed.data.AGENT_SESSION_TIMEOUT_MS,
+      maxTurns: parsed.data.AGENT_MAX_TURNS,
+      toolOutputMaxBytes: parsed.data.AGENT_TOOL_OUTPUT_MAX_BYTES,
+      fileMaxBytes: parsed.data.AGENT_FILE_MAX_BYTES,
+      previewMaxBytes: parsed.data.AGENT_PREVIEW_MAX_BYTES,
+      homeDir: parsed.data.AGENT_HOME_DIR,
+    },
   };
 
   assertLeaseInvariant(config.heartbeatSeconds, config.leaseSeconds);
   assertRealSandboxInProduction(config.sandbox.mode, env.NODE_ENV);
+  assertRealAgentInProduction(config.agent.mode, env.NODE_ENV);
+  assertModelKeyPresent(config.agent, parsed.data.OPENROUTER_API_KEY);
   return config;
 }
 
@@ -282,6 +357,47 @@ export function assertRealSandboxInProduction(mode: SandboxMode, nodeEnv?: strin
         "Set RIVET_SANDBOX=docker, or run this worker outside production.",
     ]);
   }
+}
+
+/**
+ * A deployment may not pretend to write code either.
+ *
+ * The sandbox rule, restated for the phase that is the whole point of the
+ * system. `RIVET_AGENT=off` leaves `implementing` as a five-second sleep, which
+ * is right for a laptop with no key and for the integration suite, and in
+ * production would mean every job completing without having changed anything.
+ */
+export function assertRealAgentInProduction(mode: AgentMode, nodeEnv?: string): void {
+  if (mode === "off" && nodeEnv === "production") {
+    throw new WorkerConfigError([
+      "RIVET_AGENT=off leaves the implementing phase simulated, which cannot be used with " +
+        "NODE_ENV=production: every job would complete without writing any code. " +
+        "Set RIVET_AGENT=pi, or run this worker outside production.",
+    ]);
+  }
+}
+
+/**
+ * A worker that cannot reach a model provider should say so now.
+ *
+ * The same argument as the lease invariant: discovering a missing key on the
+ * first job, after provisioning a container, cloning a repository and
+ * installing its dependencies, is a slow and expensive way to learn something a
+ * startup check answers instantly - and it burns an attempt doing it.
+ *
+ * Only OpenRouter is checked because only OpenRouter is configured. A different
+ * provider is a different variable and belongs to whoever adds one.
+ */
+export function assertModelKeyPresent(agent: AgentConfig, apiKey?: string): void {
+  if (agent.mode !== "pi") return;
+  if (agent.provider !== DEFAULT_MODEL_PROVIDER) return;
+  if (apiKey) return;
+
+  throw new WorkerConfigError([
+    `RIVET_AGENT=pi with RIVET_MODEL_PROVIDER=${DEFAULT_MODEL_PROVIDER} needs OPENROUTER_API_KEY. ` +
+      "Without it every job would provision a sandbox, clone its repository and only then fail " +
+      "to start a session. Set the key, or set RIVET_AGENT=off to run the simulated phase.",
+  ]);
 }
 
 /**

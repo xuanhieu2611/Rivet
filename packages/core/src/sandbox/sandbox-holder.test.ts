@@ -8,6 +8,8 @@ function fake(id = "container-1", destroy: () => Promise<void> = () => Promise.r
   const sandbox: Sandbox = {
     id,
     exec: () => Promise.reject(new Error("not used")),
+    getFile: () => Promise.reject(new Error("not used")),
+    putFile: () => Promise.reject(new Error("not used")),
     destroy: () => {
       destroyCount += 1;
       return destroy();

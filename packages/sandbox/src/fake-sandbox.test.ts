@@ -1,4 +1,4 @@
-import type { ExecRequest, SandboxSpec } from "@rivet/core";
+import { SandboxFileError, type ExecRequest, type SandboxSpec } from "@rivet/core";
 import { describe, expect, it } from "vitest";
 
 import { FakeSandboxProvider } from "./fake-sandbox";
@@ -169,5 +169,102 @@ describe("FakeSandboxProvider", () => {
 
     expect(first).toHaveLength(1);
     expect(second).toEqual([]);
+  });
+});
+
+describe("the fake's filesystem", () => {
+  const signal = new AbortController().signal;
+
+  async function sandboxWith(files: Record<string, string>) {
+    const provider = new FakeSandboxProvider({ files });
+    await provider.create(SPEC, signal);
+    const sandbox = provider.sandboxes[0];
+    if (!sandbox) throw new Error("the provider handed back no sandbox");
+    return sandbox;
+  }
+
+  it("reads back what it was seeded with, and what was written into it", async () => {
+    const sandbox = await sandboxWith({ "/repo/sum.ts": "export const sum = 1;\n" });
+
+    await sandbox.putFile("/repo/src/nested/new.ts", "written\n", signal);
+
+    expect(await sandbox.getFile("/repo/sum.ts", { maxBytes: 1_024 }, signal)).toEqual({
+      content: "export const sum = 1;\n",
+      truncated: false,
+    });
+    expect(await sandbox.getFile("/repo/src/nested/new.ts", { maxBytes: 1_024 }, signal)).toEqual({
+      content: "written\n",
+      truncated: false,
+    });
+  });
+
+  it("overwrites rather than appending, which is what write means", async () => {
+    const sandbox = await sandboxWith({ "/repo/a.ts": "first" });
+
+    await sandbox.putFile("/repo/a.ts", "second", signal);
+
+    expect(sandbox.filesystem["/repo/a.ts"]).toBe("second");
+  });
+
+  it("truncates on bytes and says so", async () => {
+    // Bytes rather than characters, because that is what the real adapter caps
+    // and a fake that disagreed would make the tool layer's tests fiction.
+    const sandbox = await sandboxWith({ "/repo/big.txt": "0123456789" });
+
+    expect(await sandbox.getFile("/repo/big.txt", { maxBytes: 4 }, signal)).toEqual({
+      content: "0123",
+      truncated: true,
+    });
+  });
+
+  it("reports a missing file and a directory differently", async () => {
+    const sandbox = await sandboxWith({ "/repo/src/a.ts": "x" });
+
+    // Both are tool results a model reads and corrects, never job failures -
+    // which is why neither extends the retryable or terminal hierarchy.
+    await expect(sandbox.getFile("/repo/missing.ts", { maxBytes: 16 }, signal)).rejects.toThrow(
+      SandboxFileError,
+    );
+    await expect(
+      sandbox.getFile("/repo/missing.ts", { maxBytes: 16 }, signal),
+    ).rejects.toMatchObject({ reason: "not_found" });
+    await expect(sandbox.getFile("/repo/src", { maxBytes: 16 }, signal)).rejects.toMatchObject({
+      reason: "not_a_file",
+    });
+  });
+
+  it("refuses a path that does not name a file", async () => {
+    const sandbox = await sandboxWith({});
+
+    await expect(sandbox.putFile("/repo/src/", "x", signal)).rejects.toMatchObject({
+      reason: "not_a_file",
+    });
+  });
+
+  it("rejects both operations once the signal is aborted", async () => {
+    const sandbox = await sandboxWith({ "/repo/a.ts": "x" });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      sandbox.getFile("/repo/a.ts", { maxBytes: 16 }, controller.signal),
+    ).rejects.toThrow();
+    await expect(sandbox.putFile("/repo/b.ts", "x", controller.signal)).rejects.toThrow();
+    expect(sandbox.filesystem["/repo/b.ts"]).toBeUndefined();
+  });
+
+  it("gives each sandbox its own copy of the seeded files", async () => {
+    // Two jobs' containers share nothing. A fake whose map is shared would hide
+    // exactly the bug that property exists to prevent.
+    const provider = new FakeSandboxProvider({ files: { "/repo/a.ts": "seed" } });
+    const first = await provider.create(SPEC, signal);
+    const second = await provider.create({ ...SPEC, jobId: "other" }, signal);
+
+    await first.putFile("/repo/a.ts", "changed", signal);
+
+    expect(await second.getFile("/repo/a.ts", { maxBytes: 64 }, signal)).toEqual({
+      content: "seed",
+      truncated: false,
+    });
   });
 });
