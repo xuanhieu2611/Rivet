@@ -1,0 +1,384 @@
+import type { CodingAgentEvent } from "@rivet/core";
+import {
+  AgentFailedError,
+  AgentUnavailableError,
+  buildPipeline,
+  listCommands,
+  requestJobCancellation,
+  requestJobRun,
+  type AgentOptions,
+  type PipelineOptions,
+} from "@rivet/core";
+import { FakeCodingAgent, type ScriptedSession } from "@rivet/agent";
+import { FakeSandboxProvider, type ScriptedCommand } from "@rivet/sandbox";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  closeConnections,
+  createTestJob,
+  createTestQueue,
+  eventTypes,
+  readEvents,
+  resetDatabase,
+  startTestWorker,
+  TEST_CONFIG,
+  type TestQueue,
+  type TestWorker,
+  waitFor,
+  waitForStatus,
+} from "./support";
+
+/**
+ * The worker-level proof that a real pipeline can carry a scripted coding
+ * session without a model, Docker, or a second lifecycle implementation.
+ *
+ * These tests keep Postgres, Redis, BullMQ, the production processor and the
+ * production phase context real. Only the two external adapters are scripted:
+ * the fake sandbox gives provisioning a tiny repository to work with, and the
+ * fake agent supplies deterministic session events. The live smoke command is
+ * the separate proof that Pi and OpenRouter work together.
+ */
+
+const REPO_DIR = "/home/node/workspace/repo";
+const COMMIT = "9f2b0c1a4d5e6f708192a3b4c5d6e7f809112233";
+const LISTING = ".\n..\n.git\npackage.json\npackage-lock.json\nREADME.md\ntest.js\n";
+const TRACKED = "package.json\npackage-lock.json\nREADME.md\ntest.js\n";
+const MANIFEST = JSON.stringify({ name: "rivet-agent-fixture", scripts: { test: "node test.js" } });
+
+const PIPELINE_OPTIONS: Omit<PipelineOptions, "sandbox" | "agent"> = {
+  image: "node@sha256:test",
+  workdir: "/home/node/workspace",
+  memoryBytes: 512 * 1_024 * 1_024,
+  nanoCpus: 1_000_000_000,
+  pidsLimit: 128,
+  commandTimeoutMs: 500,
+  cloneTimeoutMs: 500,
+  installTimeoutMs: 500,
+  baselineTimeoutMs: 500,
+};
+
+const AGENT_OPTIONS: Omit<AgentOptions, "coding"> = {
+  sessionTimeoutMs: 5_000,
+  maxTurns: 8,
+  previewMaxBytes: 512,
+  fileMaxBytes: 4_096,
+};
+
+const USAGE = {
+  inputTokens: 1_000,
+  outputTokens: 200,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  costUsd: 0.25,
+} as const;
+
+let queue: TestQueue;
+let worker: TestWorker | undefined;
+
+beforeAll(() => {
+  queue = createTestQueue("agent", { backoff: { type: "fixed", delay: 20 } });
+});
+
+afterAll(async () => {
+  await queue.destroy();
+  await closeConnections();
+});
+
+beforeEach(async () => {
+  await resetDatabase();
+});
+
+afterEach(async () => {
+  await worker?.close();
+  worker = undefined;
+});
+
+function fixtureProvider(): FakeSandboxProvider {
+  const script: ScriptedCommand[] = [
+    {
+      match: (argv) => argv[0] === "git" && argv[1] === "rev-parse",
+      stdout: `${COMMIT}\n`,
+    },
+    {
+      match: (argv) => argv[0] === "git" && argv[1] === "ls-files",
+      stdout: TRACKED,
+    },
+    { match: "ls", stdout: LISTING },
+    { match: "cat", stdout: MANIFEST },
+    { match: "sha256sum", stdout: "abc123  package-lock.json\n" },
+    {
+      match: (argv) => argv[0] === "npm" && argv[1] === "--version",
+      stdout: "10.0.0\n",
+    },
+    {
+      match: (argv) => argv[0] === "npm" && argv[1] === "run",
+      stdout: "fixture tests passed\n",
+    },
+  ];
+
+  return new FakeSandboxProvider({
+    script,
+    files: { [`${REPO_DIR}/README.md`]: "The agent fixture.\n" },
+  });
+}
+
+function agentPipeline(
+  sandbox: FakeSandboxProvider,
+  coding: FakeCodingAgent,
+): ReturnType<typeof buildPipeline> {
+  return buildPipeline({
+    ...PIPELINE_OPTIONS,
+    sandbox,
+    agent: { ...AGENT_OPTIONS, coding },
+  });
+}
+
+function successfulSession(sessionId = "fake-session-1"): ScriptedSession {
+  const events: CodingAgentEvent[] = [
+    {
+      type: "session_started",
+      sessionId,
+      model: "fixture-model",
+      provider: "fixture-provider",
+      toolNames: ["bash", "edit", "read", "write"],
+    },
+    { type: "turn_started", turn: 0 },
+    { type: "assistant_message", turn: 0, text: "I found the fixture." },
+    { type: "usage", turn: 0, usage: USAGE },
+    { type: "turn_completed", turn: 0 },
+    { type: "session_ended", reason: "completed", turns: 1, usage: USAGE },
+  ];
+
+  return {
+    events,
+    useTools: async (tools, signal) => {
+      const command = await tools.exec({
+        argv: ["bash", "-lc", "printf agent-shell"],
+        cwd: REPO_DIR,
+        timeoutMs: 500,
+      });
+      events.splice(
+        3,
+        0,
+        {
+          type: "tool_started",
+          turn: 0,
+          toolCallId: "fixture-call-1",
+          toolName: "bash",
+          argsPreview: '{"command":"printf agent-shell"}',
+          commandExecutionId: command.commandExecutionId,
+        },
+        {
+          type: "tool_completed",
+          turn: 0,
+          toolCallId: "fixture-call-1",
+          toolName: "bash",
+          isError: false,
+          durationMs: command.durationMs,
+          resultPreview: "agent-shell",
+          commandExecutionId: command.commandExecutionId,
+        },
+      );
+      signal.throwIfAborted();
+    },
+  };
+}
+
+function sessionStarted(): CodingAgentEvent {
+  return {
+    type: "session_started",
+    sessionId: "fake-session-1",
+    model: "fixture-model",
+    provider: "fixture-provider",
+    toolNames: ["bash", "edit", "read", "write"],
+  };
+}
+
+describe("coding-agent execution through the worker", () => {
+  it("completes with ordered agent events and a command transcript", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({ script: [successfulSession()] });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const completed = await waitForStatus(job.id, "completed");
+    const events = await readEvents(job.id);
+    const agentEvents = events.filter((event) => event.type.startsWith("agent."));
+    const commands = await listCommands(job.id);
+
+    expect(agentEvents.map((event) => event.type)).toEqual([
+      "agent.session_started",
+      "agent.turn_started",
+      "agent.message",
+      "agent.tool_started",
+      "agent.tool_completed",
+      "agent.usage",
+      "agent.session_ended",
+    ]);
+    expect(completed.totalInputTokens).toBe(1_000);
+    expect(completed.totalOutputTokens).toBe(200);
+    expect(completed.totalCostUsd).toBe("0.2500");
+
+    const shellCommand = commands.find(
+      (command) => command.phase === "implementing" && command.argv[0] === "bash",
+    );
+    expect(shellCommand).toBeDefined();
+    expect(shellCommand?.argv).toEqual(["bash", "-lc", "printf agent-shell"]);
+
+    const started = agentEvents.find((event) => event.type === "agent.tool_started");
+    const finished = agentEvents.find((event) => event.type === "agent.tool_completed");
+    const commandStarted = events.find(
+      (event) =>
+        event.type === "command.started" &&
+        event.data?.commandExecutionId === started?.data?.commandExecutionId,
+    );
+    const commandFinished = events.find(
+      (event) =>
+        event.type === "command.completed" &&
+        event.data?.commandExecutionId === finished?.data?.commandExecutionId,
+    );
+    expect(started?.data?.commandExecutionId).toEqual(expect.any(String));
+    expect(finished?.data?.commandExecutionId).toBe(started?.data?.commandExecutionId);
+    expect(commandStarted?.data?.phase).toBe("Implement change");
+    expect(commandFinished?.data?.phase).toBe("Implement change");
+    expect(sandbox.sandboxes.every((entry) => entry.destroyed)).toBe(true);
+  });
+
+  it("cancels a hanging session within one heartbeat and records an aborted ending", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({ script: [{ events: [sessionStarted()], hang: true }] });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+    await waitFor(
+      async () =>
+        (await readEvents(job.id)).some((event) => event.type === "agent.session_started")
+          ? true
+          : null,
+      { label: "the coding session to start" },
+    );
+
+    const requestedAt = Date.now();
+    await expect(requestJobCancellation(job.id, queue.queue)).resolves.toMatchObject({
+      outcome: "cancel_requested",
+    });
+
+    const cancelled = await waitForStatus(job.id, "cancelled");
+    expect(cancelled.failureCategory).toBe("cancelled");
+    expect(Date.now() - requestedAt).toBeLessThan(TEST_CONFIG.heartbeatSeconds * 1_000 + 1_500);
+
+    const events = await readEvents(job.id);
+    expect(events.find((event) => event.type === "agent.session_ended")?.data).toMatchObject({
+      stopReason: "aborted",
+    });
+    expect(events.map((event) => event.type)).not.toContain("job.completed");
+    expect(agent.sessions[0]?.stopped).toBe(true);
+  });
+
+  it("lands in budget_exceeded when a scripted session crosses the tool ceiling", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({
+      script: [
+        {
+          events: [
+            sessionStarted(),
+            { type: "turn_started", turn: 0 },
+            {
+              type: "tool_started",
+              turn: 0,
+              toolCallId: "call-1",
+              toolName: "read",
+              argsPreview: "{}",
+            },
+            {
+              type: "tool_started",
+              turn: 0,
+              toolCallId: "call-2",
+              toolName: "read",
+              argsPreview: "{}",
+            },
+          ],
+        },
+      ],
+    });
+    const job = await createTestJob({ maxToolCalls: 1 });
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const exceeded = await waitForStatus(job.id, "budget_exceeded");
+    expect(exceeded.failureCategory).toBe("budget_exceeded");
+    const breach = await waitFor(
+      async () =>
+        (await readEvents(job.id)).find((event) => event.type === "agent.budget_exceeded"),
+      { label: "the persisted budget event" },
+    );
+    expect(breach.data).toMatchObject({
+      budget: "tool_calls",
+      budgetValue: 2,
+      budgetLimit: 1,
+    });
+    expect(
+      (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
+    ).toHaveLength(0);
+    expect(agent.sessions[0]?.stopped).toBe(true);
+  });
+
+  it("retries a provider 429 and completes the next scripted attempt", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({
+      script: [
+        { events: [], throws: new AgentUnavailableError("provider returned 429") },
+        successfulSession("fake-session-2"),
+      ],
+    });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const completed = await waitForStatus(job.id, "completed");
+    expect(completed.attemptCount).toBe(2);
+    expect(agent.starts).toHaveLength(2);
+    expect(
+      (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
+    ).toHaveLength(1);
+  });
+
+  it("does not retry a bad-key provider failure", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({
+      script: [{ events: [], throws: new AgentFailedError("invalid provider key") }],
+    });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const failed = await waitForStatus(job.id, "failed");
+    expect(failed.failureCategory).toBe("agent_failed");
+    expect(failed.attemptCount).toBe(1);
+    expect(agent.starts).toHaveLength(1);
+    expect(
+      (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
+    ).toHaveLength(0);
+  });
+
+  it("lets the job deadline stop a long session and land in timed_out", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({ script: [{ events: [sessionStarted()], hang: true }] });
+    const job = await createTestJob({ maxDurationSeconds: 1 });
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const timedOut = await waitForStatus(job.id, "timed_out");
+    expect(timedOut.failureCategory).toBe("timed_out");
+    expect(timedOut.failureReason).toContain("budget");
+    expect(agent.sessions[0]?.stopped).toBe(true);
+    expect((await eventTypes(job.id)).filter((type) => type === "job.completed")).toHaveLength(0);
+  });
+});

@@ -4,6 +4,7 @@ import type {
   CodingAgentEvent,
   CodingAgentSession,
   CodingAgentSpec,
+  CodingAgentUsage,
 } from "@rivet/core";
 
 /**
@@ -106,14 +107,22 @@ export class FakeCodingAgentSession implements CodingAgentSession {
 
     if (this.script.useTools) await this.script.useTools(this.tools, signal);
 
+    let turns = 0;
+    let usage = emptyUsage();
     for (const event of this.script.events) {
       if (this.script.delayMs) await pause(this.script.delayMs, signal);
       signal.throwIfAborted();
+      if (event.type === "turn_started") turns += 1;
+      if (event.type === "usage") usage = addUsage(usage, event.usage);
       yield event;
     }
 
     if (this.script.hang) {
       await waitForAbort(signal);
+      // The real Pi adapter reports an aborted session before its run ends. The
+      // fake has to do the same or an integration test that cancels a job would
+      // be testing a fake-only omission rather than the phase's lifecycle.
+      yield { type: "session_ended", reason: "aborted", turns, usage };
       signal.throwIfAborted();
       return;
     }
@@ -145,4 +154,24 @@ function waitForAbort(signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     signal.addEventListener("abort", () => resolve(), { once: true });
   });
+}
+
+function emptyUsage(): CodingAgentUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  };
+}
+
+function addUsage(total: CodingAgentUsage, next: CodingAgentUsage): CodingAgentUsage {
+  return {
+    inputTokens: total.inputTokens + next.inputTokens,
+    outputTokens: total.outputTokens + next.outputTokens,
+    cacheReadTokens: total.cacheReadTokens + next.cacheReadTokens,
+    cacheWriteTokens: total.cacheWriteTokens + next.cacheWriteTokens,
+    costUsd: total.costUsd === null || next.costUsd === null ? null : total.costUsd + next.costUsd,
+  };
 }

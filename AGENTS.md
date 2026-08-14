@@ -12,11 +12,12 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 3 is complete.** Jobs execute. Creating one enqueues it, a worker claims
-it under a Postgres lease, provisions a sandbox, records a baseline, walks the seven-phase pipeline,
-heartbeats while it runs, and lands it in a terminal status. Retries, cancellation, timeouts, and
-crash recovery all work and are covered by the integration suites. The five phases that do not yet
-need a coding agent remain simulated, and there is no model call until Milestones 4 and 5.
+**Current state: Milestone 4 is complete.** Jobs execute. Creating one enqueues it, a worker claims
+it under a Postgres lease, provisions a sandbox, records a baseline, runs a Pi coding session during
+`implementing`, heartbeats while it runs, and lands it in a terminal status. Retries, cancellation,
+timeouts, crash recovery, agent budgets, usage persistence, and provider failure classification all
+work and are covered by the unit and integration suites. Analysis, planning, review, and
+finalization remain simulated until later milestones.
 
 `packages/sandbox` is real; `buildPipeline()` gives `provisioning` and `testing` real bodies -
 create a container, clone the repository, resolve the commit, install dependencies, then run the
@@ -47,7 +48,9 @@ pnpm lint                # eslint, type-aware
 pnpm typecheck           # tsc --noEmit across every workspace
 pnpm test                # vitest across every workspace; no database, no Redis
 pnpm test:integration    # the *.int.test.ts suite; needs a LOCAL Postgres and Redis
+pnpm test:sandbox        # the *.sbx.test.ts suite; needs LOCAL Postgres, Redis and Docker
 pnpm test:streaming      # the web SSE suite; needs LOCAL Postgres, no Redis or Docker
+pnpm demo:agent          # one real Pi session against a disposable Docker fixture
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 
@@ -73,9 +76,11 @@ Turbo caches aggressively. Add `--force` when you need to prove something from c
 
 ### Running the integration suite locally
 
-34 tests in `apps/worker/tests/integration/*.int.test.ts`, about 15 seconds, against real Postgres,
-real Redis, and real BullMQ workers. They need both services on localhost. On this machine that is
-Homebrew's `postgresql@17` and `redis`:
+The integration suite in `apps/worker/tests/integration/*.int.test.ts` runs against real Postgres,
+real Redis, and real BullMQ workers. It covers the lease and queue lifecycle plus scripted-agent
+completion, cancellation, budgets, provider retries, terminal provider failures, and deadlines. The
+cases need both services on localhost. On this machine that is Homebrew's `postgresql@17` and
+`redis`:
 
 ```bash
 brew services start postgresql@17
@@ -105,11 +110,11 @@ set. It truncates `jobs` and `job_events`, so run it separately from the worker 
 Milestone 2 makes a job's sandbox a real container, so Docker Desktop is a prerequisite alongside
 Postgres and Redis - but only for running jobs for real. `pnpm build`, `pnpm test`, `pnpm lint` and
 `pnpm typecheck` still run with no database, no Redis **and no Docker daemon**, which is the
-property CI's `verify` job exists to protect. `RIVET_SANDBOX=off` selects the simulated pipeline and
-is what the integration suite runs under, so that suite still needs only Postgres and Redis. It is
-the one configuration `parseWorkerConfig` refuses under `NODE_ENV=production`: a worker that
-completes every job in twenty-one seconds without doing any work looks perfectly healthy, and that
-is the worst failure mode on offer.
+property CI's `verify` job exists to protect. `RIVET_SANDBOX=off` selects the simulated sandbox
+pipeline and `RIVET_AGENT=off` selects the simulated implementing phase. Those are what the
+integration suite runs under, so it still needs only Postgres and Redis. They are the configurations
+`parseWorkerConfig` refuses under `NODE_ENV=production`: a worker that completes a job without
+touching a repository looks perfectly healthy, and that is the worst failure mode on offer.
 
 ```bash
 brew install --cask docker-desktop   # needs sudo, so run it from a terminal that can prompt

@@ -197,7 +197,13 @@ export function startTestWorker(options: TestWorkerOptions): TestWorker {
 
 /** Creates a job row through the real service, with sensible test defaults. */
 export async function createTestJob(
-  overrides: Partial<{ title: string; maxDurationSeconds: number }> = {},
+  overrides: Partial<{
+    title: string;
+    maxDurationSeconds: number;
+    maxCostUsd: string;
+    maxModelCalls: number;
+    maxToolCalls: number;
+  }> = {},
 ) {
   const job = await createJob({
     title: overrides.title ?? "Integration test job",
@@ -206,13 +212,18 @@ export async function createTestJob(
     baseBranch: "main",
   });
 
-  if (overrides.maxDurationSeconds !== undefined) {
+  const patch = {
+    ...(overrides.maxDurationSeconds === undefined
+      ? {}
+      : { maxDurationSeconds: overrides.maxDurationSeconds }),
+    ...(overrides.maxCostUsd === undefined ? {} : { maxCostUsd: overrides.maxCostUsd }),
+    ...(overrides.maxModelCalls === undefined ? {} : { maxModelCalls: overrides.maxModelCalls }),
+    ...(overrides.maxToolCalls === undefined ? {} : { maxToolCalls: overrides.maxToolCalls }),
+  };
+  if (Object.keys(patch).length > 0) {
     // Not a status write, so it does not need `transitionJob`. `createJob` takes
-    // only the user-supplied fields, and the budget is a column default.
-    await db
-      .update(jobs)
-      .set({ maxDurationSeconds: overrides.maxDurationSeconds })
-      .where(eq(jobs.id, job.id));
+    // only the user-supplied fields, and these limits are columns with defaults.
+    await db.update(jobs).set(patch).where(eq(jobs.id, job.id));
   }
 
   return job;
