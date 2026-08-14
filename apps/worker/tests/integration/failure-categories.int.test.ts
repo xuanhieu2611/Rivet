@@ -1,3 +1,4 @@
+import type { JobEvent } from "@rivet/contracts";
 import {
   buildPipeline,
   requestJobRun,
@@ -112,8 +113,10 @@ async function runFailure(
 ): Promise<{
   attemptCount: number;
   failureCategory: string | null;
+  failureReason: string | null;
   attemptsMade: number;
   types: string[];
+  events: JobEvent[];
 }> {
   const job = await createTestJob();
   await requestJobRun(job.id, queue.queue);
@@ -135,8 +138,10 @@ async function runFailure(
   return {
     attemptCount: failed.attemptCount,
     failureCategory: failed.failureCategory,
+    failureReason: failed.failureReason,
     attemptsMade: message?.attemptsMade ?? 0,
     types: events.map((event) => event.type),
+    events,
   };
 }
 
@@ -182,6 +187,41 @@ describe("failure classification through the worker", () => {
     expect(result.failureCategory).toBe("repo_unavailable");
     expect(result.attemptCount).toBe(1);
     expect(result.attemptsMade).toBe(1);
+  });
+
+  it("records command.failed without replacing a sandbox exception", async () => {
+    const cause = new Error("sandbox socket closed");
+    const result = await runFailure(
+      pipelineFixture(
+        fixtureProvider([
+          {
+            match: (argv) => argv[0] === "git" && argv[1] === "clone",
+            throws: cause,
+          },
+        ]),
+      ),
+    );
+
+    const failedCommand = result.events.find((event) => event.type === "command.failed");
+    expect(result.failureCategory).toBe("unknown");
+    expect(result.failureReason).toContain(cause.message);
+    expect(typeof failedCommand?.data?.commandExecutionId).toBe("string");
+    expect(failedCommand?.data).toMatchObject({
+      argv: [
+        "git",
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        "main",
+        "--single-branch",
+        "https://github.com/rivet/example",
+        "/home/node/workspace/repo",
+      ],
+      cwd: "/home/node/workspace",
+      phase: "Provision sandbox",
+      error: cause.message,
+    });
   });
 
   it("does not retry an unsupported project", async () => {

@@ -42,15 +42,12 @@ export const JOB_EVENT_TYPES = [
   "sandbox.destroyed",
   "repo.cloned",
   "deps.installed",
-  /**
-   * One command finished inside the sandbox.
-   *
-   * Carries `argv`, `exitCode`, `durationMs` and `commandId` and nothing else:
-   * the transcript lives in `job_commands`, one join away, because the timeline
-   * is read in full on every render and a `pnpm install` transcript is neither
-   * small nor a fact.
-   */
+  /** A command is about to run inside the sandbox. */
+  "command.started",
+  /** A command finished inside the sandbox and its transcript was recorded. */
   "command.completed",
+  /** The sandbox could not start or finish the command call. */
+  "command.failed",
   /**
    * The repository's own test suite was run before anything was modified.
    *
@@ -176,6 +173,10 @@ export type JobEventData = {
   commandId?: number;
   /** The command as it was actually run. Never a shell string. */
   argv?: string[];
+  /** Correlates the lifecycle events for one command attempt. */
+  commandExecutionId?: string;
+  /** The exact directory passed to the sandbox. */
+  cwd?: string;
   /** The commit the clone resolved to, on `repo.cloned`. */
   commitSha?: string;
   /**

@@ -119,6 +119,16 @@ describe("real sandbox pipeline", () => {
         (event) => event.type === "baseline.recorded" && event.data?.baseline === "passed",
       ),
     ).toBe(true);
+
+    const started = events.filter((event) => event.type === "command.started");
+    const completedCommands = events.filter((event) => event.type === "command.completed");
+    expect(started).toHaveLength(commands.length);
+    expect(completedCommands).toHaveLength(commands.length);
+    for (const completedCommand of completedCommands) {
+      const executionId = completedCommand.data?.commandExecutionId;
+      expect(executionId).toEqual(expect.any(String));
+      expect(started.some((event) => event.data?.commandExecutionId === executionId)).toBe(true);
+    }
   });
 
   it("records a red baseline without failing the job", async () => {

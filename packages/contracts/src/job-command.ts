@@ -6,8 +6,8 @@ import type { JobStatus } from "./job";
  * A separate table from `job_events` rather than a fat event payload, because
  * the event log is read in full on every timeline render and is supposed to hold
  * small facts. A `pnpm install` transcript is neither. The timeline keeps a
- * one-line `command.completed` carrying the `commandId`; this is what lives one
- * join away and is fetched only when someone opens it.
+ * command lifecycle, with `command.completed` carrying the `commandId`; the
+ * transcript lives one join away and is fetched only when someone opens it.
  *
  * Append-only, like `job_events`. Nothing ever updates a row.
  */

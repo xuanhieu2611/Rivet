@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { JobDetail, JobEventData, JobEventType } from "@rivet/contracts";
 import { db, type Database } from "@rivet/database";
 
@@ -39,11 +41,13 @@ export interface PhaseContext {
   /**
    * Runs a command in the run's sandbox and records that it ran.
    *
-   * One call, three consequences: the command executes, a `job_commands` row
-   * holds its transcript, and a `command.completed` event points at that row.
-   * A non-zero exit comes back as a result rather than an exception - the phase
-   * is the only thing that knows whether this particular command was allowed to
-   * fail.
+   * One call, four consequences: a `command.started` event makes the attempt
+   * visible, the command executes, a `job_commands` row holds its transcript,
+   * and a `command.completed` event points at that row. If the sandbox call
+   * throws, a `command.failed` event preserves the attempt without changing the
+   * original exception. A non-zero exit comes back as a result rather than an
+   * exception - the phase is the only thing that knows whether this particular
+   * command was allowed to fail.
    */
   exec(input: PhaseExecInput): Promise<RecordedCommand>;
 
@@ -118,18 +122,66 @@ export function createPhaseContextFactory(
 
     async exec(input) {
       const sandbox = sandboxes.require();
+      const commandExecutionId = randomUUID();
       log.debug({ argv: input.argv, cwd: input.cwd }, "running a command in the sandbox");
 
-      const result = await sandbox.exec({
-        argv: input.argv,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs,
-        signal,
-        maxOutputBytes: input.maxOutputBytes ?? options.maxOutputBytes,
-        // `exactOptionalPropertyTypes` is on, so an absent env has to be an
-        // absent key rather than an explicit `undefined`.
-        ...(input.env ? { env: input.env } : {}),
-      });
+      // Make the attempt visible before Docker gets a chance to do anything.
+      // If this write fails, the command is deliberately not run: an action we
+      // cannot audit from its first moment is worse than a failed attempt.
+      await appendEvent(
+        {
+          jobId: job.id,
+          type: "command.started",
+          message: `${input.argv.join(" ")} started`,
+          data: {
+            commandExecutionId,
+            argv: input.argv,
+            cwd: input.cwd,
+            phase: phase.label,
+          },
+        },
+        database,
+      );
+
+      let result: ExecResult;
+      try {
+        result = await sandbox.exec({
+          argv: input.argv,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs,
+          signal,
+          maxOutputBytes: input.maxOutputBytes ?? options.maxOutputBytes,
+          // `exactOptionalPropertyTypes` is on, so an absent env has to be an
+          // absent key rather than an explicit `undefined`.
+          ...(input.env ? { env: input.env } : {}),
+        });
+      } catch (cause) {
+        try {
+          await appendEvent(
+            {
+              jobId: job.id,
+              type: "command.failed",
+              message: `${input.argv.join(" ")} failed: ${describeError(cause)}`,
+              data: {
+                commandExecutionId,
+                argv: input.argv,
+                cwd: input.cwd,
+                phase: phase.label,
+                error: describeError(cause),
+              },
+            },
+            database,
+          );
+        } catch (eventError) {
+          // The sandbox error is the authoritative failure. A database outage
+          // while recording this secondary event must never replace it.
+          log.warn(
+            { err: eventError, commandExecutionId },
+            "could not record command failure event",
+          );
+        }
+        throw cause;
+      }
 
       // The row and the event that points at it go in together, for the same
       // reason a status change and its event do: an event carrying a
@@ -144,6 +196,7 @@ export function createPhaseContextFactory(
             // Deliberately not the transcript. The timeline is read in full on
             // every render; the output is one join away in `job_commands`.
             data: {
+              commandExecutionId,
               argv: result.argv,
               exitCode: result.exitCode,
               durationMs: result.durationMs,
@@ -183,4 +236,8 @@ export function createPhaseContextFactory(
       }
     },
   });
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

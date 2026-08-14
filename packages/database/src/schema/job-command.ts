@@ -22,8 +22,9 @@ import { jobs } from "./job";
  * It is a table of its own rather than a `job_events` payload because the event
  * log is read in full on every timeline render and is meant to hold small facts.
  * A `pnpm install` transcript is neither small nor a fact. The timeline keeps a
- * one-line `command.completed` carrying `argv`, `exitCode`, `durationMs` and the
- * id of the row below; the transcript is fetched only when someone opens it.
+ * command lifecycle carrying `argv`, `exitCode`, `durationMs` and the id of the
+ * row below on `command.completed`; the transcript is fetched only when someone
+ * opens it.
  *
  * Milestone 4's `tool_calls` sits next to this and has the same shape, which is
  * the other reason to get it right now.

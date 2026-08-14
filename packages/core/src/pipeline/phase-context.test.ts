@@ -1,0 +1,175 @@
+import type { JobCommand, JobDetail, JobEvent } from "@rivet/contracts";
+import type { Database } from "@rivet/database";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { AppendEventInput } from "../events/event-service";
+import { appendEvent } from "../events/event-service";
+import { recordCommand } from "../sandbox/command-log";
+import type { ExecResult, Sandbox } from "../sandbox/sandbox";
+import { SandboxHolder } from "../sandbox/sandbox-holder";
+import { createPhaseContextFactory, type PhaseExecInput, type PhaseLogger } from "./phase-context";
+
+vi.mock("../events/event-service", () => ({ appendEvent: vi.fn() }));
+vi.mock("../sandbox/command-log", () => ({ recordCommand: vi.fn() }));
+
+const JOB = {
+  id: "11111111-2222-3333-4444-555555555555",
+} as unknown as JobDetail;
+
+const PHASE = {
+  status: "provisioning",
+  label: "Provision sandbox",
+  durationMs: 0,
+} as const;
+
+const INPUT: PhaseExecInput = {
+  argv: ["git", "clone", "https://example.com/repo.git"],
+  cwd: "/home/node/workspace",
+  timeoutMs: 10_000,
+};
+
+const RESULT: ExecResult = {
+  argv: INPUT.argv,
+  cwd: INPUT.cwd,
+  exitCode: 0,
+  stdout: "cloned\n",
+  stderr: "",
+  truncated: false,
+  timedOut: false,
+  oomKilled: false,
+  durationMs: 12,
+};
+
+function fakeDatabase() {
+  const transaction = vi.fn((callback: (tx: unknown) => Promise<unknown>) =>
+    Promise.resolve(callback({})),
+  );
+  return { database: { transaction } as unknown as Database, transaction };
+}
+
+function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)) {
+  const holder = new SandboxHolder();
+  const events: AppendEventInput[] = [];
+  const sequence: string[] = [];
+  const sandboxExec = vi.fn(() => {
+    sequence.push("exec");
+    return exec();
+  });
+  const sandbox: Sandbox = {
+    id: "sandbox-1",
+    exec: sandboxExec,
+    destroy: () => Promise.resolve(),
+  };
+  holder.set(sandbox);
+
+  const { database, transaction } = fakeDatabase();
+  const warn = vi.fn<PhaseLogger["warn"]>();
+
+  vi.mocked(appendEvent).mockImplementation((input) => {
+    events.push(input);
+    sequence.push(`event:${input.type}`);
+    return Promise.resolve({} as JobEvent);
+  });
+  vi.mocked(recordCommand).mockImplementation(() => {
+    sequence.push("record");
+    return Promise.resolve({ id: 17 } as JobCommand);
+  });
+
+  const context = createPhaseContextFactory({
+    job: JOB,
+    leaseOwner: "worker-1",
+    sandboxes: holder,
+    signal: new AbortController().signal,
+    log: { debug: vi.fn(), info: vi.fn(), warn },
+    maxOutputBytes: 1_024,
+    database,
+  })(PHASE);
+
+  return { context, events, sequence, sandboxExec, transaction, warn };
+}
+
+describe("PhaseContext command lifecycle", () => {
+  beforeEach(() => {
+    vi.mocked(appendEvent).mockReset();
+    vi.mocked(recordCommand).mockReset();
+  });
+
+  it("records a start before execution and pairs completion with the same id", async () => {
+    const test = harness();
+
+    const result = await test.context.exec(INPUT);
+
+    expect(test.sequence).toEqual([
+      "event:command.started",
+      "exec",
+      "record",
+      "event:command.completed",
+    ]);
+    expect(test.sandboxExec).toHaveBeenCalledOnce();
+    expect(test.transaction).toHaveBeenCalledOnce();
+    expect(result.commandId).toBe(17);
+
+    const started = test.events[0];
+    const completed = test.events[1];
+    expect(typeof started?.data?.commandExecutionId).toBe("string");
+    expect(started?.data).toMatchObject({
+      argv: INPUT.argv,
+      cwd: INPUT.cwd,
+      phase: PHASE.label,
+    });
+    expect(completed?.data).toMatchObject({
+      commandExecutionId: started?.data?.commandExecutionId,
+      commandId: 17,
+      argv: RESULT.argv,
+      exitCode: RESULT.exitCode,
+      durationMs: RESULT.durationMs,
+    });
+  });
+
+  it("records a failed command and rethrows the sandbox error", async () => {
+    const cause = new Error("sandbox socket closed");
+    const test = harness(() => Promise.reject(cause));
+
+    await expect(test.context.exec(INPUT)).rejects.toBe(cause);
+
+    expect(test.sequence).toEqual(["event:command.started", "exec", "event:command.failed"]);
+    expect(test.transaction).not.toHaveBeenCalled();
+    expect(test.events[1]?.data).toMatchObject({
+      commandExecutionId: test.events[0]?.data?.commandExecutionId,
+      argv: INPUT.argv,
+      cwd: INPUT.cwd,
+      phase: PHASE.label,
+      error: cause.message,
+    });
+  });
+
+  it("does not mask the sandbox error when the failed event cannot be written", async () => {
+    const cause = new Error("container disappeared");
+    const eventWriteError = new Error("database unavailable");
+    const test = harness(() => Promise.reject(cause));
+    vi.mocked(appendEvent).mockImplementation((input) => {
+      test.events.push(input);
+      test.sequence.push(`event:${input.type}`);
+      if (input.type === "command.failed") return Promise.reject(eventWriteError);
+      return Promise.resolve({} as JobEvent);
+    });
+
+    await expect(test.context.exec(INPUT)).rejects.toBe(cause);
+
+    const warning = test.warn.mock.calls[0];
+    expect(warning?.[0].err).toBe(eventWriteError);
+    expect(typeof warning?.[0].commandExecutionId).toBe("string");
+    expect(warning?.[1]).toBe("could not record command failure event");
+  });
+
+  it("does not execute a command when its start event cannot be written", async () => {
+    const eventWriteError = new Error("database unavailable");
+    const test = harness();
+    vi.mocked(appendEvent).mockRejectedValue(eventWriteError);
+
+    await expect(test.context.exec(INPUT)).rejects.toBe(eventWriteError);
+
+    expect(test.sandboxExec).not.toHaveBeenCalled();
+    expect(test.transaction).not.toHaveBeenCalled();
+  });
+});
