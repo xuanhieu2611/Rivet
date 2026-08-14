@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { JobStatus } from "./job";
+import { jobStatusSchema, type JobStatus } from "./job";
 
 /**
  * The vocabulary of the append-only job event log.
@@ -203,4 +203,95 @@ export interface JobEvent {
   message: string;
   data: JobEventData | null;
   createdAt: Date;
+}
+
+/** The JSON shape sent by the events API and passed across a client boundary. */
+export type SerializedJobEvent = Omit<JobEvent, "createdAt"> & { createdAt: string };
+
+const safeEventIdSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .refine(Number.isSafeInteger, "Event id must be a safe integer.");
+
+const eventDateSchema = z
+  .string()
+  .refine((value) => Number.isFinite(Date.parse(value)), "Event date must be a valid ISO date.");
+
+const jobEventDataSchema = z
+  .object({
+    from: jobStatusSchema.optional(),
+    to: jobStatusSchema.optional(),
+    phase: z.string().optional(),
+    durationMs: z.number().finite().optional(),
+    attempt: z.number().int().nonnegative().optional(),
+    failureCategory: failureCategorySchema.optional(),
+    error: z.string().optional(),
+    leaseOwner: z.string().optional(),
+    containerId: z.string().optional(),
+    exitCode: z.number().int().nullable().optional(),
+    commandId: safeEventIdSchema.optional(),
+    argv: z.array(z.string()).optional(),
+    commandExecutionId: z.string().optional(),
+    cwd: z.string().optional(),
+    commitSha: z.string().optional(),
+    baseline: z.enum(["passed", "failed", "skipped"]).optional(),
+  })
+  .passthrough();
+
+const serializedJobEventSchema = z.object({
+  id: safeEventIdSchema,
+  jobId: z.string().min(1),
+  type: jobEventTypeSchema,
+  message: z.string(),
+  data: jobEventDataSchema.nullable(),
+  createdAt: eventDateSchema,
+});
+
+/** Converts a database event into the JSON shape used by the browser. */
+export function serializeJobEvent(event: JobEvent): SerializedJobEvent {
+  return { ...event, createdAt: event.createdAt.toISOString() };
+}
+
+/** Validates a JSON event and restores its in-memory `Date` value. */
+export function parseSerializedJobEvent(value: unknown): JobEvent {
+  const parsed = serializedJobEventSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(`Invalid job event: ${parsed.error.message}`);
+  }
+
+  return {
+    ...parsed.data,
+    data: parsed.data.data === null ? null : normalizeJobEventData(parsed.data.data),
+    createdAt: new Date(parsed.data.createdAt),
+  };
+}
+
+function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEventData {
+  const known: JobEventData = {
+    ...(value.from === undefined ? {} : { from: value.from }),
+    ...(value.to === undefined ? {} : { to: value.to }),
+    ...(value.phase === undefined ? {} : { phase: value.phase }),
+    ...(value.durationMs === undefined ? {} : { durationMs: value.durationMs }),
+    ...(value.attempt === undefined ? {} : { attempt: value.attempt }),
+    ...(value.failureCategory === undefined ? {} : { failureCategory: value.failureCategory }),
+    ...(value.error === undefined ? {} : { error: value.error }),
+    ...(value.leaseOwner === undefined ? {} : { leaseOwner: value.leaseOwner }),
+    ...(value.containerId === undefined ? {} : { containerId: value.containerId }),
+    ...(value.exitCode === undefined ? {} : { exitCode: value.exitCode }),
+    ...(value.commandId === undefined ? {} : { commandId: value.commandId }),
+    ...(value.argv === undefined ? {} : { argv: value.argv }),
+    ...(value.commandExecutionId === undefined
+      ? {}
+      : { commandExecutionId: value.commandExecutionId }),
+    ...(value.cwd === undefined ? {} : { cwd: value.cwd }),
+    ...(value.commitSha === undefined ? {} : { commitSha: value.commitSha }),
+    ...(value.baseline === undefined ? {} : { baseline: value.baseline }),
+  };
+  const knownKeys = new Set(Object.keys(known));
+  const extras = Object.fromEntries(
+    Object.entries(value).filter(([key, entry]) => !knownKeys.has(key) && entry !== undefined),
+  );
+
+  return Object.assign(known, extras);
 }
