@@ -107,6 +107,7 @@ function harness(options: { respond?: Responder } = {}) {
     },
 
     recordProvisioning: () => Promise.resolve(),
+    recordAgentUsage: () => Promise.resolve(),
   };
 
   return {

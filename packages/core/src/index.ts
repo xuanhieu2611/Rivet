@@ -20,6 +20,7 @@
 
 export * from "./agent/errors";
 export * from "./events/event-service";
+export * from "./jobs/agent-usage";
 export * from "./jobs/cancel";
 export * from "./jobs/claims";
 export * from "./jobs/enqueue";

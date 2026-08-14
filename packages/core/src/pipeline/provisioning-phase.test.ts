@@ -117,6 +117,7 @@ function harness(options: { respond?: Responder; createFails?: Error } = {}) {
       patches.push(patch);
       return Promise.resolve();
     },
+    recordAgentUsage: () => Promise.resolve(),
   };
 
   return {

@@ -147,6 +147,7 @@ function harness(
   const warnings: Record<string, unknown>[] = [];
   const reads: string[] = [];
   const writes: { path: string; content: string }[] = [];
+  const usages: Record<string, unknown>[] = [];
 
   const sandbox: Sandbox = {
     id: "c0ffee0c0ffee",
@@ -212,6 +213,10 @@ function harness(
     },
 
     recordProvisioning: () => Promise.resolve(),
+    recordAgentUsage: (patch) => {
+      usages.push(patch);
+      return Promise.resolve();
+    },
   };
 
   return {
@@ -223,6 +228,7 @@ function harness(
     warnings,
     reads,
     writes,
+    usages,
     typesOf: () => events.map((event) => event.type),
     find: (type: string) => events.find((event) => event.type === type),
   };
@@ -336,6 +342,10 @@ describe("implementingPhase", () => {
     expect(ended?.data?.inputTokens).toBe(2_000);
     expect(ended?.data?.outputTokens).toBe(400);
     expect(ended?.data?.costUsd).toBeCloseTo(0.5);
+    expect(test.usages).toEqual([
+      { totalInputTokens: 1_000, totalOutputTokens: 200, totalCostUsd: "0.2500" },
+      { totalInputTokens: 2_000, totalOutputTokens: 400, totalCostUsd: "0.5000" },
+    ]);
   });
 
   it("stops the session on the happy path", async () => {
@@ -429,6 +439,21 @@ describe("implementingPhase", () => {
     await test.run();
 
     expect(agent.specs[0]?.limits.maxCostUsd).toBeNull();
+  });
+
+  it("starts persisted totals from the job row on a reclaimed attempt", async () => {
+    const test = harness({
+      job: { totalInputTokens: 900, totalOutputTokens: 100, totalCostUsd: "1.1250" },
+      agent: new ScriptedAgent({
+        events: [{ type: "usage", turn: 0, usage: USAGE }],
+      }),
+    });
+
+    await test.run();
+
+    expect(test.usages).toEqual([
+      { totalInputTokens: 1_900, totalOutputTokens: 300, totalCostUsd: "1.3750" },
+    ]);
   });
 });
 

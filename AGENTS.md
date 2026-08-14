@@ -216,16 +216,17 @@ buys: it contains the _model_, not the harness. Nothing sandboxes the harness pr
 
 **`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
 merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, so a caller cannot
-sneak a status through the patch. There are exactly four `.update(jobs)` sites in `packages/`, and
-the other three touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
-`cancel_requested_at`, and `jobs/provisioning.ts` writes `sandbox_id`, `base_commit_sha` and
-`env_fingerprint` fenced on `lease_owner`. That fourth one takes the same patch type, so it cannot
-touch `status` either; it exists because those columns become true when a command answers, not when
-the job later changes phase, and a fact recorded at a moment that has nothing to do with the fact is
-how a timeline starts lying. Stamping a cancel is deliberately not a status change; the job reaches
-`cancelled` through the worker's own transition under its own lease. Every status change is a
-compare-and-swap on the expected `from` status, optionally fenced on `lease_owner`, and writes its
-event row in the same transaction. Adding a fourth status writer breaks all of that at once.
+sneak a status through the patch. There are exactly five `.update(jobs)` sites in `packages/`, and
+the other four touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
+`cancel_requested_at`, `jobs/provisioning.ts` writes `sandbox_id`, `base_commit_sha` and
+`env_fingerprint`, and `jobs/agent-usage.ts` writes cumulative model totals fenced on `lease_owner`.
+The last two take the same patch type, so neither can touch `status`; they exist because those facts
+become true when a command or model turn answers, not when the job later changes phase, and a fact
+recorded at a moment that has nothing to do with the fact is how a timeline starts lying. Stamping a
+cancel is deliberately not a status change; the job reaches `cancelled` through the worker's own
+transition under its own lease. Every status change is a compare-and-swap on the expected `from`
+status, optionally fenced on `lease_owner`, and writes its event row in the same transaction. Adding
+another status writer breaks all of that at once.
 
 **`appendEvent()` is the only writer of `job_events`, and it takes an `Executor`.** Pass the
 transaction and the event lands atomically with the status change it describes; pass nothing and it

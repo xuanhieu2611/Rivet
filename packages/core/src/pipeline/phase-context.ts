@@ -4,6 +4,7 @@ import type { JobDetail, JobEventData, JobEventType } from "@rivet/contracts";
 import { db, type Database } from "@rivet/database";
 
 import { appendEvent } from "../events/event-service";
+import { type AgentUsagePatch, recordAgentUsage as persistAgentUsage } from "../jobs/agent-usage";
 import { LeaseLostError } from "../jobs/failure";
 import { type ProvisioningPatch, recordProvisioning } from "../jobs/provisioning";
 import { recordCommand } from "../sandbox/command-log";
@@ -56,6 +57,8 @@ export interface PhaseContext {
 
   /** Records what the run is executing in. Throws `LeaseLostError` if the lease is gone. */
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
+  /** Records cumulative coding-agent usage. Throws `LeaseLostError` if the lease is gone. */
+  recordAgentUsage(patch: AgentUsagePatch): Promise<void>;
 }
 
 /** The slice of a pino logger a phase uses. Structured first, message second. */
@@ -243,6 +246,15 @@ export function createPhaseContextFactory(
         // is write into a run that is not ours.
         throw new LeaseLostError(
           `Job ${job.id} is no longer leased by ${leaseOwner}; provisioning stood down.`,
+        );
+      }
+    },
+
+    async recordAgentUsage(patch) {
+      const held = await persistAgentUsage(job.id, leaseOwner, patch, database);
+      if (!held) {
+        throw new LeaseLostError(
+          `Job ${job.id} is no longer leased by ${leaseOwner}; agent usage stood down.`,
         );
       }
     },

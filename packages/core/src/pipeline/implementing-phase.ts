@@ -7,6 +7,7 @@ import type {
   CodingAgentSpec,
   CodingAgentUsage,
 } from "../agent/coding-agent";
+import type { AgentUsagePatch } from "../jobs/agent-usage";
 import { BudgetExceededError } from "../jobs/failure";
 import { splitLines } from "./command-output";
 import type { PhaseContext } from "./phase-context";
@@ -155,18 +156,24 @@ class SessionAccounting {
   private toolCalls = 0;
   private warnedAboutCost = false;
 
-  private readonly total: CodingAgentUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    costUsd: 0,
-  };
+  private readonly total: CodingAgentUsage;
+  private readonly sessionTotal: CodingAgentUsage = emptyUsage();
 
   constructor(
     private readonly spec: CodingAgentSpec,
     private readonly ctx: PhaseContext,
-  ) {}
+  ) {
+    // A reclaimed attempt starts from the usage already persisted by its
+    // predecessor. Older unit fixtures may not carry the M4 columns, so the
+    // undefined fallback is intentional and keeps the phase port-compatible.
+    this.total = {
+      inputTokens: ctx.job.totalInputTokens ?? 0,
+      outputTokens: ctx.job.totalOutputTokens ?? 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: parseStoredCost(ctx.job.totalCostUsd),
+    };
+  }
 
   async record(event: CodingAgentEvent): Promise<void> {
     switch (event.type) {
@@ -228,11 +235,15 @@ class SessionAccounting {
 
       case "usage": {
         this.add(event.usage);
+        // Persist after every completed turn rather than only at session end.
+        // A provider failure, cancellation or budget breach after this point
+        // must not erase usage the provider already reported.
+        await this.ctx.recordAgentUsage(this.usagePatch());
         await this.write("agent.usage", this.describeUsage(event.usage), {
           turn: event.turn,
           inputTokens: event.usage.inputTokens,
           outputTokens: event.usage.outputTokens,
-          costUsd: this.total.costUsd,
+          costUsd: this.sessionTotal.costUsd,
         });
         this.checkCost();
         return;
@@ -247,9 +258,9 @@ class SessionAccounting {
         await this.write("agent.session_ended", `Session ended: ${event.reason}.`, {
           stopReason: event.reason,
           turns: event.turns,
-          inputTokens: this.total.inputTokens,
-          outputTokens: this.total.outputTokens,
-          costUsd: this.total.costUsd,
+          inputTokens: this.sessionTotal.inputTokens,
+          outputTokens: this.sessionTotal.outputTokens,
+          costUsd: this.sessionTotal.costUsd,
           ...(event.error ? { error: event.error } : {}),
         });
         return;
@@ -258,22 +269,27 @@ class SessionAccounting {
   }
 
   private add(usage: CodingAgentUsage): void {
-    this.total.inputTokens += usage.inputTokens;
-    this.total.outputTokens += usage.outputTokens;
-    this.total.cacheReadTokens += usage.cacheReadTokens;
-    this.total.cacheWriteTokens += usage.cacheWriteTokens;
-    // Null is contagious, because the sum of the turns that happened to be
-    // priced is not the bill. Reporting it as if it were would understate spend
-    // by exactly the amount nobody can see.
-    this.total.costUsd =
-      this.total.costUsd === null || usage.costUsd === null
-        ? null
-        : this.total.costUsd + usage.costUsd;
+    addUsage(this.total, usage);
+    addUsage(this.sessionTotal, usage);
+  }
+
+  private usagePatch(): AgentUsagePatch {
+    return {
+      totalInputTokens: this.total.inputTokens,
+      totalOutputTokens: this.total.outputTokens,
+      // The database column is non-null and has no representation for an
+      // unpriced model. Keep the durable total at its last known value while
+      // the event stream carries the explicit null that tells the UI spend is
+      // not computable.
+      ...(this.total.costUsd === null ? {} : { totalCostUsd: this.total.costUsd.toFixed(4) }),
+    };
   }
 
   private describeUsage(usage: CodingAgentUsage): string {
     const tokens = `${usage.inputTokens} in / ${usage.outputTokens} out`;
-    if (this.total.costUsd !== null) return `${tokens}, $${this.total.costUsd.toFixed(4)} so far.`;
+    if (this.sessionTotal.costUsd !== null) {
+      return `${tokens}, $${this.sessionTotal.costUsd.toFixed(4)} this session.`;
+    }
     return `${tokens}. This model has no rate table, so spend cannot be computed.`;
   }
 
@@ -337,6 +353,29 @@ class SessionAccounting {
       data: { ...data, ...(this.sessionId ? { sessionId: this.sessionId } : {}) },
     });
   }
+}
+
+function emptyUsage(): CodingAgentUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+  };
+}
+
+/** Adds one provider report to either the job or current-session total. */
+function addUsage(total: CodingAgentUsage, usage: CodingAgentUsage): void {
+  total.inputTokens += usage.inputTokens;
+  total.outputTokens += usage.outputTokens;
+  total.cacheReadTokens += usage.cacheReadTokens;
+  total.cacheWriteTokens += usage.cacheWriteTokens;
+  // Null is contagious, because the sum of the turns that happened to be
+  // priced is not the bill. Reporting it as if it were would understate spend
+  // by exactly the amount nobody can see.
+  total.costUsd =
+    total.costUsd === null || usage.costUsd === null ? null : total.costUsd + usage.costUsd;
 }
 
 const LIMIT_LABELS: Record<BudgetExceededError["which"], string> = {
@@ -438,4 +477,10 @@ function parseCostCeiling(value: string | null | undefined): number | null {
   if (value === null || value === undefined || value.trim() === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseStoredCost(value: string | null | undefined): number | null {
+  if (value === null || value === undefined || value.trim() === "") return 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }

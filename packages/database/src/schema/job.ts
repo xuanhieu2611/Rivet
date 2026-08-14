@@ -67,6 +67,13 @@ export const jobs = pgTable(
     maxModelCalls: integer("max_model_calls").notNull().default(200),
     maxToolCalls: integer("max_tool_calls").notNull().default(500),
 
+    // --- agent usage (M4) -----------------------------------------------
+    // These are cumulative job totals, including usage persisted before an
+    // attempt is interrupted. The phase writes them under the worker lease.
+    totalInputTokens: integer("total_input_tokens").notNull().default(0),
+    totalOutputTokens: integer("total_output_tokens").notNull().default(0),
+    totalCostUsd: numeric("total_cost_usd", { precision: 10, scale: 4 }).notNull().default("0"),
+
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -120,7 +127,7 @@ export const jobs = pgTable(
     /**
      * The container currently running this job, null when none exists.
      *
-     * Written by `recordProvisioning()`, which is why this milestone adds a
+     * Written by `recordProvisioning()`, which is why Milestone 2 added a
      * fourth `.update(jobs)` site. It cannot touch `status` - the patch type is
      * the same `Omit<Partial<NewJob>, "status">` every other writer takes.
      *
