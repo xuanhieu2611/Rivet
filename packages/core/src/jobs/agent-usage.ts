@@ -10,7 +10,7 @@ import { and, eq, sql } from "drizzle-orm";
  */
 export type AgentUsagePatch = Pick<
   Omit<Partial<NewJob>, "status">,
-  "totalInputTokens" | "totalOutputTokens" | "totalCostUsd"
+  "totalInputTokens" | "totalOutputTokens" | "totalCostUsd" | "totalTurns"
 >;
 
 /**

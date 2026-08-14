@@ -17,8 +17,10 @@ import { z } from "zod";
 
 import { appendEvent } from "../events/event-service";
 import { CheckpointCorruptError, CheckpointTooLargeError, LeaseLostError } from "../jobs/failure";
+import type { CheckpointPatchStats } from "./workspace-snapshot";
 
 export { CheckpointCorruptError, CheckpointTooLargeError } from "../jobs/failure";
+export type { CheckpointPatchStats } from "./workspace-snapshot";
 
 /** The only checkpoint state schema supported by this version of Rivet. */
 export const CHECKPOINT_STATE_VERSION = 1 as const;
@@ -99,6 +101,8 @@ export interface RecordCheckpointInput {
   state: unknown;
   /** Uncompressed, lossless Git patch bytes relative to `baseCommitSha`. */
   patch: Uint8Array;
+  /** Patch totals computed before persistence, for checkpoint observability. */
+  patchStats?: CheckpointPatchStats;
   /** Required policy supplied by the worker, not owned by core. */
   maxBytes: number;
   /** The fencing token. Checkpoints are never written without an active lease. */
@@ -572,6 +576,7 @@ async function insertCheckpoint(
         patchSha256: checkpoint.patchSha256,
         patchByteSize: checkpoint.patchByteSize,
         patchCompressedBytes: checkpoint.patchCompressedBytes,
+        ...(input.patchStats ?? {}),
       },
       leaseOwner: input.leaseOwner,
     },
@@ -653,6 +658,7 @@ function validateRecordInput(input: RecordCheckpointInput): void {
   if (!(input.patch instanceof Uint8Array)) {
     throw new CheckpointCorruptError("A checkpoint patch must be a Uint8Array.");
   }
+  if (input.patchStats !== undefined) validatePatchStats(input.patchStats);
   if (input.agentTurn !== undefined && input.agentTurn !== null) {
     if (!Number.isSafeInteger(input.agentTurn) || input.agentTurn < 0) {
       throw new CheckpointCorruptError(`Invalid checkpoint agent turn: ${input.agentTurn}.`);
@@ -762,6 +768,21 @@ function safeNonnegativeInteger(value: unknown, field: string): number {
     throw new CheckpointCorruptError(`Invalid checkpoint ${field}: ${String(value)}.`);
   }
   return value as number;
+}
+
+function validatePatchStats(value: CheckpointPatchStats): void {
+  for (const [name, count] of Object.entries(value)) {
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new CheckpointCorruptError(`Invalid checkpoint patch stat ${name}: ${String(count)}.`);
+    }
+  }
+  if (
+    !Object.prototype.hasOwnProperty.call(value, "filesChanged") ||
+    !Object.prototype.hasOwnProperty.call(value, "insertions") ||
+    !Object.prototype.hasOwnProperty.call(value, "deletions")
+  ) {
+    throw new CheckpointCorruptError("Checkpoint patch stats must include all three totals.");
+  }
 }
 
 function assertByteLimit(value: number): void {

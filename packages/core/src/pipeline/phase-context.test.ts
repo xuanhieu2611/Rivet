@@ -221,6 +221,57 @@ describe("PhaseContext command lifecycle", () => {
 });
 
 describe("PhaseContext checkpoints", () => {
+  beforeEach(() => {
+    vi.mocked(appendEvent).mockReset();
+    vi.mocked(recordCheckpoint).mockReset();
+  });
+
+  it("captures the workspace through an outside temporary index when no patch is supplied", async () => {
+    const test = harness();
+
+    await test.context.checkpoint({
+      kind: "agent_turn",
+      state: { version: 1 },
+      agentTurn: 4,
+      repositoryDir: "/home/node/workspace/repo",
+    });
+
+    expect(test.sandboxExec).toHaveBeenCalledTimes(4);
+    const calls = test.sandboxExec.mock.calls as unknown as [Parameters<Sandbox["exec"]>[0]][];
+    expect(calls.map(([call]) => call.argv.slice(0, 2))).toEqual([
+      ["git", "read-tree"],
+      ["git", "add"],
+      ["git", "diff"],
+      ["rm", "-f"],
+    ]);
+    expect(test.checkpoints[0]?.patch).toEqual(Buffer.from("cloned\n"));
+    expect(test.checkpoints[0]?.patchStats).toEqual({
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+    });
+  });
+
+  it("records a rejected checkpoint before surfacing a capture failure", async () => {
+    const test = harness(() => Promise.resolve({ ...RESULT, truncated: true }));
+
+    await expect(
+      test.context.checkpoint({
+        kind: "agent_turn",
+        state: { version: 1 },
+        agentTurn: 4,
+        repositoryDir: "/home/node/workspace/repo",
+      }),
+    ).rejects.toThrow(/truncated output/);
+
+    expect(test.events.find((event) => event.type === "checkpoint.rejected")?.data).toMatchObject({
+      checkpointKind: "agent_turn",
+      failureCategory: "checkpoint_corrupt",
+      argv: ["git", "read-tree", "HEAD"],
+    });
+    expect(vi.mocked(recordCheckpoint)).not.toHaveBeenCalled();
+  });
+
   it("supplies job and sandbox identity to the lease-fenced store", async () => {
     const test = harness();
 

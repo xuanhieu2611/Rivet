@@ -21,6 +21,7 @@
 export * from "./agent/errors";
 export * from "./artifacts/artifact-store";
 export * from "./checkpoints/checkpoint-store";
+export * from "./checkpoints/workspace-snapshot";
 export * from "./events/baseline-log";
 export * from "./events/event-service";
 export * from "./events/session-log";

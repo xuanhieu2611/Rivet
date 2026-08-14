@@ -2,6 +2,7 @@ import type { ImplementationPlan, JobDetail } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
 import { AgentSessionTimedOutError } from "../agent/errors";
+import type { JobCheckpoint } from "../checkpoints/checkpoint-store";
 import type {
   AgentToolbox,
   CodingAgent,
@@ -16,6 +17,7 @@ import type { ExecResult, Sandbox, SandboxProvider } from "../sandbox/sandbox";
 import { SandboxHolder } from "../sandbox/sandbox-holder";
 import { implementingPhase } from "./implementing-phase";
 import type {
+  PhaseCheckpointInput,
   PhaseContext,
   PhaseEventInput,
   PhaseExecInput,
@@ -163,6 +165,7 @@ function harness(
   const reads: string[] = [];
   const writes: { path: string; content: string }[] = [];
   const usages: Record<string, unknown>[] = [];
+  const checkpoints: PhaseCheckpointInput[] = [];
 
   const sandbox: Sandbox = {
     id: "c0ffee0c0ffee",
@@ -247,7 +250,10 @@ function harness(
       usages.push(patch);
       return Promise.resolve();
     },
-    checkpoint: () => Promise.reject(new Error("the implementing phase records no checkpoints")),
+    checkpoint: (input) => {
+      checkpoints.push(input);
+      return Promise.resolve({ id: checkpoints.length } as JobCheckpoint);
+    },
   };
 
   return {
@@ -261,6 +267,7 @@ function harness(
     reads,
     writes,
     usages,
+    checkpoints,
     typesOf: () => events.map((event) => event.type),
     find: (type: string) => events.find((event) => event.type === type),
   };
@@ -329,6 +336,7 @@ describe("implementingPhase", () => {
       "agent.tool_started",
       "agent.tool_completed",
       "agent.usage",
+      "agent.turn_completed",
       "agent.session_ended",
     ]);
   });
@@ -342,12 +350,27 @@ describe("implementingPhase", () => {
     expect(agentEvents.every((event) => event.data?.sessionId === "session-1")).toBe(true);
   });
 
-  it("writes no row for a completed turn, because the next one says so", async () => {
+  it("records a completed turn before asking for its workspace checkpoint", async () => {
     const test = harness({ agent: new ScriptedAgent({ events: HAPPY_PATH }) });
 
     await test.run();
 
-    expect(test.typesOf()).not.toContain("agent.turn_completed");
+    expect(test.typesOf()).toContain("agent.turn_completed");
+    expect(test.checkpoints).toMatchObject([
+      { kind: "agent_turn", agentTurn: 1, repositoryDir: "/home/node/workspace/repo" },
+    ]);
+  });
+
+  it("uses the cumulative job turn for implementation checkpoints", async () => {
+    const test = harness({
+      job: { totalTurns: 7 },
+      agent: new ScriptedAgent({ events: HAPPY_PATH }),
+    });
+
+    await test.run();
+
+    expect(test.checkpoints).toMatchObject([{ agentTurn: 8 }]);
+    expect(test.usages.at(-1)).toMatchObject({ totalTurns: 8 });
   });
 
   it("points a shell tool call at the command transcript it produced", async () => {
@@ -377,8 +400,18 @@ describe("implementingPhase", () => {
     expect(ended?.data?.outputTokens).toBe(400);
     expect(ended?.data?.costUsd).toBeCloseTo(0.5);
     expect(test.usages).toEqual([
-      { totalInputTokens: 1_000, totalOutputTokens: 200, totalCostUsd: "0.2500" },
-      { totalInputTokens: 2_000, totalOutputTokens: 400, totalCostUsd: "0.5000" },
+      {
+        totalInputTokens: 1_000,
+        totalOutputTokens: 200,
+        totalCostUsd: "0.2500",
+        totalTurns: 0,
+      },
+      {
+        totalInputTokens: 2_000,
+        totalOutputTokens: 400,
+        totalCostUsd: "0.5000",
+        totalTurns: 0,
+      },
     ]);
   });
 
@@ -506,7 +539,12 @@ describe("implementingPhase", () => {
     await test.run();
 
     expect(test.usages).toEqual([
-      { totalInputTokens: 1_900, totalOutputTokens: 300, totalCostUsd: "1.3750" },
+      {
+        totalInputTokens: 1_900,
+        totalOutputTokens: 300,
+        totalCostUsd: "1.3750",
+        totalTurns: 0,
+      },
     ]);
   });
 });

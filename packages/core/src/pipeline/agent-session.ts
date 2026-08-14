@@ -74,6 +74,7 @@ export class SessionAccounting {
   private toolCalls = 0;
   private warnedAboutCost = false;
 
+  private cumulativeTurns: number;
   private readonly total: CodingAgentUsage;
   private readonly sessionTotal: CodingAgentUsage = emptyUsage();
 
@@ -87,6 +88,7 @@ export class SessionAccounting {
         totalInputTokens: ctx.job.totalInputTokens ?? 0,
         totalOutputTokens: ctx.job.totalOutputTokens ?? 0,
         totalCostUsd: ctx.job.totalCostUsd,
+        totalTurns: ctx.job.totalTurns ?? 0,
       } satisfies AgentUsageTotals);
     this.total = {
       inputTokens: persisted.totalInputTokens,
@@ -95,6 +97,7 @@ export class SessionAccounting {
       cacheWriteTokens: 0,
       costUsd: parseStoredCost(persisted.totalCostUsd),
     };
+    this.cumulativeTurns = persisted.totalTurns ?? 0;
   }
 
   async record(event: CodingAgentEvent): Promise<void> {
@@ -166,8 +169,27 @@ export class SessionAccounting {
         return;
       }
 
-      case "turn_completed":
+      case "turn_completed": {
+        this.cumulativeTurns += 1;
+        await this.ctx.recordAgentUsage(this.usagePatch());
+        await this.write("agent.turn_completed", `Turn ${event.turn} completed.`, {
+          turn: event.turn,
+          cumulativeTurn: this.cumulativeTurns,
+        });
+
+        // Planner turns contribute to the job's cumulative counter, but only
+        // implementation turns produce workspace checkpoints. A planner has
+        // no writable workspace and its phase boundary is the durable handoff.
+        if (this.spec.role === "implementer") {
+          await this.ctx.checkpoint({
+            kind: "agent_turn",
+            agentTurn: this.cumulativeTurns,
+            repositoryDir: this.spec.workdir,
+            state: { version: 1 },
+          });
+        }
         return;
+      }
 
       case "session_ended": {
         await this.write("agent.session_ended", `Session ended: ${event.reason}.`, {
@@ -193,6 +215,7 @@ export class SessionAccounting {
       totalInputTokens: this.total.inputTokens,
       totalOutputTokens: this.total.outputTokens,
       ...(this.total.costUsd === null ? {} : { totalCostUsd: this.total.costUsd.toFixed(4) }),
+      totalTurns: this.cumulativeTurns,
     };
   }
 

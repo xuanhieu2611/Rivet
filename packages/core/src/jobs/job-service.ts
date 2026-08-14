@@ -78,6 +78,7 @@ export function toJobDetail(row: Job): JobDetail {
     totalInputTokens: row.totalInputTokens,
     totalOutputTokens: row.totalOutputTokens,
     totalCostUsd: row.totalCostUsd,
+    totalTurns: row.totalTurns,
     startedAt: row.startedAt,
     completedAt: row.completedAt,
     finalBranch: row.finalBranch,

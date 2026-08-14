@@ -74,6 +74,8 @@ export const JOB_EVENT_TYPES = [
   /** A session exists: model, provider, and the tools it is actually holding. */
   "agent.session_started",
   "agent.turn_started",
+  /** A model turn completed and is now eligible for an implementation checkpoint. */
+  "agent.turn_completed",
   /** One completed assistant message, truncated to a preview. Never a delta. */
   "agent.message",
   /** The model called a tool. Carries `commandExecutionId` when that tool was the shell. */
@@ -346,6 +348,10 @@ export type JobEventData = {
   toolNames?: string[];
   /** Which turn this belongs to, zero-based. */
   turn?: number;
+  /** The cumulative completed-turn number across sessions for this job. */
+  cumulativeTurn?: number;
+  /** Bounded stderr from an internal checkpoint command rejection. */
+  stderr?: string;
   /** How many turns the session took, on `agent.session_ended`. */
   turns?: number;
   toolName?: string;
@@ -476,6 +482,8 @@ const jobEventDataSchema = z
     provider: z.string().optional(),
     toolNames: z.array(z.string()).optional(),
     turn: z.number().int().nonnegative().optional(),
+    cumulativeTurn: z.number().int().positive().optional(),
+    stderr: z.string().optional(),
     turns: z.number().int().nonnegative().optional(),
     toolName: z.string().optional(),
     toolCallId: z.string().optional(),
@@ -573,6 +581,8 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.provider === undefined ? {} : { provider: value.provider }),
     ...(value.toolNames === undefined ? {} : { toolNames: value.toolNames }),
     ...(value.turn === undefined ? {} : { turn: value.turn }),
+    ...(value.cumulativeTurn === undefined ? {} : { cumulativeTurn: value.cumulativeTurn }),
+    ...(value.stderr === undefined ? {} : { stderr: value.stderr }),
     ...(value.turns === undefined ? {} : { turns: value.turns }),
     ...(value.toolName === undefined ? {} : { toolName: value.toolName }),
     ...(value.toolCallId === undefined ? {} : { toolCallId: value.toolCallId }),

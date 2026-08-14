@@ -241,11 +241,13 @@ describe("coding-agent execution through the worker", () => {
       "agent.tool_started",
       "agent.tool_completed",
       "agent.usage",
+      "agent.turn_completed",
       "agent.session_ended",
     ]);
     expect(completed.totalInputTokens).toBe(1_000);
     expect(completed.totalOutputTokens).toBe(200);
     expect(completed.totalCostUsd).toBe("0.2500");
+    expect(completed.totalTurns).toBe(1);
 
     const shellCommand = commands.find(
       (command) => command.phase === "implementing" && command.argv[0] === "bash",

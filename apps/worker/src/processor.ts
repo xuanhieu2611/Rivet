@@ -225,6 +225,7 @@ export function createProcessor(deps: ProcessorDeps) {
           artifactMaxBytes: config.artifactMaxBytes,
           checkpointMaxBytes: config.checkpointMaxBytes,
           checkpointTimeoutMs: config.checkpointTimeoutMs,
+          repositoryDir: `${config.sandbox.workdir}/repo`,
         }),
 
         onPhaseStart: async (phase) => {

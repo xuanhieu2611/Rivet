@@ -151,6 +151,7 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   // tries something else, which is the loop working rather than failing.
   "agent.session_started": "bg-violet-500",
   "agent.turn_started": "bg-sky-500/40",
+  "agent.turn_completed": "bg-sky-500/40",
   "agent.message": "bg-sky-500",
   "agent.tool_started": "bg-sky-500",
   "agent.tool_completed": "bg-sky-500/40",

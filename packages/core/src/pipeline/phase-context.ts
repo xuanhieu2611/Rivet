@@ -17,12 +17,23 @@ import {
   type JobCheckpoint,
   type RecordCheckpointInput,
 } from "../checkpoints/checkpoint-store";
+import {
+  captureWorkspacePatch,
+  parseCheckpointPatchStats,
+  type CheckpointPatchStats,
+  WorkspaceSnapshotError,
+} from "../checkpoints/workspace-snapshot";
 import { type BaselineOutcome, readBaseline } from "../events/baseline-log";
 import { appendEvent } from "../events/event-service";
 import { readSummary } from "../events/session-log";
 import { readValidation, type ValidationRecord } from "../events/validation-log";
 import { type AgentUsagePatch, recordAgentUsage as persistAgentUsage } from "../jobs/agent-usage";
-import { LeaseLostError } from "../jobs/failure";
+import {
+  CheckpointCorruptError,
+  describeError as describeJobError,
+  failureCategoryFor,
+  LeaseLostError,
+} from "../jobs/failure";
 import { type ProvisioningPatch, recordProvisioning } from "../jobs/provisioning";
 import { recordCommand } from "../sandbox/command-log";
 import type { ExecResult } from "../sandbox/sandbox";
@@ -133,10 +144,11 @@ export interface PhaseContext {
   /**
    * Persists a complete workspace snapshot at a safe recovery boundary.
    *
-   * The phase supplies the already-captured patch and small workflow references;
-   * the context supplies job identity, attempt, sandbox identity, environment
-   * fingerprint, the storage bound and the lease fence. Compression, checksum,
-   * validation and the `checkpoint.created` event stay in the checkpoint store.
+   * The phase supplies small workflow references and may supply a pre-captured
+   * patch; otherwise the context snapshots the sandbox workspace. The context
+   * supplies job identity, attempt, sandbox identity, environment fingerprint,
+   * the storage bound and the lease fence. Compression, checksum, validation and
+   * the `checkpoint.created` event stay in the checkpoint store.
    */
   checkpoint(input: PhaseCheckpointInput): Promise<JobCheckpoint>;
 }
@@ -146,6 +158,7 @@ export interface AgentUsageTotals {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCostUsd: string;
+  totalTurns: number;
 }
 
 /** The slice of a pino logger a phase uses. Structured first, message second. */
@@ -210,6 +223,7 @@ export type PhaseCheckpointInput = Omit<
   | "envFingerprint"
   | "maxBytes"
   | "leaseOwner"
+  | "patch"
 > & {
   /** The phase doing the capture, when this is a phase-boundary checkpoint. */
   completedPhase?: JobStatus | null;
@@ -221,6 +235,12 @@ export type PhaseCheckpointInput = Omit<
   sandboxId?: string;
   /** Optional current environment fingerprint override. */
   envFingerprint?: Record<string, unknown>;
+  /** The cloned repository to snapshot. Defaults to the factory's repositoryDir. */
+  repositoryDir?: string;
+  /** A pre-captured patch is retained for lower-level callers and focused tests. */
+  patch?: Uint8Array;
+  /** Optional stats for a pre-captured patch. Captured patches compute them automatically. */
+  patchStats?: CheckpointPatchStats;
 };
 
 export interface PhaseContextOptions {
@@ -245,6 +265,8 @@ export interface PhaseContextOptions {
   checkpointMaxBytes: number;
   /** Reserved for the bounded workspace-capture operation owned by the context. */
   checkpointTimeoutMs: number;
+  /** The cloned repository, used when a checkpoint caller does not pass one. */
+  repositoryDir?: string;
   database?: Database;
 }
 
@@ -267,6 +289,7 @@ export function createPhaseContextFactory(
     totalInputTokens: job.totalInputTokens ?? 0,
     totalOutputTokens: job.totalOutputTokens ?? 0,
     totalCostUsd: job.totalCostUsd ?? "0",
+    totalTurns: job.totalTurns ?? 0,
   };
   const appendOwnedEvent = (input: PhaseEventInput) =>
     database.transaction((tx) => appendEvent({ ...input, jobId: job.id, leaseOwner }, tx));
@@ -465,6 +488,7 @@ export function createPhaseContextFactory(
         totalInputTokens: patch.totalInputTokens ?? currentAgentUsage.totalInputTokens,
         totalOutputTokens: patch.totalOutputTokens ?? currentAgentUsage.totalOutputTokens,
         totalCostUsd: patch.totalCostUsd ?? currentAgentUsage.totalCostUsd,
+        totalTurns: patch.totalTurns ?? currentAgentUsage.totalTurns,
       };
     },
 
@@ -472,26 +496,71 @@ export function createPhaseContextFactory(
       return { ...currentAgentUsage };
     },
 
-    checkpoint(input) {
-      const sandbox = sandboxes.require();
-      const baseCommitSha = input.baseCommitSha ?? currentBaseCommitSha;
-      if (!baseCommitSha) {
-        throw new Error(`Job ${job.id} has no resolved base commit for a checkpoint.`);
-      }
+    async checkpoint(input) {
+      try {
+        const sandbox = sandboxes.require();
+        const baseCommitSha = input.baseCommitSha ?? currentBaseCommitSha;
+        if (!baseCommitSha) {
+          throw new CheckpointCorruptError(
+            `Job ${job.id} has no resolved base commit for a checkpoint.`,
+          );
+        }
 
-      return recordCheckpoint(
-        {
-          ...input,
-          jobId: job.id,
-          attemptCount: job.attemptCount,
-          baseCommitSha,
-          sandboxId: input.sandboxId ?? sandbox.id,
-          envFingerprint: input.envFingerprint ?? currentEnvFingerprint ?? {},
-          maxBytes: options.checkpointMaxBytes,
-          leaseOwner,
-        },
-        database,
-      );
+        const captured =
+          input.patch === undefined
+            ? await captureWorkspacePatch({
+                sandbox,
+                repositoryDir: input.repositoryDir ?? options.repositoryDir ?? "",
+                signal,
+                timeoutMs: options.checkpointTimeoutMs,
+                maxBytes: options.checkpointMaxBytes,
+              })
+            : {
+                patch: Buffer.from(input.patch),
+                stats: input.patchStats ?? parseCheckpointPatchStats(input.patch),
+              };
+        const patchStats = input.patchStats ?? captured.stats;
+
+        return await recordCheckpoint(
+          {
+            ...input,
+            ...(patchStats ? { patchStats } : {}),
+            jobId: job.id,
+            attemptCount: job.attemptCount,
+            baseCommitSha,
+            sandboxId: input.sandboxId ?? sandbox.id,
+            envFingerprint: input.envFingerprint ?? currentEnvFingerprint ?? {},
+            maxBytes: options.checkpointMaxBytes,
+            leaseOwner,
+            patch: captured.patch,
+          },
+          database,
+        );
+      } catch (error) {
+        if (signal.aborted) throw error;
+
+        try {
+          const details = error instanceof WorkspaceSnapshotError ? error : undefined;
+          await appendOwnedEvent({
+            type: "checkpoint.rejected",
+            message: `Checkpoint (${input.kind}) rejected: ${describeJobError(error)}`,
+            data: {
+              checkpointKind: input.kind,
+              failureCategory: failureCategoryFor(error),
+              error: describeJobError(error),
+              ...(input.agentTurn === undefined || input.agentTurn === null
+                ? {}
+                : { turn: input.agentTurn }),
+              ...(details && details.argv.length > 0 ? { argv: [...details.argv] } : {}),
+              ...(details && details.stderr.length > 0 ? { stderr: details.stderr } : {}),
+            },
+          });
+        } catch (eventError) {
+          if (eventError instanceof LeaseLostError) throw eventError;
+          log.warn({ err: eventError }, "could not record rejected checkpoint");
+        }
+        throw error;
+      }
     },
   });
 }

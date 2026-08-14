@@ -110,6 +110,8 @@ export interface JobDetail extends JobSummary {
   totalOutputTokens: number;
   /** Cumulative priced usage, as a decimal string from Postgres numeric. */
   totalCostUsd: string;
+  /** Cumulative completed model turns across planner and implementation sessions. */
+  totalTurns: number;
   startedAt: Date | null;
   completedAt: Date | null;
   finalBranch: string | null;

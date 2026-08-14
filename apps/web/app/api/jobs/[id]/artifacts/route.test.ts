@@ -27,6 +27,7 @@ const JOB: JobDetail = {
   totalInputTokens: 0,
   totalOutputTokens: 0,
   totalCostUsd: "0.0000",
+  totalTurns: 0,
   dispatchGeneration: 0,
   startedAt: null,
   completedAt: null,

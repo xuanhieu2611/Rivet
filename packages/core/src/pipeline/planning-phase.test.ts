@@ -236,7 +236,8 @@ describe("planningPhase", () => {
       data: { artifactId: 42, artifactType: "implementation_plan", agentRole: "planner" },
     });
     expect(test.usages).toEqual([
-      { totalInputTokens: 1, totalOutputTokens: 2, totalCostUsd: "0.0000" },
+      { totalInputTokens: 1, totalOutputTokens: 2, totalCostUsd: "0.0000", totalTurns: 0 },
+      { totalInputTokens: 1, totalOutputTokens: 2, totalCostUsd: "0.0000", totalTurns: 1 },
     ]);
     expect(planner.stopCount).toBe(1);
   });
