@@ -257,6 +257,18 @@ class FaultSandbox implements Sandbox {
     return result;
   }
 
+  // Faults are injected into commands, which is where every M2 failure mode
+  // lives. File reads and writes pass straight through: a fault mode that
+  // corrupted them would be testing the tool layer rather than the worker's
+  // failure handling, and the tool layer has its own suite.
+  getFile(...args: Parameters<Sandbox["getFile"]>): ReturnType<Sandbox["getFile"]> {
+    return this.inner.getFile(...args);
+  }
+
+  putFile(...args: Parameters<Sandbox["putFile"]>): ReturnType<Sandbox["putFile"]> {
+    return this.inner.putFile(...args);
+  }
+
   destroy(): Promise<void> {
     return this.inner.destroy();
   }

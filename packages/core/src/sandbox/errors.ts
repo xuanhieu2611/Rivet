@@ -3,9 +3,10 @@ import type { FailureCategory } from "@rivet/contracts";
 import { RetryableJobError, TerminalJobError } from "../jobs/failure";
 
 /**
- * The four ways the sandbox itself can fail a job.
+ * The ways the sandbox itself can fail a job - and, at the bottom, the one way
+ * it can disappoint a caller without failing anything.
  *
- * Every one of these extends `RetryableJobError` or `TerminalJobError`, which
+ * Every job failure here extends `RetryableJobError` or `TerminalJobError`, which
  * means `classify()` needs no new branches and the retry policy stays the one
  * switch in `processor.ts`. Where an error sits in that hierarchy *is* the
  * retry decision, made once, at the point where someone had to reason about it,
@@ -111,6 +112,41 @@ export class UnsupportedProjectError extends TerminalJobError {
 export class DependencyInstallFailedError extends TerminalJobError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, "dependency_install_failed", options);
+  }
+}
+
+/**
+ * Why a file could not be moved across the sandbox boundary.
+ *
+ * `not_found` is a path that is not there; `not_a_file` is a path that is there
+ * and is a directory or a device.
+ */
+export type SandboxFileErrorReason = "not_found" | "not_a_file";
+
+/**
+ * A file operation asked for something that is not there.
+ *
+ * The one error in this file that is **not** a job failure, and that is the
+ * whole point of it. Everything above extends `RetryableJobError` or
+ * `TerminalJobError` because it describes a job that cannot continue. This one
+ * describes a caller that asked a question with a boring answer: a model
+ * guessing at a path that does not exist is the loop working, and it gets a
+ * tool result it can read and correct rather than a dead job and a wasted
+ * container.
+ *
+ * It follows that whoever calls `getFile` or `putFile` has to catch this. An
+ * uncaught one reaching `classify()` lands in `unknown`, which is exactly as
+ * useful as it sounds and is the symptom of a missing catch rather than of a
+ * missing category.
+ */
+export class SandboxFileError extends Error {
+  constructor(
+    message: string,
+    readonly reason: SandboxFileErrorReason,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "SandboxFileError";
   }
 }
 

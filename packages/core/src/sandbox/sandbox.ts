@@ -10,9 +10,10 @@
  * adapter for the real system, and a scripted fake for tests.
  *
  * The port is deliberately smaller than Docker. It knows about creating an
- * environment, running an argument vector inside it, and destroying it. It does
- * not know about images layers, networks, volumes or execs, because none of
- * those are things the domain has an opinion about.
+ * environment, running an argument vector inside it, moving one file in or out
+ * of it, and destroying it. It does not know about image layers, networks,
+ * volumes or execs, because none of those are things the domain has an opinion
+ * about.
  */
 
 /**
@@ -114,12 +115,69 @@ export interface ExecResult {
   durationMs: number;
 }
 
+/**
+ * How much of a file the caller is willing to hold in memory.
+ *
+ * Required rather than defaulted, the same rule every other bound in this file
+ * follows. A repository is allowed to contain a 900MB fixture, and the failure
+ * mode of a forgotten cap is a worker heap that is now that size.
+ */
+export interface FileReadOptions {
+  maxBytes: number;
+}
+
+export interface FileRead {
+  /**
+   * The file's bytes, decoded as UTF-8.
+   *
+   * Text rather than bytes because everything this exists to serve - a model
+   * reading source, an exact-match edit, a written patch - is text, and the one
+   * consumer that would want bytes (image reading) is deliberately not offered.
+   * A cut at `maxBytes` can land mid-character, in which case the last character
+   * is a replacement character; that is the correct amount of effort to spend on
+   * the tail of a file that has already been truncated.
+   */
+  content: string;
+  /** The file was longer than `maxBytes` and `content` is a prefix of it. */
+  truncated: boolean;
+}
+
 /** One job's live environment. Created once per attempt, never shared. */
 export interface Sandbox {
   /** The implementation's identifier for it. A container id, for the Docker adapter. */
   readonly id: string;
 
   exec(request: ExecRequest): Promise<ExecResult>;
+
+  /**
+   * Reads one file out of the environment.
+   *
+   * Not `exec(["cat", path])`, and the reasons are worth stating because that
+   * is the obvious first implementation. A `cat` cannot say whether it was
+   * truncated, cannot distinguish a missing file from an empty one without
+   * parsing stderr, and carries every byte through the same framed stream the
+   * command transcripts use - so a file read would show up in the command log
+   * as a command the job never chose to run.
+   *
+   * Throws `SandboxFileError` when the path is missing or is not a regular
+   * file. That error deliberately sits outside the job-failure hierarchy: a
+   * model asking to read a file that does not exist is a tool result it reads
+   * and corrects, not a dead job.
+   */
+  getFile(path: string, options: FileReadOptions, signal: AbortSignal): Promise<FileRead>;
+
+  /**
+   * Writes one file into the environment, creating parent directories as
+   * needed, owned by the environment's own user.
+   *
+   * The counterpart to `getFile` and the harder half: the exec path has no
+   * stdin, and encoding a file into an argument vector fails on exactly the
+   * inputs that matter - a large file, a NUL byte, anything the caller has to
+   * quote. Creating the parents here rather than exposing a `mkdir` keeps the
+   * port at "move a file" instead of growing a filesystem API one method at a
+   * time.
+   */
+  putFile(path: string, content: string, signal: AbortSignal): Promise<void>;
 
   /**
    * Tears the environment down. Idempotent, and **never throws**.

@@ -1,9 +1,15 @@
+import { posix } from "node:path";
+import { Readable } from "node:stream";
+
 import {
   type ExecRequest,
   type ExecResult,
+  type FileRead,
+  type FileReadOptions,
   type Sandbox,
   type SandboxProvider,
   SandboxCreateFailedError,
+  SandboxFileError,
   type SandboxSpec,
   SandboxUnavailableError,
 } from "@rivet/core";
@@ -11,7 +17,9 @@ import type Docker from "dockerode";
 import type { Container } from "dockerode";
 
 import { getDocker } from "./connection";
+import { namesAFile } from "./paths";
 import { CappedOutput, DockerStreamDemuxer } from "./stream";
+import { packFile, TarFileReader } from "./tar";
 
 /**
  * The Docker implementation of the sandbox port.
@@ -386,6 +394,131 @@ class DockerSandbox implements Sandbox {
     } finally {
       clearTimeout(timer);
       request.signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Reads a file out of the container as a tar stream.
+   *
+   * `getArchive` is the only endpoint that can do this: the exec path carries
+   * everything through Docker's framed stream and would report a file read as a
+   * command the job never ran. The stream is destroyed as soon as the reader
+   * has what it was asked for, so reading 4KB of a 900MB file transfers 4KB and
+   * a little padding rather than 900MB.
+   */
+  async getFile(path: string, options: FileReadOptions, signal: AbortSignal): Promise<FileRead> {
+    signal.throwIfAborted();
+
+    // dockerode types this as the bare `NodeJS.ReadableStream`, which has no
+    // `destroy`. The object is a real `Readable`, and destroying it early is
+    // the whole reason a bounded read is bounded.
+    let archive: NodeJS.ReadableStream & { destroy?: () => void };
+    try {
+      archive = await this.container.getArchive({ path });
+    } catch (cause) {
+      if (isNotFound(cause)) {
+        // 404 covers both "no such file" and "no such container". The second
+        // one cannot happen here - this object holds a container it created -
+        // so the useful reading is the first.
+        throw new SandboxFileError(`${path} does not exist in the sandbox.`, "not_found", {
+          cause,
+        });
+      }
+      throw asSandboxError(cause, `Could not read ${path} from the sandbox.`);
+    }
+
+    const reader = new TarFileReader(options.maxBytes);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const stop = () => {
+          archive.removeListener("data", onData);
+          signal.removeEventListener("abort", onAbort);
+          archive.destroy?.();
+        };
+        const onData = (chunk: Buffer) => {
+          try {
+            reader.push(chunk);
+          } catch (cause) {
+            stop();
+            reject(cause instanceof Error ? cause : new Error(String(cause)));
+            return;
+          }
+          // Everything after the wanted file is padding and an end marker.
+          if (reader.finished) {
+            stop();
+            resolve();
+          }
+        };
+        const onAbort = () => {
+          stop();
+          reject(signal.reason as Error);
+        };
+
+        archive.on("data", onData);
+        archive.on("end", resolve);
+        archive.on("close", resolve);
+        archive.on("error", reject);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+    } catch (cause) {
+      if (cause instanceof SandboxFileError) throw cause;
+      if (signal.aborted) throw cause;
+      throw asSandboxError(cause, `Could not read ${path} from the sandbox.`);
+    }
+
+    const file = reader.content();
+    if (!file) {
+      throw new SandboxFileError(
+        reader.isDirectory
+          ? `${path} is a directory, not a file.`
+          : `${path} is not a regular file.`,
+        "not_a_file",
+      );
+    }
+    return { content: file.content.toString("utf8"), truncated: file.truncated };
+  }
+
+  /**
+   * Writes a file into the container, creating its parent directories first.
+   *
+   * Two steps rather than one, and the reason is the failure this avoids:
+   * `putArchive` extracts as root and honours whatever the archive says, so an
+   * archive carrying its own directory entries would happily re-own
+   * `/home/node` on the way past. Making the parents with `mkdir -p` as the
+   * container's own user cannot do that, and it costs one exec against a
+   * container that is already running.
+   */
+  async putFile(path: string, content: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (!namesAFile(path)) {
+      throw new SandboxFileError(`${path} does not name a file.`, "not_a_file");
+    }
+    const directory = posix.dirname(path);
+    const name = posix.basename(path);
+
+    const made = await this.exec({
+      argv: ["mkdir", "-p", directory],
+      cwd: "/",
+      timeoutMs: WORKDIR_TIMEOUT_MS,
+      signal,
+    });
+    if (made.exitCode !== 0) {
+      throw new SandboxFileError(
+        `Could not create ${directory} in the sandbox: ${made.stderr.trim() || "mkdir failed"}.`,
+        "not_a_file",
+      );
+    }
+
+    const archive = packFile(name, Buffer.from(content, "utf8"));
+    try {
+      await this.container.putArchive(Readable.from(archive), { path: directory });
+    } catch (cause) {
+      if (isNotFound(cause)) {
+        throw new SandboxFileError(`${directory} does not exist in the sandbox.`, "not_found", {
+          cause,
+        });
+      }
+      throw asSandboxError(cause, `Could not write ${path} into the sandbox.`);
     }
   }
 

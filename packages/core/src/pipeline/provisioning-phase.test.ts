@@ -65,6 +65,8 @@ function harness(options: { respond?: Responder; createFails?: Error } = {}) {
   const sandbox: Sandbox = {
     id: "c0ffee0c0ffee0c0ffee",
     exec: () => Promise.reject(new Error("the phase must go through ctx.exec")),
+    getFile: () => Promise.reject(new Error("provisioning reads no files")),
+    putFile: () => Promise.reject(new Error("provisioning writes no files")),
     destroy: () => Promise.resolve(),
   };
 
