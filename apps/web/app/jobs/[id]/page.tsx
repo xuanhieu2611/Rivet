@@ -1,16 +1,16 @@
 import "server-only";
 
-import { isTerminal, serializeJobEvent, type JobCommand } from "@rivet/contracts";
-import { getCommand, getJob, listCommands, listEvents } from "@rivet/core";
+import { isTerminal, serializeJobCommandSummary, serializeJobEvent } from "@rivet/contracts";
+import { getJob, listCommands, listEvents } from "@rivet/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { CancelJobButton } from "@/components/cancel-job-button";
-import { CommandList } from "@/components/command-list";
 import { JobStatusPoller } from "@/components/job-status-poller";
 import { JobLiveProvider } from "@/components/job-live/job-live-provider";
 import { LiveConnectionIndicator, LiveStatusBadge } from "@/components/job-live/live-status-badge";
+import { LiveCommandLog } from "@/components/job-live/live-command-log";
 import { LiveExecutionTimeline } from "@/components/job-live/live-execution-timeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/format";
@@ -34,12 +34,9 @@ export default async function JobDetailPage({ params }: PageProps) {
   const job = await getJob(id);
   if (!job) notFound();
 
-  // The timeline and command metadata are independent reads. Fetch them together,
-  // then fetch each bounded transcript in parallel for the server-rendered disclosure.
+  // The timeline and command metadata are independent reads. Fetch both summaries
+  // together; command transcripts are fetched by the live log only when needed.
   const [events, commandSummaries] = await Promise.all([listEvents(job.id), listCommands(job.id)]);
-  const commands = (
-    await Promise.all(commandSummaries.map((command) => getCommand(job.id, command.id)))
-  ).filter((command): command is JobCommand => command !== null);
   const finished = isTerminal(job.status);
 
   return (
@@ -47,9 +44,9 @@ export default async function JobDetailPage({ params }: PageProps) {
       jobId={job.id}
       initialStatus={job.status}
       initialEvents={events.map(serializeJobEvent)}
+      initialCommandSummaries={commandSummaries.map(serializeJobCommandSummary)}
     >
       <div className="space-y-8">
-        {/* TODO(M3): delete when SSE lands. */}
         <JobStatusPoller status={job.status} />
 
         <div className="space-y-3">
@@ -91,7 +88,7 @@ export default async function JobDetailPage({ params }: PageProps) {
                 <CardTitle>Sandbox commands</CardTitle>
               </CardHeader>
               <CardContent>
-                <CommandList commands={commands} />
+                <LiveCommandLog />
               </CardContent>
             </Card>
           </div>

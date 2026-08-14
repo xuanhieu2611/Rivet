@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { JobCommandSummary } from "@rivet/contracts";
+import { serializeJobCommandSummary, type SerializedJobCommandSummary } from "@rivet/contracts";
 import { getJob, listCommands } from "@rivet/core";
 import { NextResponse } from "next/server";
 
@@ -13,7 +13,7 @@ interface RouteContext {
 }
 
 interface CommandsResponse {
-  commands: JobCommandSummary[];
+  commands: SerializedJobCommandSummary[];
   cursor: number | null;
 }
 
@@ -40,7 +40,7 @@ export async function GET(request: Request, context: RouteContext) {
 
     const commands = await listCommands(id, after === null ? {} : { after });
     const body: CommandsResponse = {
-      commands,
+      commands: commands.map(serializeJobCommandSummary),
       cursor: commands.at(-1)?.id ?? after,
     };
     return NextResponse.json(body);

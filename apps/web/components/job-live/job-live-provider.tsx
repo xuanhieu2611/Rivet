@@ -1,14 +1,18 @@
 "use client";
 
 import {
+  parseSerializedJobCommandSummary,
+  parseSerializedJobCommand,
   parseSerializedJobEvent,
   type JobEvent,
   type JobStatus,
+  type SerializedJobCommandSummary,
   type SerializedJobEvent,
 } from "@rivet/contracts";
 import { useRouter } from "next/navigation";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -22,7 +26,9 @@ import {
   jobEventsUrl,
   jobLiveReducer,
   parseStreamEnd,
+  selectJobLiveCommands,
   selectJobLiveEvents,
+  type LiveCommand,
   type StreamConnectionState,
 } from "./stream-state";
 
@@ -32,7 +38,10 @@ interface JobLiveContextValue {
   status: JobStatus;
   connection: StreamConnectionState;
   events: readonly JobEvent[];
+  commands: readonly LiveCommand[];
   lastEventId: number | null;
+  requestCommandDetails: (commandId: number) => void;
+  retryCommandDetails: (commandId: number) => void;
 }
 
 const JobLiveContext = createContext<JobLiveContextValue | null>(null);
@@ -41,12 +50,14 @@ interface JobLiveProviderProps {
   jobId: string;
   initialStatus: JobStatus;
   initialEvents: readonly SerializedJobEvent[];
+  initialCommandSummaries: readonly SerializedJobCommandSummary[];
   children: ReactNode;
 }
 
 interface InitialStateInput {
   initialStatus: JobStatus;
   initialEvents: readonly SerializedJobEvent[];
+  initialCommandSummaries: readonly SerializedJobCommandSummary[];
 }
 
 /** Owns one durable event cursor for every live consumer on the job page. */
@@ -54,17 +65,27 @@ export function JobLiveProvider({
   jobId,
   initialStatus,
   initialEvents,
+  initialCommandSummaries,
   children,
 }: JobLiveProviderProps) {
   const [state, dispatch] = useReducer(
     jobLiveReducer,
-    { initialStatus, initialEvents } satisfies InitialStateInput,
-    ({ initialStatus: status, initialEvents: events }: InitialStateInput) =>
-      createJobLiveState(status, events.map(parseSerializedJobEvent)),
+    { initialStatus, initialEvents, initialCommandSummaries } satisfies InitialStateInput,
+    ({
+      initialStatus: status,
+      initialEvents: events,
+      initialCommandSummaries: summaries,
+    }: InitialStateInput) =>
+      createJobLiveState(
+        status,
+        events.map(parseSerializedJobEvent),
+        summaries.map(parseSerializedJobCommandSummary),
+      ),
   );
   const router = useRouter();
   const cursorRef = useRef<number | null>(state.lastEventId);
   const sourceRef = useRef<EventSource | null>(null);
+  const detailRequestsRef = useRef(new Set<string>());
   const finishedRef = useRef(false);
   const refreshedRef = useRef(false);
 
@@ -73,6 +94,42 @@ export function JobLiveProvider({
       cursorRef.current = state.lastEventId;
     }
   }, [state.lastEventId]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    for (const [commandId, request] of state.commandDetailsById) {
+      if (request.status !== "loading") continue;
+
+      const requestKey = `${jobId}:${String(commandId)}`;
+      if (detailRequestsRef.current.has(requestKey)) continue;
+      detailRequestsRef.current.add(requestKey);
+
+      void fetch(`/api/jobs/${encodeURIComponent(jobId)}/commands/${String(commandId)}`)
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Transcript request failed with status ${String(response.status)}.`);
+          }
+          const body: unknown = await response.json();
+          return parseSerializedJobCommand(body);
+        })
+        .then((command) => {
+          if (!disposed) dispatch({ type: "command.detail.received", command });
+        })
+        .catch((error: unknown) => {
+          if (disposed) return;
+          const message = error instanceof Error ? error.message : "Could not load transcript.";
+          dispatch({ type: "command.detail.failed", commandId, error: message });
+        })
+        .finally(() => {
+          detailRequestsRef.current.delete(requestKey);
+        });
+    }
+
+    return () => {
+      disposed = true;
+    };
+  }, [jobId, state.commandDetailsById]);
 
   useEffect(() => {
     let disposed = false;
@@ -188,14 +245,34 @@ export function JobLiveProvider({
   }, [jobId, router]);
 
   const events = useMemo(() => selectJobLiveEvents(state), [state]);
+  const commands = useMemo(() => selectJobLiveCommands(state), [state]);
+  const requestCommandDetails = useCallback(
+    (commandId: number) => dispatch({ type: "command.detail.requested", commandId }),
+    [],
+  );
+  const retryCommandDetails = useCallback(
+    (commandId: number) => dispatch({ type: "command.detail.requested", commandId }),
+    [],
+  );
   const value = useMemo<JobLiveContextValue>(
     () => ({
       status: state.status,
       connection: state.connection,
       events,
+      commands,
       lastEventId: state.lastEventId,
+      requestCommandDetails,
+      retryCommandDetails,
     }),
-    [events, state.connection, state.lastEventId, state.status],
+    [
+      commands,
+      events,
+      requestCommandDetails,
+      retryCommandDetails,
+      state.connection,
+      state.lastEventId,
+      state.status,
+    ],
   );
 
   return <JobLiveContext.Provider value={value}>{children}</JobLiveContext.Provider>;

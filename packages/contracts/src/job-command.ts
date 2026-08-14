@@ -1,4 +1,6 @@
-import type { JobStatus } from "./job";
+import { z } from "zod";
+
+import { jobStatusSchema, type JobStatus } from "./job";
 
 /**
  * One command executed inside a job's sandbox.
@@ -7,7 +9,7 @@ import type { JobStatus } from "./job";
  * the event log is read in full on every timeline render and is supposed to hold
  * small facts. A `pnpm install` transcript is neither. The timeline keeps a
  * command lifecycle, with `command.completed` carrying the `commandId`; the
- * transcript lives one join away and is fetched only when someone opens it.
+ * transcript lives one join away and is fetched lazily by the live command log.
  *
  * Append-only, like `job_events`. Nothing ever updates a row.
  */
@@ -40,4 +42,73 @@ export interface JobCommandSummary {
   timedOut: boolean;
   oomKilled: boolean;
   createdAt: Date;
+}
+
+/** The JSON shape used when a command summary crosses a server/client boundary. */
+export type SerializedJobCommandSummary = Omit<JobCommandSummary, "createdAt"> & {
+  createdAt: string;
+};
+
+/** The JSON shape used when a command transcript crosses a server/client boundary. */
+export type SerializedJobCommand = Omit<JobCommand, "createdAt"> & { createdAt: string };
+
+const safeCommandIdSchema = z
+  .number()
+  .int()
+  .positive()
+  .refine(Number.isSafeInteger, "Command id must be a safe integer.");
+
+const commandDateSchema = z
+  .string()
+  .refine((value) => Number.isFinite(Date.parse(value)), "Command date must be a valid ISO date.");
+
+const serializedJobCommandSummarySchema = z.object({
+  id: safeCommandIdSchema,
+  jobId: z.string().min(1),
+  phase: jobStatusSchema,
+  argv: z.array(z.string()),
+  cwd: z.string(),
+  exitCode: z.number().int().nullable(),
+  durationMs: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  timedOut: z.boolean(),
+  oomKilled: z.boolean(),
+  createdAt: commandDateSchema,
+});
+
+const serializedJobCommandSchema = serializedJobCommandSummarySchema.extend({
+  stdout: z.string(),
+  stderr: z.string(),
+});
+
+/** Converts a command summary into the JSON shape sent to the browser. */
+export function serializeJobCommandSummary(
+  command: JobCommandSummary,
+): SerializedJobCommandSummary {
+  return { ...command, createdAt: command.createdAt.toISOString() };
+}
+
+/** Converts a command transcript into the JSON shape sent to the browser. */
+export function serializeJobCommand(command: JobCommand): SerializedJobCommand {
+  return { ...command, createdAt: command.createdAt.toISOString() };
+}
+
+/** Validates a JSON command summary and restores its in-memory `Date` value. */
+export function parseSerializedJobCommandSummary(value: unknown): JobCommandSummary {
+  const parsed = serializedJobCommandSummarySchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(`Invalid job command summary: ${parsed.error.message}`);
+  }
+
+  return { ...parsed.data, createdAt: new Date(parsed.data.createdAt) };
+}
+
+/** Validates a JSON command transcript and restores its in-memory `Date` value. */
+export function parseSerializedJobCommand(value: unknown): JobCommand {
+  const parsed = serializedJobCommandSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(`Invalid job command: ${parsed.error.message}`);
+  }
+
+  return { ...parsed.data, createdAt: new Date(parsed.data.createdAt) };
 }

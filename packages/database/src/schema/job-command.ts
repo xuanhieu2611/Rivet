@@ -23,8 +23,8 @@ import { jobs } from "./job";
  * log is read in full on every timeline render and is meant to hold small facts.
  * A `pnpm install` transcript is neither small nor a fact. The timeline keeps a
  * command lifecycle carrying `argv`, `exitCode`, `durationMs` and the id of the
- * row below on `command.completed`; the transcript is fetched only when someone
- * opens it.
+ * row below on `command.completed`; the transcript is fetched lazily by the
+ * command log.
  *
  * Milestone 4's `tool_calls` sits next to this and has the same shape, which is
  * the other reason to get it right now.

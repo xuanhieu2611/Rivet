@@ -1,5 +1,6 @@
 import "server-only";
 
+import { serializeJobCommand } from "@rivet/contracts";
 import { getCommand, getJob } from "@rivet/core";
 import { NextResponse } from "next/server";
 
@@ -32,7 +33,7 @@ export async function GET(_request: Request, context: RouteContext) {
     const command = await getCommand(id, commandId);
     if (!command) return notFound("Command not found.");
 
-    return NextResponse.json(command);
+    return NextResponse.json(serializeJobCommand(command));
   } catch (cause) {
     return serverError("GET /api/jobs/:id/commands/:commandId", cause);
   }

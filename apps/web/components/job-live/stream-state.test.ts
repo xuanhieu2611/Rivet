@@ -1,4 +1,4 @@
-import type { JobEvent } from "@rivet/contracts";
+import type { JobCommand, JobEvent } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,6 +6,7 @@ import {
   jobEventsUrl,
   jobLiveReducer,
   parseStreamEnd,
+  selectJobLiveCommands,
   selectJobLiveEvents,
 } from "./stream-state";
 
@@ -83,7 +84,156 @@ describe("job live reducer", () => {
     expect(finished.status).toBe("completed");
     expect(finished.lastEventId).toBe(9);
   });
+
+  it("shows a running command, pairs completion, and schedules one detail fetch", () => {
+    let state = createJobLiveState("provisioning", []);
+    state = jobLiveReducer(state, {
+      type: "event.received",
+      event: commandEvent(10, "command.started", {
+        commandExecutionId: "execution-a",
+        argv: ["git", "clone"],
+        cwd: "/repo",
+        phase: "Provision sandbox",
+      }),
+    });
+
+    expect(selectJobLiveCommands(state)).toMatchObject([
+      {
+        executionId: "execution-a",
+        status: "running",
+        commandId: null,
+        argv: ["git", "clone"],
+      },
+    ]);
+
+    state = jobLiveReducer(state, {
+      type: "event.received",
+      event: commandEvent(11, "command.completed", {
+        commandExecutionId: "execution-a",
+        commandId: 17,
+        argv: ["git", "clone"],
+        exitCode: 0,
+        durationMs: 250,
+        phase: "Provision sandbox",
+      }),
+    });
+
+    const [completed] = selectJobLiveCommands(state);
+    expect(completed).toMatchObject({
+      executionId: "execution-a",
+      commandId: 17,
+      status: "completed",
+      exitCode: 0,
+      durationMs: 250,
+      detailState: { status: "loading" },
+    });
+  });
+
+  it("keeps unrelated command executions separate and preserves sandbox failures", () => {
+    let state = createJobLiveState("provisioning", []);
+    state = jobLiveReducer(state, {
+      type: "event.received",
+      event: commandEvent(12, "command.started", {
+        commandExecutionId: "execution-a",
+        argv: ["git", "clone"],
+        cwd: "/repo",
+        phase: "Provision sandbox",
+      }),
+    });
+    state = jobLiveReducer(state, {
+      type: "event.received",
+      event: commandEvent(13, "command.started", {
+        commandExecutionId: "execution-b",
+        argv: ["pnpm", "install"],
+        cwd: "/repo",
+        phase: "Provision sandbox",
+      }),
+    });
+    state = jobLiveReducer(state, {
+      type: "event.received",
+      event: commandEvent(14, "command.failed", {
+        commandExecutionId: "execution-a",
+        argv: ["git", "clone"],
+        cwd: "/repo",
+        phase: "Provision sandbox",
+        error: "repository unavailable",
+      }),
+    });
+
+    expect(selectJobLiveCommands(state)).toMatchObject([
+      { executionId: "execution-a", status: "failed", error: "repository unavailable" },
+      { executionId: "execution-b", status: "running", argv: ["pnpm", "install"] },
+    ]);
+  });
+
+  it("replaces a summary with the fetched bounded transcript", () => {
+    const summary = {
+      id: 17,
+      jobId: JOB_ID,
+      phase: "testing" as const,
+      argv: ["pnpm", "test"],
+      cwd: "/repo",
+      exitCode: 0,
+      durationMs: 100,
+      truncated: false,
+      timedOut: false,
+      oomKilled: false,
+      createdAt: CREATED_AT,
+    };
+    const command: JobCommand = { ...summary, stdout: "passed", stderr: "" };
+    let state = createJobLiveState("testing", [], [summary]);
+
+    state = jobLiveReducer(state, { type: "command.detail.requested", commandId: 17 });
+    expect(selectJobLiveCommands(state)[0]?.detailState.status).toBe("loading");
+
+    state = jobLiveReducer(state, { type: "command.detail.received", command });
+    expect(selectJobLiveCommands(state)[0]?.detail).toEqual(command);
+    expect(selectJobLiveCommands(state)[0]?.detailState.status).toBe("loaded");
+
+    const unchanged = jobLiveReducer(state, {
+      type: "command.detail.failed",
+      commandId: 17,
+      error: "stale request",
+    });
+    expect(unchanged).toBe(state);
+
+    let failed = createJobLiveState("testing", [], [summary]);
+    failed = jobLiveReducer(failed, { type: "command.detail.requested", commandId: 17 });
+    failed = jobLiveReducer(failed, {
+      type: "command.detail.failed",
+      commandId: 17,
+      error: "temporary network failure",
+    });
+    expect(selectJobLiveCommands(failed)[0]?.detailState).toEqual({
+      status: "error",
+      error: "temporary network failure",
+    });
+
+    const retried = jobLiveReducer(failed, {
+      type: "command.detail.requested",
+      commandId: 17,
+    });
+    expect(selectJobLiveCommands(retried)[0]?.detailState).toEqual({
+      status: "loading",
+      error: null,
+    });
+  });
 });
+
+function commandEvent(
+  id: number,
+  type: "command.started" | "command.completed" | "command.failed",
+  data: JobEvent["data"],
+): JobEvent {
+  return {
+    id,
+    jobId: JOB_ID,
+    type,
+    message: `${type} ${String(id)}`,
+    data,
+    createdAt: new Date(CREATED_AT.getTime() + id),
+  };
+}
 
 describe("job event stream helpers", () => {
   it("keeps the cursor in the URL for a new connection", () => {
