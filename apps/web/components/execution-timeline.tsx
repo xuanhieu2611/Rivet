@@ -1,4 +1,4 @@
-import type { JobEvent } from "@rivet/contracts";
+import type { JobEvent, ValidationOutcome } from "@rivet/contracts";
 import type { ReactNode } from "react";
 
 import { commandAnchorId } from "@/components/job-live/command-anchor";
@@ -13,6 +13,37 @@ interface AgentToolTimelineItem {
 }
 
 type TimelineItem = { kind: "event"; event: JobEvent } | AgentToolTimelineItem;
+
+const VALIDATION_PRESENTATION: Record<
+  ValidationOutcome,
+  { label: string; className: string; tone: string }
+> = {
+  verified: {
+    label: "Verified",
+    className: "text-emerald-700 dark:text-emerald-300",
+    tone: "bg-emerald-500",
+  },
+  fixed: {
+    label: "Fixed",
+    className: "text-emerald-700 dark:text-emerald-300",
+    tone: "bg-emerald-500",
+  },
+  regressed: {
+    label: "Regressed",
+    className: "text-red-700 dark:text-red-300",
+    tone: "bg-red-500",
+  },
+  unresolved: {
+    label: "Unresolved",
+    className: "text-red-700 dark:text-red-300",
+    tone: "bg-red-500",
+  },
+  unverified: {
+    label: "Unverified",
+    className: "text-amber-700 dark:text-amber-300",
+    tone: "bg-amber-500",
+  },
+};
 
 /**
  * The job's own history, straight out of `job_events`.
@@ -82,7 +113,7 @@ function TimelineEventRow({ event }: { event: JobEvent }) {
   const detail = describeEventData(event);
 
   return (
-    <TimelineRow event={event} tone={JOB_EVENT_TONE[event.type]}>
+    <TimelineRow event={event} tone={timelineTone(event)}>
       <EventContent event={event} />
       {detail ? <p className="text-muted-foreground text-xs">{detail}</p> : null}
     </TimelineRow>
@@ -207,9 +238,81 @@ function EventContent({ event }: { event: JobEvent }): ReactNode {
         </p>
       );
 
+    case "plan.deferred":
+      return (
+        <div className="space-y-1">
+          <p className="text-sm leading-snug">{event.message}</p>
+          <p className="text-muted-foreground text-xs">
+            Planning is intentionally deferred until a later milestone.
+          </p>
+        </div>
+      );
+
+    case "artifact.recorded":
+      return <ArtifactEventContent event={event} />;
+
+    case "validation.recorded":
+      return <ValidationEventContent event={event} />;
+
     default:
       return <p className="text-sm leading-snug">{event.message}</p>;
   }
+}
+
+function ArtifactEventContent({ event }: { event: JobEvent }) {
+  const artifactType = event.data?.artifactType?.replace(/_/g, " ") ?? "artifact";
+  const byteSize = event.data?.byteSize;
+  const artifactId = event.data?.artifactId;
+
+  return (
+    <div className="space-y-1">
+      <p className="text-sm leading-snug">{event.message}</p>
+      <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <span className="capitalize">{artifactType}</span>
+        {byteSize !== undefined ? <span>{formatBytes(byteSize)}</span> : null}
+        {event.data?.truncated ? (
+          <span className="text-amber-700 dark:text-amber-300">truncated</span>
+        ) : null}
+        {artifactId !== undefined ? (
+          <a
+            href="#artifacts"
+            className="text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
+          >
+            View artifacts
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ValidationEventContent({ event }: { event: JobEvent }) {
+  const outcome = event.data?.validation;
+  const presentation = outcome ? VALIDATION_PRESENTATION[outcome] : null;
+  const filesChanged = event.data?.filesChanged;
+  const insertions = event.data?.insertions;
+  const deletions = event.data?.deletions;
+  const hasStats =
+    filesChanged !== undefined && insertions !== undefined && deletions !== undefined;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {presentation ? (
+          <span className={`text-sm font-medium ${presentation.className}`}>
+            {presentation.label}
+          </span>
+        ) : null}
+        <p className="text-sm leading-snug">{event.message}</p>
+      </div>
+      {hasStats ? (
+        <p className="text-muted-foreground text-xs">
+          {String(filesChanged)} {filesChanged === 1 ? "file" : "files"} changed, +
+          {String(insertions)}/-{String(deletions)}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function UsageContent({ event }: { event: JobEvent }) {
@@ -260,7 +363,15 @@ function UsageContent({ event }: { event: JobEvent }) {
 function describeEventData(event: JobEvent): string | null {
   const data = event.data;
   if (!data || event.type === "agent.message" || event.type === "agent.usage") return null;
-  if (event.type === "agent.turn_started" || event.type === "agent.tool_started") return null;
+  if (
+    event.type === "agent.turn_started" ||
+    event.type === "agent.tool_started" ||
+    event.type === "plan.deferred" ||
+    event.type === "artifact.recorded" ||
+    event.type === "validation.recorded"
+  ) {
+    return null;
+  }
 
   const parts: string[] = [];
 
@@ -331,4 +442,16 @@ function displayTurn(turn: number | undefined): string {
 function formatDuration(milliseconds: number): string {
   if (milliseconds < 1_000) return `${String(Math.max(0, Math.round(milliseconds)))}ms`;
   return `${(milliseconds / 1_000).toFixed(milliseconds >= 10_000 ? 0 : 1)}s`;
+}
+
+function timelineTone(event: JobEvent): string {
+  if (event.type !== "validation.recorded") return JOB_EVENT_TONE[event.type];
+  const outcome = event.data?.validation;
+  return outcome ? VALIDATION_PRESENTATION[outcome].tone : JOB_EVENT_TONE[event.type];
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1_024) return `${String(bytes)} B`;
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(bytes < 10 * 1_024 * 1_024 ? 1 : 0)} MB`;
 }

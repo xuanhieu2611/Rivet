@@ -51,7 +51,10 @@ unaffected, because `parseWorkerConfig` refuses `RIVET_AGENT=off` under `NODE_EN
 M3 makes the append-only event log observable. The job detail route serves JSON to ordinary callers
 and a Postgres-backed SSE stream to live viewers. The browser reducer reconnects from durable event
 ids, deduplicates replayed rows, closes hidden tabs, and drains terminal cleanup before one final
-refresh. Commands expose a start event immediately and fetch their bounded transcript lazily.
+refresh. Commands expose a start event immediately and fetch their bounded transcript lazily. The M5
+web surface lists artifact metadata at `/api/jobs/:id/artifacts`, fetches one artifact's content on
+demand, and renders the latest summary and diff on the server after the terminal refresh. The
+validation, artifact and deferred-plan events have dedicated timeline presentations.
 
 **A red baseline is not a failed job.** The `analyzing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue

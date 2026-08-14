@@ -30,23 +30,24 @@ where it runs before anything is edited, made `planning` say plainly that it pro
 turned `testing` into validation: it keeps the session's diff as an artifact, re-runs the baseline's
 own suite, and compares the two. `finalizing` then keeps the session's own account of the change as
 an `implementation_summary` artifact and closes the timeline with a `run.summarized` event carrying
-the outcome and the diff totals. Review remains simulated until Milestone 8, and the branch, commit
-and pull request belong to Milestone 9.
+the outcome and the diff totals. The job detail page lists those artifacts, renders the latest
+summary and diff, and gives the new event types their own timeline presentation. Review remains
+simulated until Milestone 8, and the branch, commit and pull request belong to Milestone 9.
 
 ## What exists today
 
-| Component     | Where                | Responsibility                                                          |
-| ------------- | -------------------- | ----------------------------------------------------------------------- |
-| Web UI        | `apps/web/app`       | Dashboard, new-job form, job detail with live status, timeline and logs |
-| HTTP API      | `apps/web/app/api`   | `GET`/`POST /api/jobs`, `GET /api/jobs/:id`, `/events`, `/cancel`       |
-| Worker        | `apps/worker`        | BullMQ consumer: claim, heartbeat, run the pipeline, finalize, sweep    |
-| Domain logic  | `packages/core`      | Jobs, transitions, claims, cancellation, the event log, the pipeline    |
-| Queue adapter | `packages/queue`     | BullMQ over Redis behind core's `JobQueue` port, plus an in-memory fake |
-| Sandbox       | `packages/sandbox`   | Dockerode behind core's `SandboxProvider` port, plus a scripted fake    |
-| Coding agent  | `packages/agent`     | Pi adapter, scripted fake, event mapper, and sandbox-backed tools       |
-| Contracts     | `packages/contracts` | Zod schemas, job/event/command contracts, and the status enum           |
-| Data access   | `packages/database`  | Drizzle schema, generated migrations, the `pg` pool                     |
-| Shared config | `packages/config`    | The tsconfig and ESLint bases every workspace extends                   |
+| Component     | Where                | Responsibility                                                                               |
+| ------------- | -------------------- | -------------------------------------------------------------------------------------------- |
+| Web UI        | `apps/web/app`       | Dashboard, new-job form, job detail with live status, timeline, logs and artifacts           |
+| HTTP API      | `apps/web/app/api`   | `GET`/`POST /api/jobs`, `GET /api/jobs/:id`, `/events`, `/commands`, `/artifacts`, `/cancel` |
+| Worker        | `apps/worker`        | BullMQ consumer: claim, heartbeat, run the pipeline, finalize, sweep                         |
+| Domain logic  | `packages/core`      | Jobs, transitions, claims, cancellation, the event log, the pipeline                         |
+| Queue adapter | `packages/queue`     | BullMQ over Redis behind core's `JobQueue` port, plus an in-memory fake                      |
+| Sandbox       | `packages/sandbox`   | Dockerode behind core's `SandboxProvider` port, plus a scripted fake                         |
+| Coding agent  | `packages/agent`     | Pi adapter, scripted fake, event mapper, and sandbox-backed tools                            |
+| Contracts     | `packages/contracts` | Zod schemas, job/event/command contracts, and the status enum                                |
+| Data access   | `packages/database`  | Drizzle schema, generated migrations, the `pg` pool                                          |
+| Shared config | `packages/config`    | The tsconfig and ESLint bases every workspace extends                                        |
 
 Four tables. `jobs` holds the domain model: the task, repository and base branch, the full status
 machine, budget ceilings, lease and retry state, and the sandbox's resolved commit and environment
@@ -542,6 +543,10 @@ Command rows remain append-only. `command.started` creates a running UI row with
 durable command row and bounded stdout/stderr transcript are fetched only when needed. M3 does not
 stream output bytes.
 
+The server-rendered job page reads artifact metadata and the latest summary and diff after the
+terminal refresh. Artifact content is not part of the SSE stream; the API exposes the same split to
+ordinary callers.
+
 M4 adds coarse agent rows to the same log: session start, turn start, completed assistant message,
 tool start and completion, one usage row per turn, budget breach, and session end. Pi token deltas
 are never persisted. A shell tool's lifecycle still goes through `PhaseContext.exec`, so its command
@@ -575,7 +580,9 @@ one - the exact failure the column exists to prevent.
 Reads are split. `listArtifacts()` returns metadata without content, because the page that renders
 the timeline should not pull a diff into every render; `getArtifact()` returns one artifact's
 content and is scoped by `jobId`, since ids are globally monotonic and an unscoped fetch would let
-one job's URL read another job's diff.
+one job's URL read another job's diff. The job detail page uses those two reads directly on the
+server: metadata is listed with the timeline, while the latest diff and implementation summary are
+fetched separately and rendered as bounded output.
 
 PRD §8 asks for S3-compatible object storage and PRD §10.8 gives `Artifact` a `storage_url`. Both
 are right for the end state and wrong for Milestone 5, where a fourth local service would have to be

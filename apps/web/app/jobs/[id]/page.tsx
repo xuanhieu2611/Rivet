@@ -1,7 +1,7 @@
 import "server-only";
 
 import { isTerminal, serializeJobCommandSummary, serializeJobEvent } from "@rivet/contracts";
-import { getJob, listCommands, listEvents } from "@rivet/core";
+import { getArtifact, getJob, listArtifacts, listCommands, listEvents } from "@rivet/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -12,6 +12,7 @@ import { LiveConnectionIndicator, LiveStatusBadge } from "@/components/job-live/
 import { LiveAgentUsage } from "@/components/job-live/live-agent-usage";
 import { LiveCommandLog } from "@/components/job-live/live-command-log";
 import { LiveExecutionTimeline } from "@/components/job-live/live-execution-timeline";
+import { JobArtifactsPanel } from "@/components/job-artifacts-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/format";
 import { FAILURE_CATEGORY_LABELS } from "@/lib/job-status";
@@ -34,9 +35,29 @@ export default async function JobDetailPage({ params }: PageProps) {
   const job = await getJob(id);
   if (!job) notFound();
 
-  // The timeline and command metadata are independent reads. Fetch both summaries
-  // together; command transcripts are fetched by the live log only when needed.
-  const [events, commandSummaries] = await Promise.all([listEvents(job.id), listCommands(job.id)]);
+  // The timeline, command metadata and artifact metadata are independent reads.
+  // Fetch them together; command transcripts and artifact content stay bounded
+  // and are fetched separately from the live event stream.
+  const [events, commandSummaries, artifactSummaries] = await Promise.all([
+    listEvents(job.id),
+    listCommands(job.id),
+    listArtifacts(job.id),
+  ]);
+
+  const latestArtifact = (type: "diff" | "implementation_summary") => {
+    for (let index = artifactSummaries.length - 1; index >= 0; index -= 1) {
+      const artifact = artifactSummaries[index];
+      if (artifact?.type === type) return artifact;
+    }
+    return null;
+  };
+
+  const latestDiff = latestArtifact("diff");
+  const latestSummary = latestArtifact("implementation_summary");
+  const [diff, summary] = await Promise.all([
+    latestDiff ? getArtifact(job.id, latestDiff.id) : Promise.resolve(null),
+    latestSummary ? getArtifact(job.id, latestSummary.id) : Promise.resolve(null),
+  ]);
   const finished = isTerminal(job.status);
 
   return (
@@ -98,6 +119,8 @@ export default async function JobDetailPage({ params }: PageProps) {
                 <LiveExecutionTimeline />
               </CardContent>
             </Card>
+
+            <JobArtifactsPanel artifacts={artifactSummaries} summary={summary} diff={diff} />
 
             <Card>
               <CardHeader>

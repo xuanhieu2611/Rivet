@@ -39,7 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </span>
               </Link>
               <span className="border-border text-muted-foreground rounded-full border px-2 py-0.5 text-[11px] font-medium">
-                Milestone 4
+                Milestone 5
               </span>
             </div>
           </header>
@@ -48,8 +48,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           <footer className="border-border/60 text-muted-foreground border-t">
             <div className="mx-auto w-full max-w-5xl px-6 py-4 text-xs">
-              Jobs run with real sandbox provisioning, baseline testing, and sandbox-backed coding
-              agent sessions when the worker is configured for Pi.
+              Jobs run with real sandbox provisioning, baseline testing, validation, and
+              sandbox-backed coding agent sessions when the worker is configured for Pi.
             </div>
           </footer>
         </div>

@@ -392,8 +392,12 @@ a record of what a model claimed.
 
 ## Stage 7 - the web surface
 
+**Done.** Artifact metadata and content routes, the server-rendered artifacts panel, and timeline
+presentations for the M5 events.
+
 - `GET /api/jobs/:id/artifacts` (PRD §19) listing metadata, and a fetch route for one artifact's
-  content. `dynamic = "force-dynamic"`, no `runtime = "edge"`.
+  content at `/api/jobs/:id/artifacts/:artifactId`. `dynamic = "force-dynamic"`, no
+  `runtime = "edge"`.
 - An artifacts panel on the job detail page: the summary rendered as prose, the diff in a monospace
   viewer with per-line add/remove colouring. No new dependency and no syntax highlighting - a diff
   reads fine with two background colours, and a highlighter is 200KB of client bundle for a demo
