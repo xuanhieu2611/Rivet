@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecordArtifactInput } from "../artifacts/artifact-store";
 import { recordArtifact } from "../artifacts/artifact-store";
 import {
+  getLatestCheckpoint,
   recordCheckpoint,
   type JobCheckpoint,
   type RecordCheckpointInput,
@@ -19,7 +20,10 @@ import { createPhaseContextFactory, type PhaseExecInput, type PhaseLogger } from
 vi.mock("../events/event-service", () => ({ appendEvent: vi.fn() }));
 vi.mock("../sandbox/command-log", () => ({ recordCommand: vi.fn() }));
 vi.mock("../artifacts/artifact-store", () => ({ recordArtifact: vi.fn() }));
-vi.mock("../checkpoints/checkpoint-store", () => ({ recordCheckpoint: vi.fn() }));
+vi.mock("../checkpoints/checkpoint-store", () => ({
+  recordCheckpoint: vi.fn(),
+  getLatestCheckpoint: vi.fn(),
+}));
 
 const JOB = {
   id: "11111111-2222-3333-4444-555555555555",
@@ -296,6 +300,35 @@ describe("PhaseContext checkpoints", () => {
     expect(test.checkpoints[0]?.patch).toEqual(Buffer.from("patch"));
     expect(test.checkpoints[0]?.state).toEqual({ version: 1 });
     expect(vi.mocked(recordCheckpoint)).toHaveBeenCalledOnce();
+  });
+
+  it("reads the newest checkpoint under the same byte bound the writer applied", async () => {
+    const test = harness();
+    vi.mocked(getLatestCheckpoint).mockResolvedValue(null);
+
+    await expect(test.context.readLatestCheckpoint()).resolves.toBeNull();
+
+    // The store decompresses while it reads, so the bound has to be the
+    // configured one rather than whatever the row happens to claim.
+    expect(vi.mocked(getLatestCheckpoint)).toHaveBeenCalledWith(
+      JOB.id,
+      { maxBytes: 4_096 },
+      expect.anything(),
+    );
+  });
+
+  it("captures a workspace for verification without persisting anything", async () => {
+    const test = harness();
+
+    const snapshot = await test.context.captureWorkspace({
+      repositoryDir: "/home/node/workspace/repo",
+    });
+
+    expect(snapshot.patch).toEqual(Buffer.from("cloned\n"));
+    // Recovery re-derives a patch purely to compare checksums; a verification
+    // that wrote a row would checkpoint the thing it was checking.
+    expect(vi.mocked(recordCheckpoint)).not.toHaveBeenCalled();
+    expect(test.events).toEqual([]);
   });
 });
 

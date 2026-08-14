@@ -27,7 +27,24 @@ import { toJobDetail } from "./job-service";
  */
 export const ALLOWED_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
   queued: ["provisioning", "cancelled", "failed"],
-  provisioning: ["analyzing", "failed", "cancelled", "timed_out", "queued"],
+  // `analyzing` is the ordinary next phase; the other four are recovery edges.
+  // A reclaimed job still provisions - it has to create and verify an
+  // environment before it can truthfully display a later phase - and then jumps
+  // to the phase its newest checkpoint says is next. They are legal only after a
+  // lease-fenced `checkpoint.restored` record; `revising` is absent because no
+  // checkpoint kind resumes there.
+  provisioning: [
+    "analyzing",
+    "planning",
+    "implementing",
+    "testing",
+    "reviewing",
+    "finalizing",
+    "failed",
+    "cancelled",
+    "timed_out",
+    "queued",
+  ],
   analyzing: ["planning", "failed", "cancelled", "timed_out", "queued"],
   planning: ["implementing", "failed", "cancelled", "timed_out", "queued"],
   implementing: ["testing", "failed", "cancelled", "timed_out", "budget_exceeded", "queued"],

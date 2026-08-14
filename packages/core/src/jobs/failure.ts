@@ -138,6 +138,30 @@ export class CheckpointCorruptError extends TerminalJobError {
   }
 }
 
+/**
+ * A valid checkpoint could not be put back into a replacement sandbox.
+ *
+ * Terminal, and deliberately loud. The alternative - dropping the checkpoint and
+ * starting the attempt from the base commit - would silently discard work Rivet
+ * has already told the timeline was safely captured, which is the one recovery
+ * behaviour M6 exists to rule out. The failing command and its bounded stderr
+ * ride along so the rejection event can say which step refused.
+ */
+export class CheckpointRestoreFailedError extends TerminalJobError {
+  readonly argv: readonly string[];
+  readonly stderr: string;
+
+  constructor(
+    message: string,
+    details: { argv?: readonly string[]; stderr?: string } = {},
+    options?: { cause?: unknown },
+  ) {
+    super(message, "checkpoint_restore_failed", options);
+    this.argv = details.argv ?? [];
+    this.stderr = details.stderr ?? "";
+  }
+}
+
 export type FailureClass =
   | "retryable"
   | "terminal"

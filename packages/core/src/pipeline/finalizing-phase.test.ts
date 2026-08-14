@@ -42,6 +42,8 @@ function harness(options: { summary?: string | null; validation?: ValidationReco
     readBaseline: () => Promise.reject(new Error("the baseline is validation's to compare")),
     recordProvisioning: () => Promise.reject(new Error("the finalizing phase writes no columns")),
     recordAgentUsage: () => Promise.reject(new Error("the finalizing phase spends nothing")),
+    readLatestCheckpoint: () => Promise.resolve(null),
+    captureWorkspace: () => Promise.reject(new Error("no workspace capture here")),
     checkpoint: () => Promise.reject(new Error("the finalizing phase records no checkpoints")),
 
     readSummary: () =>

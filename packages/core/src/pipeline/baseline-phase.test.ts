@@ -116,6 +116,8 @@ function harness(options: { respond?: Responder } = {}) {
 
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: () => Promise.resolve(),
+    readLatestCheckpoint: () => Promise.resolve(null),
+    captureWorkspace: () => Promise.reject(new Error("no workspace capture here")),
     checkpoint: () => Promise.reject(new Error("the baseline phase records no checkpoints")),
   };
 

@@ -1,7 +1,13 @@
 import type { JobDetail } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
-import { JobCancelledError } from "../jobs/failure";
+import { sha256CheckpointPatch, type JobCheckpoint } from "../checkpoints/checkpoint-store";
+import type { WorkspaceSnapshot } from "../checkpoints/workspace-snapshot";
+import {
+  CheckpointCorruptError,
+  CheckpointRestoreFailedError,
+  JobCancelledError,
+} from "../jobs/failure";
 import type { ProvisioningPatch } from "../jobs/provisioning";
 import {
   CommandTimedOutError,
@@ -50,24 +56,61 @@ const OPTIONS_BASE = {
   diffMaxBytes: 1_048_576,
 };
 
+/** What the branch points at today, and what the crashed attempt was cut from. */
+const BRANCH_TIP = "9f2b0c1a4d5e6f708192a3b4c5d6e7f809112233";
+const ORIGINAL_COMMIT = "1a2b3c4d5e6f708192a3b4c5d6e7f8091122334455";
+
 /** The repository the fake sandbox pretends to hold, unless a test says otherwise. */
 const DEFAULT_LISTING = ".\n..\n.git\npackage.json\npnpm-lock.yaml\nsrc\n";
 
 type Responder = (argv: string[]) => Partial<ExecResult> | undefined;
 
-function harness(options: { respond?: Responder; createFails?: Error } = {}) {
+interface HarnessOptions {
+  respond?: Responder;
+  createFails?: Error;
+  /** The durable checkpoint this claim finds, if any. */
+  checkpoint?: JobCheckpoint;
+  /** What reading the newest checkpoint row throws, for the corrupt-row case. */
+  checkpointFails?: Error;
+  /** What re-deriving the restored workspace produces. Defaults to a match. */
+  verified?: WorkspaceSnapshot | Error;
+  /** A job that already knows which commit it is pinned to. */
+  baseCommitSha?: string;
+}
+
+function harness(options: HarnessOptions = {}) {
   const holder = new SandboxHolder();
   const controller = new AbortController();
   const executed: PhaseExecInput[] = [];
   const events: PhaseEventInput[] = [];
   const patches: ProvisioningPatch[] = [];
   const specs: SandboxSpec[] = [];
+  const writes: { path: string; content: string }[] = [];
+  const housekeeping: string[][] = [];
 
   const sandbox: Sandbox = {
     id: "c0ffee0c0ffee0c0ffee",
-    exec: () => Promise.reject(new Error("the phase must go through ctx.exec")),
+    // Only Rivet's own housekeeping goes direct; every command the job asked
+    // for still has to be recorded, so it goes through `ctx.exec`.
+    exec: (request) => {
+      housekeeping.push(request.argv);
+      return Promise.resolve({
+        argv: request.argv,
+        cwd: request.cwd,
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        timedOut: false,
+        oomKilled: false,
+        durationMs: 1,
+      });
+    },
     getFile: () => Promise.reject(new Error("provisioning reads no files")),
-    putFile: () => Promise.reject(new Error("provisioning writes no files")),
+    putFile: (path, content) => {
+      writes.push({ path, content });
+      return Promise.resolve();
+    },
     destroy: () => Promise.resolve(),
   };
 
@@ -83,7 +126,7 @@ function harness(options: { respond?: Responder; createFails?: Error } = {}) {
   const pipelineOptions: PipelineOptions = { ...OPTIONS_BASE, sandbox: provider };
 
   const ctx: PhaseContext = {
-    job: JOB,
+    job: options.baseCommitSha ? { ...JOB, baseCommitSha: options.baseCommitSha } : JOB,
     phase: { status: "provisioning", label: "Provision sandbox", durationMs: 0 },
     sandboxes: holder,
     signal: controller.signal,
@@ -126,6 +169,20 @@ function harness(options: { respond?: Responder; createFails?: Error } = {}) {
       return Promise.resolve();
     },
     recordAgentUsage: () => Promise.resolve(),
+    readLatestCheckpoint: () =>
+      options.checkpointFails
+        ? Promise.reject(options.checkpointFails)
+        : Promise.resolve(options.checkpoint ?? null),
+
+    captureWorkspace: () => {
+      if (options.verified instanceof Error) return Promise.reject(options.verified);
+      if (options.verified) return Promise.resolve(options.verified);
+      // By default the restored tree re-derives exactly what was stored, which
+      // is the whole claim `checkpoint.restored` makes.
+      const patch = options.checkpoint?.restorePatch ?? new Uint8Array();
+      return Promise.resolve({ patch: Buffer.from(patch), stats: STATS });
+    },
+
     checkpoint: () => Promise.reject(new Error("the provisioning phase records no checkpoints")),
   };
 
@@ -138,6 +195,46 @@ function harness(options: { respond?: Responder; createFails?: Error } = {}) {
     patches,
     specs,
     sandbox,
+    writes,
+    housekeeping,
+    typesOf: () => events.map((event) => event.type),
+    find: (type: string) => events.find((event) => event.type === type),
+    ran: (predicate: (argv: string[]) => boolean) =>
+      executed.find((input) => predicate(input.argv)),
+  };
+}
+
+const STATS = { filesChanged: 2, insertions: 12, deletions: 3 };
+
+/** A patch whose bytes, size and checksum agree, the way a stored row's do. */
+function checkpointFixture(overrides: Partial<JobCheckpoint> = {}): JobCheckpoint {
+  const patch = Buffer.from(
+    "diff --git a/src/index.ts b/src/index.ts\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1 +1 @@\n-old\n+new\n",
+    "utf8",
+  );
+
+  return {
+    id: 7,
+    jobId: JOB.id,
+    sequence: 3,
+    attemptCount: 1,
+    kind: "agent_turn",
+    completedPhase: null,
+    resumePhase: "implementing",
+    agentTurn: 2,
+    baseCommitSha: ORIGINAL_COMMIT,
+    sandboxId: "0ldc0ntainer0ld",
+    envFingerprint: {},
+    state: { version: 1 },
+    patchFormat: "git_binary_full_index",
+    patchCompression: "gzip",
+    patchSha256: sha256CheckpointPatch(patch),
+    patchByteSize: patch.byteLength,
+    patchCompressedBytes: 120,
+    patch,
+    restorePatch: patch,
+    createdAt: new Date("2026-08-14T00:00:00.000Z"),
+    ...overrides,
   };
 }
 
@@ -336,6 +433,33 @@ describe("provisioningPhase", () => {
     expect(test.patches[2]?.envFingerprint).toMatchObject({ lockfileSha256: null });
   });
 
+  it("takes the branch tip and asks for no commit when there is nothing to recover", async () => {
+    const test = harness();
+
+    await test.run();
+
+    // The fresh path is unchanged: no fetch, no checkout, no restore.
+    expect(test.ran((argv) => argv[1] === "fetch")).toBeUndefined();
+    expect(test.ran((argv) => argv[1] === "checkout")).toBeUndefined();
+    expect(test.writes).toEqual([]);
+    expect(test.typesOf()).not.toContain("checkpoint.restored");
+  });
+
+  it("reproduces the recorded base commit on a plain retry, and blames the repository", async () => {
+    const test = harness({
+      baseCommitSha: ORIGINAL_COMMIT,
+      respond: (argv) =>
+        argv[1] === "fetch" ? { exitCode: 128, stderr: "fatal: bad object\n" } : undefined,
+    });
+
+    // No checkpoint, but the job already knows which commit it means. A branch
+    // that moved between attempts must not silently change what "the base" is.
+    const error = await test.run().catch((cause: unknown) => cause);
+
+    expect(test.ran((argv) => argv[1] === "fetch")?.argv).toContain(ORIGINAL_COMMIT);
+    expect(error).toBeInstanceOf(RepoUnavailableError);
+  });
+
   it("propagates a create failure without setting the holder", async () => {
     const failure = new Error("no daemon");
     const test = harness({ createFails: failure });
@@ -343,5 +467,209 @@ describe("provisioningPhase", () => {
     await expect(test.run()).rejects.toBe(failure);
     expect(test.holder.current).toBeUndefined();
     expect(test.events).toEqual([]);
+  });
+});
+
+/**
+ * Recovery: the same phase, with a checkpoint in the database.
+ *
+ * What is asserted is the judgment again - which commit the attempt pins itself
+ * to, that the patch is applied before the install rather than after it, and
+ * that nothing claims a restore until the re-derived checksum agrees. Whether
+ * `git apply` really replays a binary patch is the `*.sbx` suite's question.
+ */
+describe("provisioningPhase, recovering from a checkpoint", () => {
+  /** HEAD is the branch tip until the checkout, and the original commit after it. */
+  function atOriginalCommit(): Responder {
+    let revParses = 0;
+    return (argv) => {
+      if (argv[1] !== "rev-parse") return undefined;
+      revParses += 1;
+      return { stdout: `${revParses === 1 ? BRANCH_TIP : ORIGINAL_COMMIT}\n` };
+    };
+  }
+
+  it("pins the original base commit rather than whatever the branch points at now", async () => {
+    const test = harness({ checkpoint: checkpointFixture(), respond: atOriginalCommit() });
+
+    await test.run();
+
+    expect(test.ran((argv) => argv[1] === "fetch")?.argv).toEqual([
+      "git",
+      "fetch",
+      "--depth",
+      "1",
+      "origin",
+      ORIGINAL_COMMIT,
+    ]);
+    expect(test.ran((argv) => argv[1] === "checkout")?.argv).toEqual([
+      "git",
+      "checkout",
+      "--detach",
+      "FETCH_HEAD",
+    ]);
+    // The commit the run records is the one it is actually on, not the one the
+    // clone landed on.
+    expect(test.patches[1]).toEqual({ baseCommitSha: ORIGINAL_COMMIT });
+    expect(test.find("repo.cloned")?.data?.commitSha).toBe(ORIGINAL_COMMIT);
+  });
+
+  it("applies the patch into the working tree before installing dependencies", async () => {
+    const checkpoint = checkpointFixture();
+    const test = harness({ checkpoint, respond: atOriginalCommit() });
+
+    await test.run();
+
+    expect(test.writes).toEqual([
+      {
+        path: "/home/node/workspace/rivet-checkpoint.patch",
+        content: Buffer.from(checkpoint.restorePatch).toString("utf8"),
+      },
+    ]);
+
+    const argvs = test.executed.map((input) => input.argv.join(" "));
+    const applied = argvs.findIndex((argv) => argv.startsWith("git apply"));
+    const installed = argvs.findIndex((argv) => argv.includes("install"));
+    expect(applied).toBeGreaterThan(-1);
+    // The order the plan cares about: an interrupted session may have changed a
+    // manifest, so the install has to see the restored one.
+    expect(applied).toBeLessThan(installed);
+    expect(test.executed[applied]?.argv).toEqual([
+      "git",
+      "apply",
+      "--binary",
+      "/home/node/workspace/rivet-checkpoint.patch",
+    ]);
+    expect(test.executed[applied]?.cwd).toBe("/home/node/workspace/repo");
+    // Housekeeping stays off the command log; the timeline is the job's, not
+    // Rivet's bookkeeping.
+    expect(test.housekeeping).toEqual([
+      ["rm", "-f", "/home/node/workspace/rivet-checkpoint.patch"],
+    ]);
+  });
+
+  it("states both container ids on checkpoint.restored", async () => {
+    const checkpoint = checkpointFixture();
+    const test = harness({ checkpoint, respond: atOriginalCommit() });
+
+    await test.run();
+
+    const restored = test.find("checkpoint.restored");
+    expect(restored?.data).toMatchObject({
+      checkpointId: checkpoint.id,
+      checkpointSequence: checkpoint.sequence,
+      checkpointKind: "agent_turn",
+      resumePhase: "implementing",
+      turn: 2,
+      commitSha: ORIGINAL_COMMIT,
+      // The fact that proves this was reconstruction rather than reuse.
+      originalSandboxId: "0ldc0ntainer0ld",
+      replacementSandboxId: test.sandbox.id,
+      patchSha256: checkpoint.patchSha256,
+      patchByteSize: checkpoint.patchByteSize,
+      filesChanged: 2,
+    });
+    // Restored before the environment is declared ready, and never after.
+    expect(test.typesOf()).toEqual([
+      "sandbox.created",
+      "repo.cloned",
+      "checkpoint.restored",
+      "deps.installed",
+    ]);
+  });
+
+  it("fails the job when the restored workspace does not match the checkpoint", async () => {
+    const checkpoint = checkpointFixture();
+    const test = harness({
+      checkpoint,
+      respond: atOriginalCommit(),
+      verified: { patch: Buffer.from("diff --git a/other b/other\n", "utf8"), stats: STATS },
+    });
+
+    const error = await test.run().catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(CheckpointRestoreFailedError);
+    expect((error as CheckpointRestoreFailedError).category).toBe("checkpoint_restore_failed");
+    // Nothing may claim a restore that did not verify.
+    expect(test.typesOf()).not.toContain("checkpoint.restored");
+    expect(test.find("checkpoint.rejected")?.data).toMatchObject({
+      checkpointSequence: checkpoint.sequence,
+      failureCategory: "checkpoint_restore_failed",
+    });
+  });
+
+  it("records the failing command when the patch does not apply", async () => {
+    const responder = atOriginalCommit();
+    const test = harness({
+      checkpoint: checkpointFixture(),
+      respond: (argv) =>
+        argv[1] === "apply"
+          ? { exitCode: 1, stderr: "error: patch does not apply\n" }
+          : responder(argv),
+    });
+
+    const error = await test.run().catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(CheckpointRestoreFailedError);
+    expect((error as CheckpointRestoreFailedError).message).toContain("patch does not apply");
+    expect(test.find("checkpoint.rejected")?.data?.argv).toEqual([
+      "git",
+      "apply",
+      "--binary",
+      "/home/node/workspace/rivet-checkpoint.patch",
+    ]);
+  });
+
+  it("fails the job rather than starting again when the checkpoint cannot be read", async () => {
+    const test = harness({ checkpointFails: new CheckpointCorruptError("checksum mismatch") });
+
+    const error = await test.run().catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(CheckpointCorruptError);
+    // Read before the container, so a terminal checkpoint costs nothing.
+    expect(test.specs).toEqual([]);
+    expect(test.find("checkpoint.rejected")?.data).toMatchObject({
+      failureCategory: "checkpoint_corrupt",
+    });
+  });
+
+  it("still verifies a checkpoint whose patch is empty, without applying one", async () => {
+    const checkpoint = checkpointFixture({
+      kind: "phase_boundary",
+      completedPhase: "planning",
+      resumePhase: "implementing",
+      agentTurn: null,
+      patch: new Uint8Array(),
+      restorePatch: new Uint8Array(),
+      patchByteSize: 0,
+      patchSha256: sha256CheckpointPatch(new Uint8Array()),
+    });
+    const test = harness({ checkpoint, respond: atOriginalCommit() });
+
+    await test.run();
+
+    expect(test.writes).toEqual([]);
+    expect(test.ran((argv) => argv[1] === "apply")).toBeUndefined();
+    expect(test.find("checkpoint.restored")?.data).toMatchObject({
+      checkpointKind: "phase_boundary",
+      completedPhase: "planning",
+    });
+  });
+
+  it("blames the checkpoint, not the repository, when the original commit is gone", async () => {
+    const responder = atOriginalCommit();
+    const test = harness({
+      checkpoint: checkpointFixture(),
+      respond: (argv) =>
+        argv[1] === "fetch"
+          ? { exitCode: 128, stderr: "fatal: could not find remote ref\n" }
+          : responder(argv),
+    });
+
+    const error = await test.run().catch((cause: unknown) => cause);
+
+    // The repository is reachable; what failed is putting this job back
+    // together, and the category has to say which.
+    expect(error).toBeInstanceOf(CheckpointRestoreFailedError);
   });
 });

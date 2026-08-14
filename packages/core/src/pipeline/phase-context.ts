@@ -13,6 +13,7 @@ import { db, type Database } from "@rivet/database";
 
 import { readLatestImplementationPlan, recordArtifact } from "../artifacts/artifact-store";
 import {
+  getLatestCheckpoint,
   recordCheckpoint,
   type JobCheckpoint,
   type RecordCheckpointInput,
@@ -21,6 +22,7 @@ import {
   captureWorkspacePatch,
   parseCheckpointPatchStats,
   type CheckpointPatchStats,
+  type WorkspaceSnapshot,
   WorkspaceSnapshotError,
 } from "../checkpoints/workspace-snapshot";
 import { type BaselineOutcome, readBaseline } from "../events/baseline-log";
@@ -140,6 +142,32 @@ export interface PhaseContext {
   recordAgentUsage(patch: AgentUsagePatch): Promise<void>;
   /** Reads the current in-run usage totals, including another phase's session. */
   readAgentUsage?: () => AgentUsageTotals;
+
+  /**
+   * The newest durable checkpoint for this job, or null when there is none.
+   *
+   * A read rather than something the processor hands down, for the same reason
+   * the baseline is: `runPipeline` passes nothing between phases and nothing
+   * survives the worker that wrote it. `provisioning` asks this on every claim,
+   * so a checkpoint can only ever belong to an earlier attempt - provisioning is
+   * the first phase of every claim and nothing has captured one yet.
+   *
+   * It throws `CheckpointCorruptError` rather than returning null for a row that
+   * fails validation. Acknowledged progress that cannot be read is a failure to
+   * report, not a reason to start again from the base commit.
+   */
+  readLatestCheckpoint(): Promise<JobCheckpoint | null>;
+
+  /**
+   * Captures the workspace as a lossless patch without persisting anything.
+   *
+   * The same capture `checkpoint()` performs, exposed on its own because
+   * recovery has to re-derive a patch purely to compare its checksum with the
+   * one it just applied. Bounds and the repository directory come from the
+   * context, so a phase cannot verify a restore against a different limit than
+   * the one that stored it.
+   */
+  captureWorkspace(input?: { repositoryDir?: string }): Promise<WorkspaceSnapshot>;
 
   /**
    * Persists a complete workspace snapshot at a safe recovery boundary.
@@ -494,6 +522,20 @@ export function createPhaseContextFactory(
 
     readAgentUsage() {
       return { ...currentAgentUsage };
+    },
+
+    readLatestCheckpoint() {
+      return getLatestCheckpoint(job.id, { maxBytes: options.checkpointMaxBytes }, database);
+    },
+
+    captureWorkspace(input) {
+      return captureWorkspacePatch({
+        sandbox: sandboxes.require(),
+        repositoryDir: input?.repositoryDir ?? options.repositoryDir ?? "",
+        signal,
+        timeoutMs: options.checkpointTimeoutMs,
+        maxBytes: options.checkpointMaxBytes,
+      });
     },
 
     async checkpoint(input) {

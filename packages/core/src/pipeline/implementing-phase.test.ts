@@ -250,6 +250,9 @@ function harness(
       usages.push(patch);
       return Promise.resolve();
     },
+    readLatestCheckpoint: () => Promise.resolve(null),
+    captureWorkspace: () =>
+      Promise.reject(new Error("the phase asks for a checkpoint, not a diff")),
     checkpoint: (input) => {
       checkpoints.push(input);
       return Promise.resolve({ id: checkpoints.length } as JobCheckpoint);

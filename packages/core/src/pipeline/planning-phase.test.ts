@@ -179,6 +179,8 @@ function harness(planner: ScriptedPlanner) {
       usages.push(usage);
       return Promise.resolve();
     },
+    readLatestCheckpoint: () => Promise.resolve(null),
+    captureWorkspace: () => Promise.reject(new Error("no workspace capture here")),
     checkpoint: () => Promise.reject(new Error("planning does not checkpoint")),
   };
 

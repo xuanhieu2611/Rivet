@@ -539,6 +539,27 @@ phase. The restore event carries both the checkpoint's original sandbox id and t
 sandbox id, so the recovery demo can prove that this was reconstruction rather than container reuse.
 Destroy the container on every mismatch through the processor's existing `finally`.
 
+**Provisioning restores, with one deliberate reordering:** `provisioningPhase()` is now composed of
+named steps - `createSandbox`, `cloneRepository`, `resolveBaseCommit`, `restoreCheckpoint`,
+`detectProject`, `installDependencies`, `recordEnvironment` - and the `SandboxProvider` port did not
+change. The phase asks `PhaseContext.readLatestCheckpoint()` on every claim rather than being handed
+a resume plan, for the same reason the baseline is read back rather than passed between phases;
+Stage 7's recovery planner reads the same row to choose the phase suffix. `resolveBaseCommit` pins
+the original commit with `git fetch --depth 1 origin <sha>` and `git checkout --detach FETCH_HEAD`
+whenever the job or its checkpoint already names one, so a branch that moved between attempts cannot
+silently change what "the base" means.
+
+The checksum verification runs **immediately after `git apply` and before the dependency install**,
+rather than after it as the step list above says. The check exists to prove restoration was
+lossless, and a package manager that rewrites a lockfile changes the working tree for reasons that
+have nothing to do with restoration - running it first would fail perfectly restored jobs with
+`checkpoint_restore_failed`. The install still runs against the restored manifest and lockfile,
+which is the property that ordering existed to protect. A failure at any restore step records
+`checkpoint.rejected` with the failing argv and bounded stderr before the phase fails; a checkpoint
+row that will not validate is read before the container is created, so a terminal checkpoint costs
+no Docker work. `ALLOWED_TRANSITIONS` gains the recovery edges from `provisioning` to `planning`,
+`implementing`, `testing`, `reviewing` and `finalizing`; Stage 7 is what starts using them.
+
 ## Stage 7 - resume the phase suffix with a fresh Pi session
 
 Add a recovery planner in core that maps a checkpoint to a legal pipeline suffix. It is
