@@ -191,6 +191,8 @@ something better to say than "Recorded diff (12043 bytes)" can say it.
 
 ## Stage 3 - the phase layout
 
+**Done.** `packages/core/src/pipeline/planning-phase.ts`, plus the rewiring in `phases.ts`.
+
 - `analyzing` gets `baselinePhase`, and its label becomes something that says what it does.
 - `testing` gets the new `validationPhase` from Stage 5.
 - `planning` gets a body that emits one `plan.deferred` event and returns, with `durationMs: 0`. A
@@ -205,6 +207,16 @@ something better to say than "Recorded diff (12043 bytes)" can say it.
 Note that `job_commands.phase` for baseline commands changes from `testing` to `analyzing`. The
 column is deliberately `text` and never joined as a state machine, so old rows keep their old value
 and nothing breaks.
+
+As built, with one label left alone. `analyzing` is now "Establish test baseline"; `testing` keeps
+"Run tests" until Stage 5 gives it the validation body, because renaming a phase that is still a
+sleep would tell the timeline a validation happened when nothing did - which is the same objection
+this stage makes to `planning`'s two-second sleep. The guard-table test now asserts a positive
+duration for every phase _except_ `planning`, and its "which phases are real" assertion reads
+`["provisioning", "analyzing", "planning"]` in pipeline order, so the move itself is what the test
+is checking. `planningPhase()` is a closure over nothing, matching every other phase's export shape,
+because M6 needs `PipelineOptions` here and changing the call site then is worse than an unused
+parameter list now.
 
 ## Stage 4 - what the session is told
 

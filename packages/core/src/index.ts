@@ -35,6 +35,7 @@ export * from "./pipeline/command-output";
 export * from "./pipeline/implementing-phase";
 export * from "./pipeline/phase-context";
 export * from "./pipeline/phases";
+export * from "./pipeline/planning-phase";
 export * from "./pipeline/project";
 export * from "./pipeline/provisioning-phase";
 export * from "./pipeline/run-pipeline";

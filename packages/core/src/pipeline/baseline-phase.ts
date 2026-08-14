@@ -5,7 +5,14 @@ import type { PipelineOptions } from "./phases";
 import { detectPackageManager, type ProjectPlan, readScript, REPO_DIRNAME } from "./project";
 
 /**
- * Phase five: run the repository's own tests before Rivet has changed anything.
+ * Phase two: run the repository's own tests before Rivet has changed anything.
+ *
+ * "Before" is load-bearing and used not to be true. Until Milestone 5 this body
+ * was wired to `testing`, which runs *after* `implementing`, so the phase whose
+ * entire premise is "was this repository already broken" was measuring a tree
+ * the coding session had just edited. It now runs at `analyzing`, ahead of every
+ * phase that can change a file, and `testing` re-runs the same suite and
+ * compares the two.
  *
  * The one place in this milestone where the obvious behaviour is the wrong one.
  * **A non-zero exit here does not fail the job.** PRD §11 C asks for exactly

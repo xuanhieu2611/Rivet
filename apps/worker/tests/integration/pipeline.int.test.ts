@@ -216,6 +216,6 @@ describe("timeout", () => {
     const started = (await readEvents(job.id))
       .filter((event) => event.type === "phase.started")
       .map((event) => event.data?.phase);
-    expect(started).toEqual(["Provision sandbox", "Analyze repository"]);
+    expect(started).toEqual(["Provision sandbox", "Establish test baseline"]);
   });
 });

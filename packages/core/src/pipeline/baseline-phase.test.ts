@@ -76,7 +76,7 @@ function harness(options: { respond?: Responder } = {}) {
 
   const ctx: PhaseContext = {
     job: JOB,
-    phase: { status: "testing", label: "Run tests", durationMs: 0 },
+    phase: { status: "analyzing", label: "Establish test baseline", durationMs: 0 },
     sandboxes: holder,
     signal: controller.signal,
     log: { debug: () => undefined, info: () => undefined, warn: () => undefined },

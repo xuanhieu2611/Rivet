@@ -80,10 +80,19 @@ describe.each(Object.entries(PIPELINES))("%s pipeline", (_name, phases) => {
     }
   });
 
-  it("gives every phase a positive duration and a label", () => {
+  it("gives every phase a label, and a sleep only where a sleep is honest", () => {
     for (const phase of phases) {
-      expect(phase.durationMs).toBeGreaterThan(0);
       expect(phase.label.length).toBeGreaterThan(0);
+      // `planning` is the deliberate zero: Milestone 5 replaced its two-second
+      // sleep with an event saying no plan was made, and a phase that announces
+      // it did nothing must not also spend two seconds appearing to work. Every
+      // other simulated phase still stands in for work a later milestone does,
+      // so a zero there would be a phase that had quietly stopped existing.
+      if (phase.status === "planning") {
+        expect(phase.durationMs).toBe(0);
+      } else {
+        expect(phase.durationMs).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -110,12 +119,13 @@ describe("simulatedPipeline", () => {
 });
 
 describe("buildPipeline", () => {
-  it("makes provisioning and testing real and leaves the rest simulated", () => {
+  it("makes provisioning, analyzing and planning real and leaves the rest simulated", () => {
     const real = PIPELINES.sandbox!.filter((phase) => phase.run).map((phase) => phase.status);
-    // The two phases Milestone 2 was scoped to. The other five wait for
-    // Milestones 4 and 5, and this list is how a phase quietly acquiring a body
-    // gets noticed.
-    expect(real).toEqual(["provisioning", "testing"]);
+    // In pipeline order, which is also the assertion that the baseline moved:
+    // it is `analyzing` that does real work now, and `testing` that does not
+    // yet. `implementing` is absent because this pipeline was built without an
+    // agent. This list is how a phase quietly acquiring a body gets noticed.
+    expect(real).toEqual(["provisioning", "analyzing", "planning"]);
   });
 
   it("does not share phase objects with the simulated pipeline", () => {

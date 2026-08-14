@@ -25,8 +25,9 @@ queue, the worker, and everything that makes a job survive the worker dying. Mil
 Docker sandbox and made provisioning and baseline testing real. Milestone 3 made the append-only
 event log observable through a resumable SSE stream, live status, timeline, and command log.
 Milestone 4 added the Pi adapter and made `implementing` real: Pi runs in the trusted worker while
-its four tools operate inside the job's sandbox. Analysis, planning, review, and finalization remain
-simulated until later milestones.
+its four tools operate inside the job's sandbox. Milestone 5 moved the baseline to `analyzing`,
+where it runs before anything is edited, and made `planning` say plainly that it produced nothing.
+Validation, review, and finalization remain simulated until the rest of Milestone 5 and Milestone 8.
 
 ## What exists today
 
@@ -166,18 +167,18 @@ with no `REDIS_URL`. Outside production both the client and the `Queue` are also
 The sandbox follows the same port/adapter split as the queue. `packages/core` declares the
 `SandboxProvider`, `Sandbox`, request, result and resource-limit types, while `packages/sandbox`
 implements them with dockerode and supplies a scripted fake. Core can orchestrate provisioning and
-testing without importing Docker, and importing the adapter does not contact the daemon. The client,
-image check and network are all lazy. That preserves the important property that unit tests and
-builds need no Docker daemon.
+the baseline without importing Docker, and importing the adapter does not contact the daemon. The
+client, image check and network are all lazy. That preserves the important property that unit tests
+and builds need no Docker daemon.
 
 A real attempt gets one long-lived container. It runs as uid 1000 with all Linux capabilities
 dropped, `no-new-privileges`, memory and swap set to the same ceiling, CPU and PID limits, and the
 user-defined `rivet-sandbox` bridge. Provisioning clones into `/home/node/workspace/repo`, resolves
 HEAD, installs from the detected lockfile, and records the image, tool versions, lockfile hash,
-commit and limits as an environment fingerprint. Baseline testing then runs the repository's own
-`test` script in the same filesystem. Every command is an argv array rather than a shell string, and
-stdout and stderr are captured separately. Output above the cap keeps its head and tail with an
-explicit byte-count marker in the middle.
+commit and limits as an environment fingerprint. `analyzing` then runs the repository's own `test`
+script in the same filesystem, before any phase has changed a file. Every command is an argv array
+rather than a shell string, and stdout and stderr are captured separately. Output above the cap
+keeps its head and tail with an explicit byte-count marker in the middle.
 
 The processor owns the container handle, not the phase that creates it. Its `finally` destroys the
 container after completion, failure, cancellation, job timeout, lease loss and graceful shutdown.
@@ -275,14 +276,16 @@ for a job that finished ten minutes ago are all harmless, because the claim is w
 to act and the claim is a compare-and-swap.
 
 The pipeline itself is seven phases - provision, analyze, plan, implement, test, review, finalize.
-Milestone 2 made provisioning and testing real sandbox work, and Milestone 4 made implementing a
-real Pi session when an agent is supplied. Analyzing, planning, reviewing and finalizing remain
-simulated until later milestones. The four simulated phases total about 10 seconds, which is still
-roughly the right length to watch a job cross the dashboard. The `RIVET_AGENT=off` integration
-configuration deliberately leaves implementing simulated as well, so lifecycle tests need no model
-key. That is the entire reason `runPipeline` takes its clock, its sleep, its callbacks and its fault
-injector as arguments rather than importing them: the same runner drives the demo at `speed: 1` and
-the unit tests at `speed: 0`.
+Milestone 2 made provisioning and the baseline real sandbox work, Milestone 4 made implementing a
+real Pi session when an agent is supplied, and Milestone 5 moved the baseline onto `analyzing` so it
+measures the repository before the session edits it. Planning now runs a body that records one
+`plan.deferred` event and returns, rather than sleeping for two seconds as though a plan were being
+made; testing, reviewing and finalizing are still simulated. Those three sleeps total about 9
+seconds, which is still roughly the right length to watch a job cross the dashboard. The
+`RIVET_AGENT=off` integration configuration deliberately leaves implementing simulated as well, so
+lifecycle tests need no model key. That is the entire reason `runPipeline` takes its clock, its
+sleep, its callbacks and its fault injector as arguments rather than importing them: the same runner
+drives the demo at `speed: 1` and the unit tests at `speed: 0`.
 
 Seven fault-injection modes exist so the recovery machinery and the sandbox failure taxonomy have
 something to recover from on demand: `throw` (retryable), `fatal` (terminal), `hang` (ignores the
@@ -534,8 +537,8 @@ M4 adds coarse agent rows to the same log: session start, turn start, completed 
 tool start and completion, one usage row per turn, budget breach, and session end. Pi token deltas
 are never persisted. A shell tool's lifecycle still goes through `PhaseContext.exec`, so its command
 row and `command.*` events are the same durable facts as a command Rivet ran during provisioning or
-baseline testing. The `jobs` row keeps cumulative input tokens, output tokens, and priced cost,
-updated after each usage event under the current lease.
+the baseline. The `jobs` row keeps cumulative input tokens, output tokens, and priced cost, updated
+after each usage event under the current lease.
 
 ## The artifact store
 
@@ -650,9 +653,9 @@ Named so their absence reads as a decision rather than an oversight: no authenti
 (Milestone 9 brings GitHub identity), no `repository_id` foreign key (there is no Repository table
 to point at, so the job stores a plain `repo_url`), no completion detection or diff persistence
 (M5), no checkpoints or resumable jobs (M6), no transactional outbox (see the dual-write section for
-why), and no deployment. The Pi implementation session is real, but analysis, planning, review, and
-finalization are still simulated, and the bridge network is not the hardened isolation boundary a
-production worker needs.
+why), and no deployment. The Pi implementation session is real and analysis establishes a baseline,
+but validation, review and finalization are still simulated and planning deliberately produces
+nothing, and the bridge network is not the hardened isolation boundary a production worker needs.
 
 The stream targets a long-lived Node.js host. Native EventSource reconnect makes interruptions safe,
 but a deployment platform that buffers or caps long responses can still terminate it. Before public

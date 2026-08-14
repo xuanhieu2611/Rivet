@@ -16,21 +16,27 @@ exists today and is the best starting point for any structural question.
 it under a Postgres lease, provisions a sandbox, records a baseline, runs a Pi coding session during
 `implementing`, heartbeats while it runs, and lands it in a terminal status. Retries, cancellation,
 timeouts, crash recovery, agent budgets, usage persistence, and provider failure classification all
-work and are covered by the unit and integration suites. Analysis, planning, review, and
-finalization remain simulated until later milestones.
+work and are covered by the unit and integration suites. Validation, review, and finalization remain
+simulated until the rest of Milestone 5 and Milestone 8.
 
-`packages/sandbox` is real; `buildPipeline()` gives `provisioning` and `testing` real bodies -
-create a container, clone the repository, resolve the commit, install dependencies, then run the
-repository's own test suite and record the result - and `apps/worker` calls it, selected by
-`RIVET_SANDBOX` (`docker` by default, `off` for the simulated pipeline). The processor owns the
-container and destroys it on every exit; the sweeper reaps whatever a `kill -9` left behind.
+Milestone 5 is in progress. Its phase layout has landed: the baseline now runs at `analyzing`,
+before anything has been edited, and `planning` records one `plan.deferred` event instead of
+sleeping for two seconds as though a plan were being made. `testing` becomes validation later in the
+milestone and is a sleep until then.
+
+`packages/sandbox` is real; `buildPipeline()` gives `provisioning`, `analyzing` and `planning` real
+bodies - create a container, clone the repository, resolve the commit, install dependencies, run the
+repository's own test suite and record the baseline, then state that no plan was produced - and
+`apps/worker` calls it, selected by `RIVET_SANDBOX` (`docker` by default, `off` for the simulated
+pipeline). The processor owns the container and destroys it on every exit; the sweeper reaps
+whatever a `kill -9` left behind.
 
 M3 makes the append-only event log observable. The job detail route serves JSON to ordinary callers
 and a Postgres-backed SSE stream to live viewers. The browser reducer reconnects from durable event
 ids, deduplicates replayed rows, closes hidden tabs, and drains terminal cleanup before one final
 refresh. Commands expose a start event immediately and fetch their bounded transcript lazily.
 
-**A red baseline is not a failed job.** The `testing` phase records
+**A red baseline is not a failed job.** The `analyzing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
 whatever the exit code was: PRD §11 C wants to know whether the repository was already broken
 _before_ Rivet touched it, and failing the job would make Rivet unable to work on the repositories

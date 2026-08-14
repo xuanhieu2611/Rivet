@@ -5,6 +5,7 @@ import type { SandboxProvider } from "../sandbox/sandbox";
 import { baselinePhase } from "./baseline-phase";
 import { implementingPhase } from "./implementing-phase";
 import type { PhaseContext } from "./phase-context";
+import { planningPhase } from "./planning-phase";
 import { provisioningPhase } from "./provisioning-phase";
 
 /**
@@ -111,14 +112,19 @@ export interface AgentOptions {
  * asserts both against every pipeline this file can build, so reordering this
  * list without updating the guard table fails before it reaches a database.
  *
- * The durations are what the simulated phases sleep for - roughly 21 seconds
+ * The durations are what the simulated phases sleep for - roughly 19 seconds
  * end to end at `speed: 1`, about the right length to watch a job cross the
  * dashboard without getting bored or missing it.
+ *
+ * `planning` is the one exception, and deliberately so: Milestone 5 gives it a
+ * body that records that no plan was made, and a phase whose whole content is
+ * "nothing happened here yet" must not also sleep for two seconds pretending
+ * otherwise. See `planning-phase.ts`.
  */
 const PHASE_TEMPLATE: readonly Phase[] = [
   { status: "provisioning", label: "Provision sandbox", durationMs: 2_000 },
-  { status: "analyzing", label: "Analyze repository", durationMs: 3_000 },
-  { status: "planning", label: "Create plan", durationMs: 2_000 },
+  { status: "analyzing", label: "Establish test baseline", durationMs: 3_000 },
+  { status: "planning", label: "Create plan", durationMs: 0 },
   { status: "implementing", label: "Implement change", durationMs: 5_000 },
   { status: "testing", label: "Run tests", durationMs: 4_000 },
   { status: "reviewing", label: "Review patch", durationMs: 3_000 },
@@ -142,13 +148,24 @@ export function simulatedPipeline(): readonly Phase[] {
  * The same seven phases, with the ones that have been made real given a body.
  *
  * `provisioning` creates a container, clones the repository and installs its
- * dependencies; `testing` runs the repository's own suite and records what it
- * found; `implementing` runs a coding session, but only when a worker was
- * given a harness to run it with. `analyzing`, `planning`, `reviewing` and
- * `finalizing` stay simulated until Milestone 5, and there is nothing clever
- * about their sleeps in the meantime - which is why this returns the same seven
- * statuses in the same order however it is configured, and why one guard-table
- * test walks every pipeline this file can build.
+ * dependencies; `analyzing` runs the repository's own suite and records the
+ * baseline; `planning` records that it produced nothing; `implementing` runs a
+ * coding session, but only when a worker was given a harness to run it with.
+ * `testing`, `reviewing` and `finalizing` are the remainder of Milestone 5 and
+ * still sleep, and there is nothing clever about those sleeps in the meantime -
+ * which is why this returns the same seven statuses in the same order however
+ * it is configured, and why one guard-table test walks every pipeline this file
+ * can build.
+ *
+ * The baseline is wired to `analyzing` rather than `testing` because that is
+ * what it was always for. PRD §11 C asks whether the repository was healthy
+ * *before* Rivet touched it, and `testing` sits after `implementing`, so from
+ * Milestone 2 until now the phase was answering that question too late for the
+ * answer to mean anything. Nothing noticed because nothing read the result back;
+ * Milestone 5 reads it back, so it had to move first. `job_commands.phase` for
+ * those commands changes from `testing` to `analyzing`, which is why that column
+ * is `text` and is never joined as a state machine: old rows keep the old value
+ * and stay true about the run that wrote them.
  *
  * Leaving `implementing` simulated when there is no agent is what keeps
  * `pnpm test:integration` runnable with no model key: `RIVET_AGENT=off` omits
@@ -157,7 +174,8 @@ export function simulatedPipeline(): readonly Phase[] {
 export function buildPipeline(options: PipelineOptions): readonly Phase[] {
   const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {
     provisioning: provisioningPhase(options),
-    testing: baselinePhase(options),
+    analyzing: baselinePhase(options),
+    planning: planningPhase(),
     ...(options.agent ? { implementing: implementingPhase(options.agent, options) } : {}),
   };
 
