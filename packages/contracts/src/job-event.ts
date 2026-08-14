@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+import {
+  checkpointKindSchema,
+  checkpointPatchCompressionSchema,
+  checkpointPatchFormatSchema,
+  type CheckpointKind,
+  type CheckpointPatchCompression,
+  type CheckpointPatchFormat,
+} from "./checkpoint";
 import { jobStatusSchema, type JobStatus } from "./job";
 import { artifactTypeSchema, type ArtifactType } from "./job-artifact";
 
@@ -107,6 +115,13 @@ export const JOB_EVENT_TYPES = [
    * to complete, and reading one off the other would make each of them less true.
    */
   "run.summarized",
+
+  // --- planning and recovery (M6) --------------------------------------
+  "plan.recorded",
+  "checkpoint.created",
+  "checkpoint.restored",
+  "checkpoint.rejected",
+  "run.resumed",
 ] as const;
 
 export const jobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
@@ -195,6 +210,16 @@ export const FAILURE_CATEGORIES = [
    * is where resumption gets designed properly.
    */
   "validation_failed",
+
+  // --- planning and recovery (M6) --------------------------------------
+  /** The planner ended without submitting a valid structured plan. */
+  "plan_not_produced",
+  /** A stored checkpoint failed schema, size, or checksum validation. */
+  "checkpoint_corrupt",
+  /** A valid checkpoint could not be applied to the original base commit. */
+  "checkpoint_restore_failed",
+  /** The complete checkpoint exceeds the configured storage bound. */
+  "checkpoint_too_large",
 
   "unknown",
 ] as const;
@@ -377,6 +402,32 @@ export type JobEventData = {
   filesChanged?: number;
   insertions?: number;
   deletions?: number;
+
+  // --- planning and recovery (M6) --------------------------------------
+  /** The durable checkpoint row referenced by a recovery event. */
+  checkpointId?: number;
+  /** The per-job sequence used to select the newest checkpoint. */
+  checkpointSequence?: number;
+  /** Alias accepted by older event producers that use the column name directly. */
+  sequence?: number;
+  checkpointKind?: CheckpointKind;
+  /** Alias for checkpointKind used by compact timeline payloads. */
+  kind?: CheckpointKind;
+  completedPhase?: JobStatus;
+  resumePhase?: JobStatus;
+  /** The sandbox that produced or currently owns the checkpoint. */
+  sandboxId?: string;
+  /** Both names are useful on checkpoint.restored: source and replacement. */
+  sourceSandboxId?: string;
+  originalSandboxId?: string;
+  replacementSandboxId?: string;
+  patchFormat?: CheckpointPatchFormat;
+  patchCompression?: CheckpointPatchCompression;
+  patchSha256?: string;
+  patchByteSize?: number;
+  patchCompressedBytes?: number;
+  /** The delivery generation associated with this event. */
+  dispatchGeneration?: number;
 };
 
 /** One row of the job timeline. */
@@ -452,6 +503,23 @@ const jobEventDataSchema = z
     filesChanged: z.number().int().nonnegative().optional(),
     insertions: z.number().int().nonnegative().optional(),
     deletions: z.number().int().nonnegative().optional(),
+    checkpointId: safeEventIdSchema.optional(),
+    checkpointSequence: z.number().int().positive().optional(),
+    sequence: z.number().int().positive().optional(),
+    checkpointKind: checkpointKindSchema.optional(),
+    kind: checkpointKindSchema.optional(),
+    completedPhase: jobStatusSchema.optional(),
+    resumePhase: jobStatusSchema.optional(),
+    sandboxId: z.string().min(1).optional(),
+    sourceSandboxId: z.string().min(1).optional(),
+    originalSandboxId: z.string().min(1).optional(),
+    replacementSandboxId: z.string().min(1).optional(),
+    patchFormat: checkpointPatchFormatSchema.optional(),
+    patchCompression: checkpointPatchCompressionSchema.optional(),
+    patchSha256: z.string().min(1).optional(),
+    patchByteSize: z.number().int().nonnegative().optional(),
+    patchCompressedBytes: z.number().int().nonnegative().optional(),
+    dispatchGeneration: z.number().int().nonnegative().optional(),
   })
   .passthrough();
 
@@ -527,6 +595,33 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.filesChanged === undefined ? {} : { filesChanged: value.filesChanged }),
     ...(value.insertions === undefined ? {} : { insertions: value.insertions }),
     ...(value.deletions === undefined ? {} : { deletions: value.deletions }),
+    ...(value.checkpointId === undefined ? {} : { checkpointId: value.checkpointId }),
+    ...(value.checkpointSequence === undefined
+      ? {}
+      : { checkpointSequence: value.checkpointSequence }),
+    ...(value.sequence === undefined ? {} : { sequence: value.sequence }),
+    ...(value.checkpointKind === undefined ? {} : { checkpointKind: value.checkpointKind }),
+    ...(value.kind === undefined ? {} : { kind: value.kind }),
+    ...(value.completedPhase === undefined ? {} : { completedPhase: value.completedPhase }),
+    ...(value.resumePhase === undefined ? {} : { resumePhase: value.resumePhase }),
+    ...(value.sandboxId === undefined ? {} : { sandboxId: value.sandboxId }),
+    ...(value.sourceSandboxId === undefined ? {} : { sourceSandboxId: value.sourceSandboxId }),
+    ...(value.originalSandboxId === undefined
+      ? {}
+      : { originalSandboxId: value.originalSandboxId }),
+    ...(value.replacementSandboxId === undefined
+      ? {}
+      : { replacementSandboxId: value.replacementSandboxId }),
+    ...(value.patchFormat === undefined ? {} : { patchFormat: value.patchFormat }),
+    ...(value.patchCompression === undefined ? {} : { patchCompression: value.patchCompression }),
+    ...(value.patchSha256 === undefined ? {} : { patchSha256: value.patchSha256 }),
+    ...(value.patchByteSize === undefined ? {} : { patchByteSize: value.patchByteSize }),
+    ...(value.patchCompressedBytes === undefined
+      ? {}
+      : { patchCompressedBytes: value.patchCompressedBytes }),
+    ...(value.dispatchGeneration === undefined
+      ? {}
+      : { dispatchGeneration: value.dispatchGeneration }),
   };
   const knownKeys = new Set(Object.keys(known));
   const extras = Object.fromEntries(

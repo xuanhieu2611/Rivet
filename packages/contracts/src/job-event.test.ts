@@ -185,3 +185,40 @@ describe("validation and artifact events", () => {
     expect(parseFailureCategory("validation_failed")).toBe("validation_failed");
   });
 });
+
+describe("planning and recovery events", () => {
+  it("round-trips checkpoint metadata and dispatch generations", () => {
+    const event: JobEvent = {
+      ...EVENT,
+      type: "checkpoint.restored",
+      message: "Restored checkpoint 12.",
+      data: {
+        checkpointId: 12,
+        checkpointSequence: 4,
+        checkpointKind: "agent_turn",
+        completedPhase: "implementing",
+        resumePhase: "implementing",
+        attempt: 2,
+        turn: 7,
+        sandboxId: "sandbox-new",
+        sourceSandboxId: "sandbox-old",
+        replacementSandboxId: "sandbox-new",
+        patchFormat: "git_binary_full_index",
+        patchCompression: "gzip",
+        patchSha256: "a".repeat(64),
+        patchByteSize: 4_096,
+        patchCompressedBytes: 512,
+        dispatchGeneration: 1,
+      },
+    };
+
+    expect(parseSerializedJobEvent(serializeJobEvent(event))).toEqual(event);
+  });
+
+  it("recognises the M6 failure categories", () => {
+    expect(parseFailureCategory("plan_not_produced")).toBe("plan_not_produced");
+    expect(parseFailureCategory("checkpoint_corrupt")).toBe("checkpoint_corrupt");
+    expect(parseFailureCategory("checkpoint_restore_failed")).toBe("checkpoint_restore_failed");
+    expect(parseFailureCategory("checkpoint_too_large")).toBe("checkpoint_too_large");
+  });
+});

@@ -67,12 +67,21 @@ export const jobs = pgTable(
     maxModelCalls: integer("max_model_calls").notNull().default(200),
     maxToolCalls: integer("max_tool_calls").notNull().default(500),
 
-    // --- agent usage (M4) -----------------------------------------------
+    // --- agent usage (M4 and M6) ----------------------------------------
     // These are cumulative job totals, including usage persisted before an
     // attempt is interrupted. The phase writes them under the worker lease.
     totalInputTokens: integer("total_input_tokens").notNull().default(0),
     totalOutputTokens: integer("total_output_tokens").notNull().default(0),
     totalCostUsd: numeric("total_cost_usd", { precision: 10, scale: 4 }).notNull().default("0"),
+    totalModelCalls: integer("total_model_calls").notNull().default(0),
+    totalToolCalls: integer("total_tool_calls").notNull().default(0),
+    totalTurns: integer("total_turns").notNull().default(0),
+
+    // --- dispatch and deadline (M6) -------------------------------------
+    /** Monotonically identifies a durable delivery generation for this job. */
+    dispatchGeneration: integer("dispatch_generation").notNull().default(0),
+    /** Set on the first claim and retained across every recovery attempt. */
+    deadlineAt: timestamp("deadline_at", { withTimezone: true }),
 
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),

@@ -17,8 +17,15 @@ import { jobStatusSchema, type JobStatus } from "./job";
  * - `diff_stat` - the parsed `--numstat` totals for that diff.
  * - `implementation_summary` - the last assistant message of the session,
  *   describing what changed and why.
+ * - `implementation_plan` - the canonical JSON representation of the structured
+ *   plan submitted by the planning session.
  */
-export const ARTIFACT_TYPES = ["diff", "diff_stat", "implementation_summary"] as const;
+export const ARTIFACT_TYPES = [
+  "diff",
+  "diff_stat",
+  "implementation_summary",
+  "implementation_plan",
+] as const;
 
 export const artifactTypeSchema = z.enum(ARTIFACT_TYPES);
 

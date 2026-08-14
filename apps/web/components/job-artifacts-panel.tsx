@@ -8,6 +8,7 @@ const ARTIFACT_LABELS: Record<ArtifactType, string> = {
   diff: "Working tree diff",
   diff_stat: "Diff stats",
   implementation_summary: "Implementation summary",
+  implementation_plan: "Implementation plan",
 };
 
 interface JobArtifactsPanelProps {

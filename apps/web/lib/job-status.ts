@@ -106,6 +106,10 @@ export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
   agent_failed: "Agent failed",
   no_changes_produced: "No changes produced",
   validation_failed: "Validation failed",
+  plan_not_produced: "Plan not produced",
+  checkpoint_corrupt: "Checkpoint corrupt",
+  checkpoint_restore_failed: "Checkpoint restore failed",
+  checkpoint_too_large: "Checkpoint too large",
   unknown: "Unknown",
 };
 
@@ -166,4 +170,9 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   // is not green: this row states an outcome, and `job.completed` is the one
   // that says the outcome was a good one.
   "run.summarized": "bg-violet-500",
+  "plan.recorded": "bg-violet-500",
+  "checkpoint.created": "bg-violet-500",
+  "checkpoint.restored": "bg-emerald-500",
+  "checkpoint.rejected": "bg-red-500",
+  "run.resumed": "bg-amber-500",
 };
