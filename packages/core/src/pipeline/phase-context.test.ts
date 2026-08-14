@@ -1,7 +1,9 @@
-import type { JobCommand, JobDetail, JobEvent } from "@rivet/contracts";
+import type { JobArtifact, JobCommand, JobDetail, JobEvent } from "@rivet/contracts";
 import type { Database } from "@rivet/database";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { RecordArtifactInput } from "../artifacts/artifact-store";
+import { recordArtifact } from "../artifacts/artifact-store";
 import type { AppendEventInput } from "../events/event-service";
 import { appendEvent } from "../events/event-service";
 import { recordCommand } from "../sandbox/command-log";
@@ -11,6 +13,7 @@ import { createPhaseContextFactory, type PhaseExecInput, type PhaseLogger } from
 
 vi.mock("../events/event-service", () => ({ appendEvent: vi.fn() }));
 vi.mock("../sandbox/command-log", () => ({ recordCommand: vi.fn() }));
+vi.mock("../artifacts/artifact-store", () => ({ recordArtifact: vi.fn() }));
 
 const JOB = {
   id: "11111111-2222-3333-4444-555555555555",
@@ -50,6 +53,7 @@ function fakeDatabase() {
 function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)) {
   const holder = new SandboxHolder();
   const events: AppendEventInput[] = [];
+  const artifacts: RecordArtifactInput[] = [];
   const sequence: string[] = [];
   const sandboxExec = vi.fn(() => {
     sequence.push("exec");
@@ -76,6 +80,16 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
     sequence.push("record");
     return Promise.resolve({ id: 17 } as JobCommand);
   });
+  vi.mocked(recordArtifact).mockImplementation((input) => {
+    artifacts.push(input);
+    sequence.push("artifact");
+    return Promise.resolve({
+      id: 42,
+      type: input.type,
+      byteSize: Buffer.byteLength(input.content, "utf8"),
+      truncated: Buffer.byteLength(input.content, "utf8") > input.maxBytes,
+    } as JobArtifact);
+  });
 
   const context = createPhaseContextFactory({
     job: JOB,
@@ -84,10 +98,11 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
     signal: new AbortController().signal,
     log: { debug: vi.fn(), info: vi.fn(), warn },
     maxOutputBytes: 1_024,
+    artifactMaxBytes: 2_048,
     database,
   })(PHASE);
 
-  return { context, events, sequence, sandboxExec, transaction, warn };
+  return { context, events, artifacts, sequence, sandboxExec, transaction, warn };
 }
 
 describe("PhaseContext command lifecycle", () => {
@@ -173,5 +188,78 @@ describe("PhaseContext command lifecycle", () => {
 
     expect(test.sandboxExec).not.toHaveBeenCalled();
     expect(test.transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("PhaseContext artifacts", () => {
+  beforeEach(() => {
+    vi.mocked(appendEvent).mockReset();
+    vi.mocked(recordCommand).mockReset();
+    vi.mocked(recordArtifact).mockReset();
+  });
+
+  it("writes the row and the event that points at it in one transaction", async () => {
+    const test = harness();
+
+    const artifactId = await test.context.artifact({ type: "diff", content: "diff --git\n" });
+
+    expect(artifactId).toBe(42);
+    expect(test.sequence).toEqual(["artifact", "event:artifact.recorded"]);
+    expect(test.transaction).toHaveBeenCalledOnce();
+    expect(test.events[0]?.type).toBe("artifact.recorded");
+    expect(test.events[0]?.data).toMatchObject({
+      artifactId: 42,
+      artifactType: "diff",
+      byteSize: 11,
+      truncated: false,
+      phase: PHASE.label,
+    });
+  });
+
+  it("stamps the phase's status on the row and hands the writer the configured bound", async () => {
+    const test = harness();
+
+    await test.context.artifact({
+      type: "diff_stat",
+      content: "1\t0\tsrc/a.js\n",
+      metadata: { filesChanged: 1 },
+    });
+
+    expect(test.artifacts[0]).toMatchObject({
+      jobId: JOB.id,
+      type: "diff_stat",
+      phase: PHASE.status,
+      maxBytes: 2_048,
+      metadata: { filesChanged: 1 },
+    });
+  });
+
+  it("keeps the content out of the event, which is read in full on every render", async () => {
+    const test = harness();
+
+    await test.context.artifact({ type: "diff", content: "x".repeat(4_096) });
+
+    expect(JSON.stringify(test.events[0])).not.toContain("xxxx");
+    expect(test.events[0]?.data).toMatchObject({ byteSize: 4_096, truncated: true });
+  });
+
+  it("lets a phase say what happened in its own words", async () => {
+    const test = harness();
+
+    await test.context.artifact({
+      type: "implementation_summary",
+      content: "Fixed the comparison.",
+      message: "Session summary recorded",
+    });
+
+    expect(test.events[0]?.message).toBe("Session summary recorded");
+  });
+
+  it("states the type and the true size when the phase says nothing", async () => {
+    const test = harness();
+
+    await test.context.artifact({ type: "implementation_summary", content: "ok" });
+
+    expect(test.events[0]?.message).toBe("Recorded implementation summary (2 bytes)");
   });
 });

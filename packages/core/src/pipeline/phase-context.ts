@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import type { JobDetail, JobEventData, JobEventType } from "@rivet/contracts";
+import type { ArtifactType, JobDetail, JobEventData, JobEventType } from "@rivet/contracts";
 import { db, type Database } from "@rivet/database";
 
+import { recordArtifact } from "../artifacts/artifact-store";
 import { appendEvent } from "../events/event-service";
 import { type AgentUsagePatch, recordAgentUsage as persistAgentUsage } from "../jobs/agent-usage";
 import { LeaseLostError } from "../jobs/failure";
@@ -55,6 +56,19 @@ export interface PhaseContext {
   /** Appends one line to the job's timeline. */
   event(input: PhaseEventInput): Promise<void>;
 
+  /**
+   * Persists one durable output of the run and points the timeline at it.
+   *
+   * The row and its `artifact.recorded` event go in one transaction, the same
+   * argument `exec` already makes for `job_commands`: an event carrying an
+   * `artifactId` that resolves to nothing is worse than no event at all.
+   *
+   * The content is bounded by `recordArtifact` rather than by the caller, so a
+   * phase holding a diff of unknown size cannot forget - and `byteSize` on the
+   * returned event says how big it really was.
+   */
+  artifact(input: PhaseArtifactInput): Promise<number>;
+
   /** Records what the run is executing in. Throws `LeaseLostError` if the lease is gone. */
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
   /** Records cumulative coding-agent usage. Throws `LeaseLostError` if the lease is gone. */
@@ -101,6 +115,16 @@ export interface PhaseEventInput {
   data?: JobEventData;
 }
 
+export interface PhaseArtifactInput {
+  type: ArtifactType;
+  /** Bounded on the way in; the phase hands over whatever it has. */
+  content: string;
+  /** Type-specific structure, e.g. the parsed `--numstat` totals on a `diff_stat`. */
+  metadata?: Record<string, unknown>;
+  /** One line for the timeline. Defaults to a statement of the type and size. */
+  message?: string;
+}
+
 export interface PhaseContextOptions {
   job: JobDetail;
   /** The fencing token. Every write this context makes carries it. */
@@ -110,6 +134,15 @@ export interface PhaseContextOptions {
   log: PhaseLogger;
   /** Default cap on each of stdout and stderr, per command. */
   maxOutputBytes: number;
+  /**
+   * Cap on one artifact's stored content.
+   *
+   * Its own bound rather than `maxOutputBytes`, because the two answer different
+   * questions: a command transcript is a log and a diff is the work product, and
+   * a diff being cut at the size that suits a build log would throw away the
+   * thing the run exists to produce.
+   */
+  artifactMaxBytes: number;
   database?: Database;
 }
 
@@ -238,6 +271,48 @@ export function createPhaseContextFactory(
       );
     },
 
+    async artifact(input) {
+      const artifact = await database.transaction(async (tx) => {
+        const recorded = await recordArtifact(
+          {
+            jobId: job.id,
+            type: input.type,
+            phase: phase.status,
+            content: input.content,
+            maxBytes: options.artifactMaxBytes,
+            ...(input.metadata ? { metadata: input.metadata } : {}),
+          },
+          tx,
+        );
+
+        await appendEvent(
+          {
+            jobId: job.id,
+            type: "artifact.recorded",
+            message: input.message ?? describeArtifact(input.type, recorded.byteSize),
+            // Deliberately not the content. The timeline is read in full on
+            // every render; the artifact is one fetch away in `job_artifacts`.
+            data: {
+              artifactId: recorded.id,
+              artifactType: recorded.type,
+              byteSize: recorded.byteSize,
+              truncated: recorded.truncated,
+              phase: phase.label,
+            },
+          },
+          tx,
+        );
+
+        return recorded;
+      });
+
+      log.info(
+        { artifactId: artifact.id, artifactType: artifact.type, byteSize: artifact.byteSize },
+        "recorded an artifact",
+      );
+      return artifact.id;
+    },
+
     async recordProvisioning(patch) {
       const held = await recordProvisioning(job.id, leaseOwner, patch, database);
       if (!held) {
@@ -259,6 +334,11 @@ export function createPhaseContextFactory(
       }
     },
   });
+}
+
+/** The default timeline line for an artifact: what it is and how big it really was. */
+function describeArtifact(type: ArtifactType, byteSize: number): string {
+  return `Recorded ${type.replace(/_/g, " ")} (${byteSize} bytes)`;
 }
 
 function describeError(error: unknown): string {

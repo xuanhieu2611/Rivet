@@ -57,6 +57,7 @@ export const TEST_CONFIG: WorkerConfig = {
   sweepIntervalMs: 1_000,
   maxAttempts: 3,
   pipelineSpeed: 0,
+  artifactMaxBytes: 262_144,
   shutdownGraceMs: 5_000,
   logLevel: "fatal",
   // `off`, and the whole suite depends on it: these integration tests are about the

@@ -205,8 +205,9 @@ under a millisecond at `speed: 0` with no fake timers and no sleeping in CI - an
 them here. A default limit in the package that is supposed to hold no policy is how a container ends
 up unbounded. Core declares the `JobQueue`, `Sandbox` and `CodingAgent` ports; `packages/queue`,
 `packages/sandbox` and `packages/agent` are the only packages that know Redis, Docker and Pi exist.
-Every module lives under `agent/`, `jobs/`, `events/`, `pipeline/`, `queue/` or `sandbox/` - a file
-at the top level next to `index.ts` is the first sign the package is becoming a junk drawer.
+Every module lives under `agent/`, `artifacts/`, `jobs/`, `events/`, `pipeline/`, `queue/` or
+`sandbox/` - a file at the top level next to `index.ts` is the first sign the package is becoming a
+junk drawer.
 
 **The model key stays on the worker host, and the container never sees a credential.** The harness
 runs in the worker process; its four tools - `read`, `write`, `edit`, `bash` - end at
@@ -237,6 +238,16 @@ another status writer breaks all of that at once.
 transaction and the event lands atomically with the status change it describes; pass nothing and it
 runs on the pool. That is why interactive transactions are required, and therefore why the `pg`
 driver was chosen over Neon's HTTP driver. Nothing ever updates or deletes an event row.
+
+**`recordArtifact()` is the only writer of `job_artifacts`, and it bounds content itself.** Same
+shape as `appendEvent` and `recordCommand`: an input object, an optional `Executor`, append-only
+rows. Phases never call it directly - they go through `PhaseContext.artifact()`, which writes the
+row and its `artifact.recorded` event in one transaction, because an event carrying an `artifactId`
+that resolves to nothing is worse than no event. The cap is `RIVET_ARTIFACT_MAX_BYTES` (256KB by
+default) and is applied inside the writer rather than by callers, so no phase can forget it;
+`byte_size` always records the true size before truncation, which is the entire reason the column
+exists separately from the content. Object storage (PRD §8) replaces the body of `recordArtifact`
+and `getArtifact` behind those signatures rather than editing every phase.
 
 **`job_events` remains the source of truth for live replay.** The SSE route tails Postgres directly;
 it does not use Redis Pub/Sub or keep a second event history. A visible active job page issues at

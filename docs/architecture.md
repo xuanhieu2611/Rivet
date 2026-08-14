@@ -43,11 +43,13 @@ simulated until later milestones.
 | Data access   | `packages/database`  | Drizzle schema, generated migrations, the `pg` pool                     |
 | Shared config | `packages/config`    | The tsconfig and ESLint bases every workspace extends                   |
 
-Three tables. `jobs` holds the domain model: the task, repository and base branch, the full status
+Four tables. `jobs` holds the domain model: the task, repository and base branch, the full status
 machine, budget ceilings, lease and retry state, and the sandbox's resolved commit and environment
 fingerprint. `job_events` is the append-only history behind the execution timeline. `job_commands`
 is the append-only command ledger; transcripts live there rather than bloating every timeline read.
-Columns that only later milestones can fill remain nullable.
+`job_artifacts` is the append-only store of a run's durable output - the diff, its stats, the
+implementation summary - bounded and read one fetch away for the same reason. Columns that only
+later milestones can fill remain nullable.
 
 ## The two deployables and the package they share
 
@@ -534,6 +536,35 @@ are never persisted. A shell tool's lifecycle still goes through `PhaseContext.e
 row and `command.*` events are the same durable facts as a command Rivet ran during provisioning or
 baseline testing. The `jobs` row keeps cumulative input tokens, output tokens, and priced cost,
 updated after each usage event under the current lease.
+
+## The artifact store
+
+`job_artifacts` holds a run's durable output - the diff it produced, the parsed stats of that diff,
+the summary its session ended on - and follows the event log's two rules for the same reasons.
+`recordArtifact()` in `packages/core/src/artifacts/` is the only writer, nothing updates or deletes
+a row, and it takes an `Executor`, so `PhaseContext.artifact()` can write the row and its
+`artifact.recorded` event in one transaction. An event carrying an `artifactId` that resolves to
+nothing would be worse than no event at all, which is the same argument `exec` already makes for
+`job_commands`.
+
+Content is bounded by the writer rather than by its callers, with the head+tail elision a command
+transcript gets, and the cap is `RIVET_ARTIFACT_MAX_BYTES` on the worker rather than a constant in
+core - `packages/core` holds no policy. `byte_size` records the size of what arrived rather than the
+size of what was stored, which is the whole reason it is a column: a 4MB diff kept as 256KB is a
+fact a reader should get off the row without fetching either version, and `truncated` says the gap
+in the middle is Rivet's.
+
+Reads are split. `listArtifacts()` returns metadata without content, because the page that renders
+the timeline should not pull a diff into every render; `getArtifact()` returns one artifact's
+content and is scoped by `jobId`, since ids are globally monotonic and an unscoped fetch would let
+one job's URL read another job's diff.
+
+PRD §8 asks for S3-compatible object storage and PRD §10.8 gives `Artifact` a `storage_url`. Both
+are right for the end state and wrong for Milestone 5, where a fourth local service would have to be
+absent from CI's `verify` job, present in two of the other three, and credentialed in the worker,
+all to store a diff that is usually under 20KB. When it arrives it replaces the bodies of
+`recordArtifact` and `getArtifact` behind the same signatures, because phases reach the store only
+through `PhaseContext.artifact()`.
 
 ## Database access
 

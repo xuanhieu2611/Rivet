@@ -219,6 +219,7 @@ export function createProcessor(deps: ProcessorDeps) {
           signal: controller.signal,
           log,
           maxOutputBytes: config.sandbox.maxOutputBytes,
+          artifactMaxBytes: config.artifactMaxBytes,
         }),
 
         onPhaseStart: async (phase) => {

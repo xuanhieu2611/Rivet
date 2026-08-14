@@ -159,6 +159,8 @@ one new table, one migration, no change to the five `.update(jobs)` sites.
 
 ## Stage 2 - the artifact writer
 
+**Done.** `packages/core/src/artifacts/artifact-store.ts`.
+
 New directory `packages/core/src/artifacts/`. AGENTS.md currently lists six permitted top-level
 directories in `packages/core`; this stage adds the seventh and updates that list, which is the
 honest way to add one rather than dropping a file next to `index.ts`.
@@ -175,6 +177,17 @@ honest way to add one rather than dropping a file next to `index.ts`.
 
 The bound is a worker config value (`RIVET_ARTIFACT_MAX_BYTES`, default 256KB) passed into
 `PipelineOptions`, not a constant in core. Same rule as every other limit.
+
+As built, with one placement correction. The bound arrives on `PhaseContextOptions` rather than
+`PipelineOptions`, alongside `maxOutputBytes` and for the same reason: truncation happens inside
+`ctx.artifact()`, and `PipelineOptions` configures the phase closures `buildPipeline` produces,
+which never see the cap. Putting it there would have been a field with no reader. The rule the plan
+was stating - the limit is worker configuration and never a constant in core - is unchanged, and
+`RIVET_ARTIFACT_MAX_BYTES` is parsed in `apps/worker/src/config.ts` and handed to
+`createPhaseContextFactory` by the processor.
+
+`ctx.artifact()` returns the new artifact's id and takes an optional `message`, so a phase that has
+something better to say than "Recorded diff (12043 bytes)" can say it.
 
 ## Stage 3 - the phase layout
 

@@ -212,6 +212,8 @@ function harness(
       return Promise.resolve();
     },
 
+    artifact: () => Promise.reject(new Error("the implementing phase records no artifacts")),
+
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: (patch) => {
       usages.push(patch);

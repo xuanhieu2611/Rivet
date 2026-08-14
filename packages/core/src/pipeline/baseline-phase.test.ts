@@ -106,6 +106,8 @@ function harness(options: { respond?: Responder } = {}) {
       return Promise.resolve();
     },
 
+    artifact: () => Promise.reject(new Error("the baseline phase records no artifacts")),
+
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: () => Promise.resolve(),
   };

@@ -113,6 +113,8 @@ function harness(options: { respond?: Responder; createFails?: Error } = {}) {
       return Promise.resolve();
     },
 
+    artifact: () => Promise.reject(new Error("the provisioning phase records no artifacts")),
+
     recordProvisioning: (patch) => {
       patches.push(patch);
       return Promise.resolve();

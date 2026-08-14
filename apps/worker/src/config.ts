@@ -195,6 +195,16 @@ export interface WorkerConfig {
   maxAttempts: number;
   /** Scales every simulated phase duration. 0 makes a run instant. */
   pipelineSpeed: number;
+  /**
+   * Cap on one stored artifact - a diff, a summary - before truncation.
+   *
+   * Its own bound rather than `SANDBOX_MAX_OUTPUT_BYTES`, because a command
+   * transcript is a log and an artifact is the run's work product. Not a
+   * constant in `@rivet/core` either: that package holds no policy, and a
+   * default limit living there is how something ends up unbounded in one
+   * deployment and not another.
+   */
+  artifactMaxBytes: number;
   /** Fault injection, absent unless both env vars are set. */
   fault?: FaultConfig;
   /** What a phase with a real body runs in. */
@@ -217,6 +227,10 @@ const schema = z.object({
   WORKER_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
   WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
   RIVET_PIPELINE_SPEED: z.coerce.number().min(0).max(100).default(1),
+  // 256KB, which holds a large refactor's diff whole. The ceiling is 8MB
+  // because `content` is a Postgres `text` column read back by a page render,
+  // not object storage.
+  RIVET_ARTIFACT_MAX_BYTES: z.coerce.number().int().min(1_024).max(8_388_608).default(262_144),
   RIVET_FAULT_PHASE: z.string().min(1).optional(),
   RIVET_FAULT_MODE: z.enum(FAULT_MODES).optional(),
   WORKER_SHUTDOWN_GRACE_MS: z.coerce.number().int().min(1_000).max(300_000).default(15_000),
@@ -299,6 +313,7 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
     sweepIntervalMs: parsed.data.WORKER_SWEEP_INTERVAL_MS,
     maxAttempts: parsed.data.WORKER_MAX_ATTEMPTS,
     pipelineSpeed: parsed.data.RIVET_PIPELINE_SPEED,
+    artifactMaxBytes: parsed.data.RIVET_ARTIFACT_MAX_BYTES,
     // `exactOptionalPropertyTypes` is on, so an absent fault has to be an
     // absent key rather than an explicit `undefined`.
     ...(fault ? { fault } : {}),
