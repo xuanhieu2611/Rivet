@@ -6,6 +6,8 @@ import { db, type Database } from "@rivet/database";
 import { recordArtifact } from "../artifacts/artifact-store";
 import { type BaselineOutcome, readBaseline } from "../events/baseline-log";
 import { appendEvent } from "../events/event-service";
+import { readSummary } from "../events/session-log";
+import { readValidation, type ValidationRecord } from "../events/validation-log";
 import { type AgentUsagePatch, recordAgentUsage as persistAgentUsage } from "../jobs/agent-usage";
 import { LeaseLostError } from "../jobs/failure";
 import { type ProvisioningPatch, recordProvisioning } from "../jobs/provisioning";
@@ -79,6 +81,25 @@ export interface PhaseContext {
    * compare against - go back to the event log for it. See `events/baseline-log.ts`.
    */
   readBaseline(): Promise<BaselineOutcome | null>;
+
+  /**
+   * The last thing the coding session said, or null if it never said anything.
+   *
+   * The implementation summary, read back for the same reason the baseline is:
+   * `runPipeline` hands nothing from one phase to the next, so the fact
+   * `implementing` holds in memory has to be recovered from the log by the phase
+   * that persists it. See `events/session-log.ts`.
+   */
+  readSummary(): Promise<string | null>;
+
+  /**
+   * What `testing` concluded, or null if it never ran.
+   *
+   * Null is not `unverified` - see `events/validation-log.ts`. One means the
+   * comparison happened and had nothing to compare against; the other means no
+   * comparison happened at all.
+   */
+  readValidation(): Promise<ValidationRecord | null>;
 
   /** Records what the run is executing in. Throws `LeaseLostError` if the lease is gone. */
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
@@ -326,6 +347,14 @@ export function createPhaseContextFactory(
 
     readBaseline() {
       return readBaseline(job.id, database);
+    },
+
+    readSummary() {
+      return readSummary(job.id, database);
+    },
+
+    readValidation() {
+      return readValidation(job.id, database);
     },
 
     async recordProvisioning(patch) {

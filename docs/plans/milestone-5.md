@@ -342,6 +342,9 @@ work is worse than no answer about it.
 
 ## Stage 6 - `finalizing` becomes real
 
+**Done.** `packages/core/src/pipeline/finalizing-phase.ts`, plus the two readers in
+`events/session-log.ts` and `events/validation-log.ts`.
+
 New `finalizing-phase.ts`, and it is deliberately small:
 
 - persist the retained last assistant message as an `implementation_summary` artifact
@@ -350,6 +353,42 @@ New `finalizing-phase.ts`, and it is deliberately small:
 
 Branch, commit, push and PR are PRD §11 I and belong to M9. The sandbox is still destroyed by the
 processor's `finally`, which is why this phase can read from it at all.
+
+As built, with four additions the stage did not spell out.
+
+**"Retained" could not mean retained, so both facts are read back out of the event log.**
+`runPipeline` is a flat walk that hands nothing from one phase to the next, so
+`SessionAccounting.lastAssistantMessage` is gone by the time `finalizing` runs - and threading it
+through would be exactly the mistake `baseline-log.ts` was written to avoid, since M6 will resume a
+job into this phase in a process that never ran the session. `summaryFrom` / `readSummary` recovers
+the last non-empty `agent.message`, `validationFrom` / `readValidation` recovers the outcome and the
+`--numstat` totals, and both reach the phase through `PhaseContext` rather than an import, for the
+same reason `readBaseline` does. What is recovered is the same text the timeline carries, already
+truncated to `previewMaxBytes` by the port: the read buys "which message was last", not fidelity.
+
+**The closing event is a new type, `run.summarized`.** Nothing existing said it. Deliberately
+distinct from `job.completed`, which the processor writes about the _job_ reaching a terminal
+status: a run can be summarized and then fail to complete, and reading one off the other would make
+each of them less true. Cheap, because event types are Zod-validated `text` rather than a pgEnum -
+no migration, one entry in `JOB_EVENT_TONE` which `pnpm typecheck` demands anyway. No new
+`JobEventData` field: `validation`, `filesChanged`, `insertions` and `deletions` already exist from
+Stage 1.
+
+**`finalizing` joins the pair wired to the agent, making it a trio.** A phase whose two outputs are
+the session's summary and the validation outcome has nothing to summarize when neither of the phases
+producing them ran, which is the milder version of the argument Stage 5 makes for `testing`. Under
+`RIVET_AGENT=off` it stays a sleep and the integration suite is untouched. The guard-table test
+asserts all three together.
+
+**Null validation is not `unverified`, the same distinction Stage 5 draws for the baseline.**
+`unverified` means the comparison ran and had nothing to compare against; null means no comparison
+happened at all. The closing line says something different for each, because reporting the second as
+the first would read as a fault in a job that had none. And the summary artifact is written on every
+path, including when the session ended on a tool call and said nothing: the absence is recorded as
+the artifact's content with `metadata.present: false`, so "the model said nothing" and "this phase
+never ran" stay different facts. Nothing is synthesized from the diff - an invented summary is
+indistinguishable from a real one on the way back out, which is the only property that matters about
+a record of what a model claimed.
 
 ## Stage 7 - the web surface
 

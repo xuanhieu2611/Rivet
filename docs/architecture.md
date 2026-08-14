@@ -28,8 +28,10 @@ Milestone 4 added the Pi adapter and made `implementing` real: Pi runs in the tr
 its four tools operate inside the job's sandbox. Milestone 5 moved the baseline to `analyzing`,
 where it runs before anything is edited, made `planning` say plainly that it produced nothing, and
 turned `testing` into validation: it keeps the session's diff as an artifact, re-runs the baseline's
-own suite, and compares the two. Review and finalization remain simulated until the rest of
-Milestone 5 and Milestone 8.
+own suite, and compares the two. `finalizing` then keeps the session's own account of the change as
+an `implementation_summary` artifact and closes the timeline with a `run.summarized` event carrying
+the outcome and the diff totals. Review remains simulated until Milestone 8, and the branch, commit
+and pull request belong to Milestone 9.
 
 ## What exists today
 
@@ -283,13 +285,16 @@ real Pi session when an agent is supplied, and Milestone 5 moved the baseline on
 measures the repository before the session edits it. Planning now runs a body that records one
 `plan.deferred` event and returns, rather than sleeping for two seconds as though a plan were being
 made. Testing is validation: it stages the working tree, keeps the diff and its stats as artifacts,
-re-runs the script the baseline ran, and compares the two. Reviewing and finalizing are still
-simulated. The `RIVET_AGENT=off` integration configuration deliberately leaves implementing
-simulated, and leaves testing simulated with it - validating a run that never had a session would be
+re-runs the script the baseline ran, and compares the two. Finalizing persists the session's own
+account of the change and writes the run's closing line; reviewing is still simulated. The
+`RIVET_AGENT=off` integration configuration deliberately leaves implementing simulated, and leaves
+testing and finalizing simulated with it - validating a run that never had a session would be
 validating the absence of a phase, and every job would fail with `no_changes_produced` while nothing
-was wrong - so lifecycle tests need no model key. That is the entire reason `runPipeline` takes its
-clock, its sleep, its callbacks and its fault injector as arguments rather than importing them: the
-same runner drives the demo at `speed: 1` and the unit tests at `speed: 0`.
+was wrong, and a phase whose two outputs are the session's summary and the validation outcome has
+nothing to summarize when neither was produced - so lifecycle tests need no model key. That is the
+entire reason `runPipeline` takes its clock, its sleep, its callbacks and its fault injector as
+arguments rather than importing them: the same runner drives the demo at `speed: 1` and the unit
+tests at `speed: 0`.
 
 Seven fault-injection modes exist so the recovery machinery and the sandbox failure taxonomy have
 something to recover from on demand: `throw` (retryable), `fatal` (terminal), `hang` (ignores the
@@ -661,11 +666,11 @@ while `.env.local` on every dev machine points at the real Neon database.
 
 Named so their absence reads as a decision rather than an oversight: no authentication or `user_id`
 (Milestone 9 brings GitHub identity), no `repository_id` foreign key (there is no Repository table
-to point at, so the job stores a plain `repo_url`), no completion detection or diff persistence
-(M5), no checkpoints or resumable jobs (M6), no transactional outbox (see the dual-write section for
-why), and no deployment. The Pi implementation session is real and analysis establishes a baseline,
-but validation, review and finalization are still simulated and planning deliberately produces
-nothing, and the bridge network is not the hardened isolation boundary a production worker needs.
+to point at, so the job stores a plain `repo_url`), no checkpoints or resumable jobs (M6), no
+transactional outbox (see the dual-write section for why), and no deployment. The Pi implementation
+session is real and analysis establishes a baseline, but review is still simulated and planning
+deliberately produces nothing, and the bridge network is not the hardened isolation boundary a
+production worker needs.
 
 The stream targets a long-lived Node.js host. Native EventSource reconnect makes interruptions safe,
 but a deployment platform that buffers or caps long responses can still terminate it. Before public

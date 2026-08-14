@@ -34,6 +34,8 @@ function harness() {
     artifact: () => Promise.reject(new Error("a plan artifact is Milestone 6")),
 
     readBaseline: () => Promise.resolve(null),
+    readSummary: () => Promise.reject(new Error("there is no session to summarize yet")),
+    readValidation: () => Promise.reject(new Error("nothing has been validated yet")),
     recordProvisioning: () => Promise.reject(new Error("the planning phase writes no job columns")),
     recordAgentUsage: () => Promise.reject(new Error("the planning phase spends nothing")),
 

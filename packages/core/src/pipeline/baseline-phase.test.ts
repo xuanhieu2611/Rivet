@@ -111,6 +111,8 @@ function harness(options: { respond?: Responder } = {}) {
 
     // The phase that writes the baseline never reads one back.
     readBaseline: () => Promise.resolve(null),
+    readSummary: () => Promise.resolve(null),
+    readValidation: () => Promise.resolve(null),
 
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: () => Promise.resolve(),

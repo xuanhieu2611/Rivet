@@ -141,6 +141,11 @@ function harness(options: { respond?: Responder; baseline?: BaselineOutcome | nu
     readBaseline: () =>
       Promise.resolve(options.baseline === undefined ? "failed" : options.baseline),
 
+    // Both are `finalizing`'s to read. This phase writes the validation record
+    // rather than reading one back.
+    readSummary: () => Promise.reject(new Error("the summary is finalizing's to persist")),
+    readValidation: () => Promise.reject(new Error("this phase writes the validation record")),
+
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: () => Promise.resolve(),
   };

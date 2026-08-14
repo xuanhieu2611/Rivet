@@ -161,4 +161,9 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   // `regressed` and `fixed` are the same event type. Stage 7 colours the row
   // by `data.validation`; the marker only says the comparison happened.
   "validation.recorded": "bg-sky-500",
+  // The closing line, and the only entry a reader who scrolled to the bottom
+  // needs. Violet rather than green for the same reason `validation.recorded`
+  // is not green: this row states an outcome, and `job.completed` is the one
+  // that says the outcome was a good one.
+  "run.summarized": "bg-violet-500",
 };

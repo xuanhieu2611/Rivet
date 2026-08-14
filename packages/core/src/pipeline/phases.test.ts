@@ -143,11 +143,13 @@ describe("buildPipeline", () => {
     expect(real).toEqual(["provisioning", "analyzing", "planning"]);
   });
 
-  it("makes implementing and testing real together, and only with an agent", () => {
-    // The pairing is the point. Validation's first act is to fail a job whose
+  it("makes implementing, testing and finalizing real together, and only with an agent", () => {
+    // The grouping is the point. Validation's first act is to fail a job whose
     // diff is empty, which is the right answer for a session that changed
-    // nothing and the wrong one for a pipeline that never had a session - so a
-    // build with a harness gets both bodies, and a build without gets neither.
+    // nothing and the wrong one for a pipeline that never had a session - and
+    // `finalizing` has nothing to summarize when neither of the phases that
+    // produce its two outputs ran. So a build with a harness gets all three
+    // bodies, and a build without gets none of them.
     const withAgent = buildPipeline({
       ...SANDBOX_OPTIONS,
       agent: {
@@ -165,6 +167,7 @@ describe("buildPipeline", () => {
       "planning",
       "implementing",
       "testing",
+      "finalizing",
     ]);
   });
 

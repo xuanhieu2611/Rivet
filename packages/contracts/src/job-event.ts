@@ -97,6 +97,16 @@ export const JOB_EVENT_TYPES = [
    * is `unresolved`, and a red suite that used to be green is `regressed`.
    */
   "validation.recorded",
+  /**
+   * The closing line of a run: what the session did, and whether it worked.
+   *
+   * Written by `finalizing`, and it exists because the last thing on a timeline
+   * used to be a phase saying it finished rather than a sentence saying what
+   * happened. Distinct from `job.completed`, which the processor writes about
+   * the *job* reaching a terminal status - a run can be summarized and then fail
+   * to complete, and reading one off the other would make each of them less true.
+   */
+  "run.summarized",
 ] as const;
 
 export const jobEventTypeSchema = z.enum(JOB_EVENT_TYPES);

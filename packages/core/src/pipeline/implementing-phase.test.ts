@@ -230,6 +230,11 @@ function harness(
         ? Promise.reject(options.baseline)
         : Promise.resolve(options.baseline ?? null),
 
+    // The session is what produces both of these. Reading either one here would
+    // be this phase asking about its own output before it exists.
+    readSummary: () => Promise.reject(new Error("the session has not finished speaking")),
+    readValidation: () => Promise.reject(new Error("nothing has been validated yet")),
+
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: (patch) => {
       usages.push(patch);

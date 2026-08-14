@@ -3,6 +3,7 @@ import {
   AgentFailedError,
   AgentUnavailableError,
   buildPipeline,
+  getArtifact,
   listArtifacts,
   listCommands,
   requestJobCancellation,
@@ -438,13 +439,39 @@ describe("validation through the worker", () => {
       insertions: 1,
       deletions: 1,
     });
-    expect(artifacts.map((artifact) => artifact.type)).toEqual(["diff", "diff_stat"]);
+    // Three, in the order the run produced them: `testing` keeps the evidence of
+    // what changed, and `finalizing` keeps the session's own account of it.
+    expect(artifacts.map((artifact) => artifact.type)).toEqual([
+      "diff",
+      "diff_stat",
+      "implementation_summary",
+    ]);
     expect(artifacts[0]?.byteSize).toBe(Buffer.byteLength(DIFF, "utf8"));
+    // The last thing the model said, read back out of the event log rather than
+    // handed across the phase boundary - which is what makes this survive a
+    // resume in a process that never ran the session.
+    expect(await getArtifact(job.id, artifacts[2]!.id)).toMatchObject({
+      content: "I found the fixture.",
+      metadata: { present: true },
+      phase: "finalizing",
+    });
     // Every artifact row has an event pointing at it, and it resolves.
     const recorded = events.filter((event) => event.type === "artifact.recorded");
     expect(recorded.map((event) => event.data?.artifactId)).toEqual(
       artifacts.map((artifact) => artifact.id),
     );
+
+    // The closing line, and it is genuinely last among what the phases write:
+    // everything after it belongs to the processor closing the job out.
+    const summarized = events.findIndex((event) => event.type === "run.summarized");
+    expect(events[summarized]?.data).toMatchObject({
+      validation: "verified",
+      filesChanged: 1,
+      insertions: 1,
+      deletions: 1,
+    });
+    expect(recorded.every((event) => event.id < events[summarized]!.id)).toBe(true);
+    expect(summarized).toBeLessThan(events.findIndex((event) => event.type === "job.completed"));
   });
 
   it("fails a session that changed nothing with no_changes_produced", async () => {

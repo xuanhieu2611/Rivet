@@ -3,6 +3,7 @@ import type { JobStatus } from "@rivet/contracts";
 import type { CodingAgent } from "../agent/coding-agent";
 import type { SandboxProvider } from "../sandbox/sandbox";
 import { baselinePhase } from "./baseline-phase";
+import { finalizingPhase } from "./finalizing-phase";
 import { implementingPhase } from "./implementing-phase";
 import type { PhaseContext } from "./phase-context";
 import { planningPhase } from "./planning-phase";
@@ -163,12 +164,12 @@ export function simulatedPipeline(): readonly Phase[] {
  * `provisioning` creates a container, clones the repository and installs its
  * dependencies; `analyzing` runs the repository's own suite and records the
  * baseline; `planning` records that it produced nothing; `implementing` runs a
- * coding session and `testing` judges what it did, but both only when a worker
- * was given a harness to run one with. `reviewing` and `finalizing` still sleep,
- * and there is nothing clever about those sleeps in the meantime - which is why
- * this returns the same seven statuses in the same order however it is
- * configured, and why one guard-table test walks every pipeline this file can
- * build.
+ * coding session, `testing` judges what it did and `finalizing` records what it
+ * said and what the run came to - but those three only when a worker was given a
+ * harness to run a session with. `reviewing` still sleeps, and there is nothing
+ * clever about that sleep in the meantime - which is why this returns the same
+ * seven statuses in the same order however it is configured, and why one
+ * guard-table test walks every pipeline this file can build.
  *
  * The baseline is wired to `analyzing` rather than `testing` because that is
  * what it was always for. PRD §11 C asks whether the repository was healthy
@@ -184,15 +185,19 @@ export function simulatedPipeline(): readonly Phase[] {
  * `pnpm test:integration` runnable with no model key: `RIVET_AGENT=off` omits
  * the field, the sleep stays, and thirty-odd lifecycle tests stay cheap.
  *
- * `testing` is wired to the same condition, and that pairing is deliberate
- * rather than convenient. Validation's first act is to fail a job whose diff is
- * empty, which is exactly the right answer for a session that changed nothing
- * and exactly the wrong one for a pipeline that never had a session: it would be
- * validating the absence of a phase rather than the result of one, and every job
- * on a keyless laptop would fail with `no_changes_produced` while nothing was
- * wrong. Production is unaffected either way, because `parseWorkerConfig`
- * refuses `RIVET_AGENT=off` under `NODE_ENV=production` - a worker that cannot
- * write code is not a worker that should be judging code.
+ * `testing` and `finalizing` are wired to the same condition, and that grouping
+ * is deliberate rather than convenient. Validation's first act is to fail a job
+ * whose diff is empty, which is exactly the right answer for a session that
+ * changed nothing and exactly the wrong one for a pipeline that never had a
+ * session: it would be validating the absence of a phase rather than the result
+ * of one, and every job on a keyless laptop would fail with
+ * `no_changes_produced` while nothing was wrong. `finalizing` follows for the
+ * milder version of the same reason - a phase whose two outputs are the
+ * session's summary and the validation outcome has nothing to summarize when
+ * neither of the phases that produce them ran. Production is unaffected either
+ * way, because `parseWorkerConfig` refuses `RIVET_AGENT=off` under
+ * `NODE_ENV=production` - a worker that cannot write code is not a worker that
+ * should be judging code.
  */
 export function buildPipeline(options: PipelineOptions): readonly Phase[] {
   const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {
@@ -203,6 +208,7 @@ export function buildPipeline(options: PipelineOptions): readonly Phase[] {
       ? {
           implementing: implementingPhase(options.agent, options),
           testing: validationPhase(options),
+          finalizing: finalizingPhase(),
         }
       : {}),
   };

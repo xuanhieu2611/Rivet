@@ -16,8 +16,8 @@ exists today and is the best starting point for any structural question.
 it under a Postgres lease, provisions a sandbox, records a baseline, runs a Pi coding session during
 `implementing`, heartbeats while it runs, and lands it in a terminal status. Retries, cancellation,
 timeouts, crash recovery, agent budgets, usage persistence, and provider failure classification all
-work and are covered by the unit and integration suites. Review and finalization remain simulated
-until the rest of Milestone 5 and Milestone 8.
+work and are covered by the unit and integration suites. Review remains simulated until Milestone 8,
+and the branch, commit and pull request belong to Milestone 9.
 
 Milestone 5 is in progress. Its phase layout has landed - the baseline runs at `analyzing`, before
 anything has been edited, and `planning` records one `plan.deferred` event instead of sleeping for
@@ -25,22 +25,28 @@ two seconds as though a plan were being made - and `testing` is now validation. 
 working tree, keeps `git diff --cached` and its `--numstat` totals as `diff` and `diff_stat`
 artifacts, re-runs the script the baseline ran, and compares: `verified`, `fixed`, `regressed`,
 `unresolved` or `unverified` on a `validation.recorded` event. The last two green outcomes are
-deliberate and the two failing ones are terminal.
+deliberate and the two failing ones are terminal. `finalizing` is real too: it keeps the session's
+last assistant message as an `implementation_summary` artifact - reading it back out of the event
+log rather than across a phase boundary, because `runPipeline` hands nothing from one phase to the
+next - and writes the run's closing `run.summarized` line carrying the validation outcome and the
+diff totals. Branch, commit, push and pull request stay with Milestone 9.
 
 `packages/sandbox` is real; `buildPipeline()` gives `provisioning`, `analyzing`, `planning`,
-`implementing` and `testing` real bodies - create a container, clone the repository, resolve the
-commit, install dependencies, run the repository's own test suite and record the baseline, state
-that no plan was produced, run a coding session, then judge what it did - and `apps/worker` calls
-it, selected by `RIVET_SANDBOX` (`docker` by default, `off` for the simulated pipeline). The
-processor owns the container and destroys it on every exit; the sweeper reaps whatever a `kill -9`
-left behind.
+`implementing`, `testing` and `finalizing` real bodies - create a container, clone the repository,
+resolve the commit, install dependencies, run the repository's own test suite and record the
+baseline, state that no plan was produced, run a coding session, judge what it did, then keep what
+it said and state what the run came to - and `apps/worker` calls it, selected by `RIVET_SANDBOX`
+(`docker` by default, `off` for the simulated pipeline). The processor owns the container and
+destroys it on every exit; the sweeper reaps whatever a `kill -9` left behind.
 
-**`implementing` and `testing` are wired to the same condition: an agent.** Without one, both stay
-sleeps. Validation's first act is to fail a job whose diff is empty, which is the right answer for a
-session that changed nothing and the wrong one for a pipeline that never had a session - it would be
-validating the absence of a phase, and every job under `RIVET_AGENT=off` would fail with
-`no_changes_produced` while nothing was wrong. Production is unaffected, because `parseWorkerConfig`
-refuses `RIVET_AGENT=off` under `NODE_ENV=production`.
+**`implementing`, `testing` and `finalizing` are wired to the same condition: an agent.** Without
+one, all three stay sleeps. Validation's first act is to fail a job whose diff is empty, which is
+the right answer for a session that changed nothing and the wrong one for a pipeline that never had
+a session - it would be validating the absence of a phase, and every job under `RIVET_AGENT=off`
+would fail with `no_changes_produced` while nothing was wrong. `finalizing` follows for the milder
+version of the same reason: a phase whose two outputs are the session's summary and the validation
+outcome has nothing to summarize when neither of the phases producing them ran. Production is
+unaffected, because `parseWorkerConfig` refuses `RIVET_AGENT=off` under `NODE_ENV=production`.
 
 M3 makes the append-only event log observable. The job detail route serves JSON to ordinary callers
 and a Postgres-backed SSE stream to live viewers. The browser reducer reconnects from durable event
