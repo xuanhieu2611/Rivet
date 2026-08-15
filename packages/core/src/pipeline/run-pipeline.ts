@@ -2,6 +2,22 @@ import type { PhaseContext } from "./phase-context";
 import type { Phase } from "./phases";
 
 /**
+ * What a phase may ask the runner to do next.
+ *
+ * `undefined` is the ordinary answer and means "carry on with the queue", which
+ * is what every phase before Milestone 8 does. A `cycle` directive asks for a
+ * list of phases to run *before* the rest of the queue, which is how the review
+ * loop expresses `reviewing -> revising -> testing -> reviewing` without either
+ * hiding an implementer session inside a `reviewing` body or pre-expanding the
+ * pipeline with skipped copies of the loop.
+ *
+ * The runner does not know what a review is, and nothing here mentions one. It
+ * knows that a phase may name known phases to run next, and that is the whole
+ * vocabulary.
+ */
+export type PhaseDirective = { kind: "cycle"; phases: readonly Phase[] } | undefined;
+
+/**
  * The phase runner.
  *
  * Every dependency arrives as an argument - the clock, the sleep, both
@@ -14,6 +30,21 @@ import type { Phase } from "./phases";
  */
 export interface PipelineDeps {
   phases: readonly Phase[];
+
+  /**
+   * Phases a directive may name that are not in the walk to begin with.
+   *
+   * `revising` is the reason this exists: it is never in `PHASE_TEMPLATE`, only
+   * ever entered through a `cycle` directive, and yet it has to be a phase this
+   * pipeline *knows about* or the runner's structural check would refuse the
+   * only directive the product actually issues. Everything already in `phases`
+   * is known without being repeated here.
+   *
+   * Membership is by identity rather than by status, which is the point: a
+   * directive can only re-run bodies the worker was configured with, and cannot
+   * conjure one by handing back a freshly built object wearing a known status.
+   */
+  directivePhases?: readonly Phase[];
 
   /**
    * Cancellation and timeout both arrive here.
@@ -70,11 +101,32 @@ export interface PipelineDeps {
  *
  * Returns nothing. The job's state lives in Postgres and the callbacks are what
  * put it there; a return value here would be a second, weaker copy of it.
+ *
+ * Milestone 8 turns the walk from a `for...of` over a frozen list into a
+ * mutable queue, because a phase may now return a `cycle` directive whose
+ * phases are spliced in ahead of whatever is left. The runner enforces exactly
+ * one structural rule about that - a directive may only name phases this
+ * pipeline knows about - and holds no opinion at all about why a phase asked.
+ *
+ * There is deliberately **no runner-side loop counter.** A bound kept here
+ * would be per-attempt, so a worker killed mid-loop would hand its replacement
+ * a fresh one, which is precisely the failure `AGENTS.md` calls out for budgets:
+ * the review bound is durable job state (`review_loops` against
+ * `max_review_loops`) and is spent by the phase that issues the directive,
+ * before it issues it. What the runner does keep is the property that makes an
+ * unbounded loop survivable anyway: `signal.throwIfAborted()` runs at every
+ * phase boundary, so a cancel or the job deadline ends the walk on the next
+ * boundary no matter how many times the queue has been extended.
  */
 export async function runPipeline(deps: PipelineDeps): Promise<void> {
   const now = deps.now ?? Date.now;
 
-  for (const phase of deps.phases) {
+  // Identity, not status: see `directivePhases`. Built once, because the set of
+  // phases a worker was configured with cannot change mid-run.
+  const known = new Set<Phase>([...deps.phases, ...(deps.directivePhases ?? [])]);
+  const queue: Phase[] = [...deps.phases];
+
+  for (let phase = queue.shift(); phase !== undefined; phase = queue.shift()) {
     // Checked before each phase as well as after each sleep, so a signal that
     // aborted during a callback is noticed rather than costing a whole extra
     // phase of work.
@@ -89,19 +141,52 @@ export async function runPipeline(deps: PipelineDeps): Promise<void> {
     // The whole of Milestone 2's change to the runner. A phase either does its
     // work or pretends to, and which one it is belongs to the phase rather than
     // to the thing walking the list.
+    let directive: PhaseDirective;
     if (phase.run) {
       if (!deps.context) {
         throw new Error(
           `Phase "${phase.label}" has a body but the pipeline was built without a context factory.`,
         );
       }
-      await phase.run(deps.context(phase));
+      directive = await phase.run(deps.context(phase));
     } else {
       await deps.sleep(scaleDuration(phase.durationMs, deps.speed), deps.signal);
     }
+
+    // Validated before the phase is reported complete, because a directive
+    // naming something this pipeline has no body for is a wiring mistake rather
+    // than a job outcome, and a phase that ends in one did not succeed.
+    if (directive) assertKnownPhases(phase, directive, known);
+
     deps.signal.throwIfAborted();
 
     await deps.onPhaseComplete(phase, now() - startedAt);
+
+    // Ahead of the remaining queue, never appended to the end of it - which is
+    // what keeps `finalPhaseStatus()` true: `finalizing` is still the last thing
+    // the queue holds no matter how many times the loop goes around.
+    if (directive) queue.unshift(...directive.phases);
+  }
+}
+
+/**
+ * Refuses a directive naming a phase the pipeline was not built with.
+ *
+ * Loud rather than skipped, for the same reason a body with no context factory
+ * is: a phase quietly dropped from the walk looks exactly like a phase that ran
+ * and had nothing to say.
+ */
+function assertKnownPhases(
+  source: Phase,
+  directive: NonNullable<PhaseDirective>,
+  known: ReadonlySet<Phase>,
+): void {
+  for (const next of directive.phases) {
+    if (!known.has(next)) {
+      throw new Error(
+        `Phase "${source.label}" asked to cycle through "${next.label}" (${next.status}), which is not a phase this pipeline knows about.`,
+      );
+    }
   }
 }
 

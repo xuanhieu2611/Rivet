@@ -24,7 +24,7 @@ const SANDBOX_TESTING: Phase = {
   label: "Run tests",
   durationMs: 10,
   recovery: "replay",
-  run: () => Promise.resolve(),
+  run: () => Promise.resolve(undefined),
 };
 const PLANNING: Phase = {
   status: "planning",

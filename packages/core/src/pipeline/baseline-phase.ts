@@ -3,6 +3,7 @@ import { serializeBaselineReport, type CheckRun } from "@rivet/contracts";
 import { commandKilledError } from "../sandbox/errors";
 import type { PhaseContext } from "./phase-context";
 import type { PipelineOptions } from "./phases";
+import type { PhaseDirective } from "./run-pipeline";
 import { probeValidation } from "./project-probe";
 import { COREPACK_ENV, REPO_DIRNAME } from "./project";
 import { runCheck } from "./check-runner";
@@ -26,10 +27,12 @@ const BASELINE_CHECKS = ["test", "typecheck", "lint"] as const;
  * data shape. The complete check set and parsed failure names live in the
  * canonical `baseline_report` artifact.
  */
-export function baselinePhase(options: PipelineOptions): (ctx: PhaseContext) => Promise<void> {
+export function baselinePhase(
+  options: PipelineOptions,
+): (ctx: PhaseContext) => Promise<PhaseDirective> {
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
 
-  return async function baseline(ctx: PhaseContext): Promise<void> {
+  return async function baseline(ctx: PhaseContext): Promise<PhaseDirective> {
     const resolved = await probeValidation(ctx, {
       repoDir,
       commandTimeoutMs: options.commandTimeoutMs,
@@ -65,6 +68,9 @@ export function baselinePhase(options: PipelineOptions): (ctx: PhaseContext) => 
       requireComplete: true,
       message: "Baseline report artifact recorded.",
     });
+
+    // Nothing to ask the runner for: the queue carries on. See `PhaseDirective`.
+    return undefined;
   };
 }
 

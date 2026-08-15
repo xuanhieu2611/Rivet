@@ -12,6 +12,7 @@ import { runAgentSession } from "./agent-session";
 import type { PhaseContext } from "./phase-context";
 import type { AgentOptions, PipelineOptions } from "./phases";
 import { REPO_DIRNAME } from "./project";
+import type { PhaseDirective } from "./run-pipeline";
 
 /**
  * Phase three: create and persist the structured implementation plan.
@@ -25,10 +26,10 @@ import { REPO_DIRNAME } from "./project";
 export function planningPhase(
   agent: AgentOptions,
   options: PipelineOptions,
-): (ctx: PhaseContext) => Promise<void> {
+): (ctx: PhaseContext) => Promise<PhaseDirective> {
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
 
-  return async function planning(ctx: PhaseContext): Promise<void> {
+  return async function planning(ctx: PhaseContext): Promise<PhaseDirective> {
     ctx.signal.throwIfAborted();
     const sandbox = ctx.sandboxes.require();
     let submittedPlan: ImplementationPlan | undefined;
@@ -106,6 +107,9 @@ export function planningPhase(
     });
 
     ctx.log.info({ artifactId }, "planning completed with a structured plan");
+
+    // Nothing to ask the runner for: the queue carries on. See `PhaseDirective`.
+    return undefined;
   };
 }
 

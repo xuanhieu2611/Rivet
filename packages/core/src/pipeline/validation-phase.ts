@@ -16,6 +16,7 @@ import { runCheck } from "./check-runner";
 import { problem, splitLines } from "./command-output";
 import type { PhaseContext, RecordedCommand } from "./phase-context";
 import type { PipelineOptions } from "./phases";
+import type { PhaseDirective } from "./run-pipeline";
 import { probeValidation } from "./project-probe";
 import { COREPACK_ENV, REPO_DIRNAME } from "./project";
 import { selectTargetedTests, type TargetedTestSelection } from "./targeted-tests";
@@ -37,10 +38,12 @@ const CHECK_ORDER = ["targeted_test", "test", "typecheck", "lint"] as const;
  * runs every validation check for this attempt. Nothing relies on `analyzing`
  * process memory or its sandbox, which is required for M6 recovery.
  */
-export function validationPhase(options: PipelineOptions): (ctx: PhaseContext) => Promise<void> {
+export function validationPhase(
+  options: PipelineOptions,
+): (ctx: PhaseContext) => Promise<PhaseDirective> {
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
 
-  return async function validate(ctx: PhaseContext): Promise<void> {
+  return async function validate(ctx: PhaseContext): Promise<PhaseDirective> {
     const diff = await captureDiff(ctx, options, repoDir);
     if (!diff.changed) {
       throw new NoChangesProducedError(
@@ -129,6 +132,9 @@ export function validationPhase(options: PipelineOptions): (ctx: PhaseContext) =
 
     const failing = comparisons.find(isBindingFailure);
     if (failing) throw new ValidationFailedError(describeFailure(failing));
+
+    // Nothing to ask the runner for: the queue carries on. See `PhaseDirective`.
+    return undefined;
   };
 }
 

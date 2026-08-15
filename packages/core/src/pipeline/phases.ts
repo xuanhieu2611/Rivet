@@ -8,6 +8,7 @@ import { implementingPhase } from "./implementing-phase";
 import type { PhaseContext } from "./phase-context";
 import { planningPhase } from "./planning-phase";
 import { provisioningPhase } from "./provisioning-phase";
+import type { PhaseDirective } from "./run-pipeline";
 import { validationPhase } from "./validation-phase";
 
 /**
@@ -61,8 +62,11 @@ export interface Phase {
    * A phase with a body ignores `durationMs` entirely: it takes as long as the
    * work takes, and its budget is the job's `max_duration_seconds` plus each
    * command's own timeout, never a number in this file.
+   *
+   * What it returns is a `PhaseDirective`, and for every phase in this file that
+   * is `undefined` - "carry on with the queue". See `run-pipeline.ts`.
    */
-  run?: (ctx: PhaseContext) => Promise<void>;
+  run?: (ctx: PhaseContext) => Promise<PhaseDirective>;
 }
 
 /**
@@ -238,7 +242,7 @@ export function simulatedPipeline(): readonly Phase[] {
  * should be judging code.
  */
 export function buildPipeline(options: PipelineOptions): readonly Phase[] {
-  const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<void>>> = {
+  const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<PhaseDirective>>> = {
     provisioning: provisioningPhase(options),
     analyzing: baselinePhase(options),
     ...(options.agent

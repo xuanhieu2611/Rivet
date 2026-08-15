@@ -15,6 +15,7 @@ import {
 import { problem, splitLines } from "./command-output";
 import type { PhaseContext, PhaseExecInput, RecordedCommand } from "./phase-context";
 import type { PipelineOptions } from "./phases";
+import type { PhaseDirective } from "./run-pipeline";
 import { detectPackageManager, type ProjectPlan, REPO_DIRNAME } from "./project";
 
 /**
@@ -45,11 +46,13 @@ import { detectPackageManager, type ProjectPlan, REPO_DIRNAME } from "./project"
 /** Written outside the clone, so it can never appear in the restored diff. */
 export const CHECKPOINT_PATCH_FILENAME = "rivet-checkpoint.patch";
 
-export function provisioningPhase(options: PipelineOptions): (ctx: PhaseContext) => Promise<void> {
+export function provisioningPhase(
+  options: PipelineOptions,
+): (ctx: PhaseContext) => Promise<PhaseDirective> {
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
   const patchPath = `${options.workdir}/${CHECKPOINT_PATCH_FILENAME}`;
 
-  return async function provision(ctx: PhaseContext): Promise<void> {
+  return async function provision(ctx: PhaseContext): Promise<PhaseDirective> {
     // Read before the container exists. A checkpoint that cannot be validated is
     // a terminal failure, and discovering that after paying for a container and
     // a clone tells nobody anything the row did not already say.
@@ -72,6 +75,9 @@ export function provisioningPhase(options: PipelineOptions): (ctx: PhaseContext)
     const project = await detectProject(ctx, options, repoDir);
     const install = await installDependencies(ctx, options, { project, repoDir });
     await recordEnvironment(ctx, options, { project, repoDir, commitSha, install });
+
+    // Nothing to ask the runner for: the queue carries on. See `PhaseDirective`.
+    return undefined;
   };
 }
 

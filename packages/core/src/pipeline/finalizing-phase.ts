@@ -2,6 +2,7 @@ import type { CheckComparison, ValidationOutcome, ValidationReport } from "@rive
 
 import type { ValidationRecord } from "../events/validation-log";
 import type { PhaseContext } from "./phase-context";
+import type { PhaseDirective } from "./run-pipeline";
 
 /**
  * Phase seven: keep what the session said, and say what the run came to.
@@ -57,8 +58,8 @@ const ABSENT_SUMMARY =
  * worse than an empty parameter list now - the same argument `planningPhase`
  * makes for Milestone 6.
  */
-export function finalizingPhase(): (ctx: PhaseContext) => Promise<void> {
-  return async function finalizing(ctx: PhaseContext): Promise<void> {
+export function finalizingPhase(): (ctx: PhaseContext) => Promise<PhaseDirective> {
+  return async function finalizing(ctx: PhaseContext): Promise<PhaseDirective> {
     ctx.signal.throwIfAborted();
 
     const summary = await ctx.readSummary();
@@ -93,6 +94,9 @@ export function finalizingPhase(): (ctx: PhaseContext) => Promise<void> {
       },
       "the run was summarized",
     );
+
+    // Nothing to ask the runner for: the queue carries on. See `PhaseDirective`.
+    return undefined;
   };
 }
 

@@ -91,6 +91,7 @@ function interruptedPipeline(leaseOwner: string): readonly Phase[] {
             await new Promise<never>(() => {
               // Deliberately never settles. See the comment above.
             });
+            return undefined;
           },
         }
       : phase,

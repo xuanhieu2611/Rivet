@@ -14,6 +14,7 @@ import { runAgentSession } from "./agent-session";
 import type { PhaseContext } from "./phase-context";
 import type { AgentOptions, PipelineOptions } from "./phases";
 import { detectPackageManager, type ProjectPlan, REPO_DIRNAME } from "./project";
+import type { PhaseDirective } from "./run-pipeline";
 
 /**
  * Phase four, for real: a model, four tools, and a container to use them in.
@@ -86,10 +87,10 @@ const README_NAMES = ["README.md", "README.rst", "README.txt", "README"];
 export function implementingPhase(
   agent: AgentOptions,
   options: PipelineOptions,
-): (ctx: PhaseContext) => Promise<void> {
+): (ctx: PhaseContext) => Promise<PhaseDirective> {
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
 
-  return async function implement(ctx: PhaseContext): Promise<void> {
+  return async function implement(ctx: PhaseContext): Promise<PhaseDirective> {
     const sandbox = ctx.sandboxes.require();
 
     const spec: CodingAgentSpec = {
@@ -143,6 +144,9 @@ export function implementingPhase(
       },
       "the coding session finished",
     );
+
+    // Nothing to ask the runner for: the queue carries on. See `PhaseDirective`.
+    return undefined;
   };
 }
 

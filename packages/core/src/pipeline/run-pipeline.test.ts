@@ -2,8 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 
 import { JobCancelledError } from "../jobs/failure";
 import type { PhaseContext } from "./phase-context";
-import type { Phase } from "./phases";
-import { abortableSleep, type PipelineDeps, runPipeline, scaleDuration } from "./run-pipeline";
+import { type Phase, simulatedPipeline } from "./phases";
+import {
+  abortableSleep,
+  type PhaseDirective,
+  type PipelineDeps,
+  runPipeline,
+  scaleDuration,
+} from "./run-pipeline";
 
 const PHASES: readonly Phase[] = [
   { status: "provisioning", label: "one", durationMs: 1_000, recovery: "replay" },
@@ -151,7 +157,7 @@ describe("runPipeline", () => {
    * check that giving phases a body did not turn into a rewrite of the runner.
    */
   describe("phases with a body", () => {
-    const withBody = (run: (ctx: PhaseContext) => Promise<void>): readonly Phase[] => [
+    const withBody = (run: (ctx: PhaseContext) => Promise<PhaseDirective>): readonly Phase[] => [
       { status: "provisioning", label: "one", durationMs: 1_000, recovery: "replay", run },
       { status: "analyzing", label: "two", durationMs: 2_000, recovery: "replay" },
     ];
@@ -164,7 +170,7 @@ describe("runPipeline", () => {
       const { deps, slept } = harness({
         phases: withBody((ctx) => {
           seen.push(ctx.phase.label);
-          return Promise.resolve();
+          return Promise.resolve(undefined);
         }),
         context: contextFor,
       });
@@ -179,7 +185,7 @@ describe("runPipeline", () => {
 
     it("still reports the phase complete, with the time the work took", async () => {
       const { deps, completed } = harness({
-        phases: withBody(() => Promise.resolve()),
+        phases: withBody(() => Promise.resolve(undefined)),
         context: contextFor,
       });
 
@@ -201,12 +207,188 @@ describe("runPipeline", () => {
     });
 
     it("refuses to run a body with no context rather than inventing one", async () => {
-      const { deps } = harness({ phases: withBody(() => Promise.resolve()) });
+      const { deps } = harness({ phases: withBody(() => Promise.resolve(undefined)) });
 
       // A wiring mistake, and the only way to notice it is loudly. A phase
       // silently skipped would look exactly like a phase that did its work.
       await expect(runPipeline(deps)).rejects.toThrow(/context factory/);
     });
+  });
+
+  /**
+   * The Milestone 8 half: the walk is a queue, and a phase may extend it.
+   *
+   * Everything above still passes unchanged, which is the check that teaching
+   * the runner to cycle did not change what a pipeline without a directive does.
+   */
+  describe("cycle directives", () => {
+    /** The runner only ever passes the context through, so a cast is honest here. */
+    const contextFor = (phase: Phase) => ({ phase }) as PhaseContext;
+
+    /**
+     * A three-phase stand-in for `testing -> reviewing -> finalizing`, plus a
+     * `revising` that is reachable only through a directive.
+     */
+    function loopPhases(directive: () => PhaseDirective) {
+      const revising: Phase = {
+        status: "revising",
+        label: "revise",
+        durationMs: 0,
+        recovery: "checkpoint",
+      };
+      const testing: Phase = {
+        status: "testing",
+        label: "test",
+        durationMs: 0,
+        recovery: "replay",
+      };
+      const reviewing: Phase = {
+        status: "reviewing",
+        label: "review",
+        durationMs: 0,
+        recovery: "replay",
+        run: () => Promise.resolve(directive()),
+      };
+      const finalizing: Phase = {
+        status: "finalizing",
+        label: "finalize",
+        durationMs: 0,
+        recovery: "replay",
+      };
+
+      return { revising, testing, reviewing, finalizing };
+    }
+
+    it("inserts a directive's phases ahead of the remaining queue", async () => {
+      let loops = 0;
+      const phases = loopPhases(() =>
+        loops++ === 0
+          ? { kind: "cycle", phases: [phases.revising, phases.testing, phases.reviewing] }
+          : undefined,
+      );
+
+      const { deps, started, completed } = harness({
+        phases: [phases.testing, phases.reviewing, phases.finalizing],
+        directivePhases: [phases.revising],
+        context: contextFor,
+      });
+
+      await runPipeline(deps);
+
+      // One trip around the loop, and `finalizing` still runs last: a directive
+      // only ever inserts ahead of what is left, which is what keeps
+      // `finalPhaseStatus()` honest.
+      expect(started).toEqual(["test", "review", "revise", "test", "review", "finalize"]);
+      expect(completed.map((entry) => entry.label)).toEqual(started);
+    });
+
+    it("carries on with the queue when a phase returns undefined", async () => {
+      const phases = loopPhases(() => undefined);
+      const { deps, started } = harness({
+        phases: [phases.testing, phases.reviewing, phases.finalizing],
+        directivePhases: [phases.revising],
+        context: contextFor,
+      });
+
+      await runPipeline(deps);
+
+      expect(started).toEqual(["test", "review", "finalize"]);
+    });
+
+    it("goes around as many times as the phase asks, since the bound is not the runner's", async () => {
+      let loops = 0;
+      const phases = loopPhases(() =>
+        loops++ < 2
+          ? { kind: "cycle", phases: [phases.revising, phases.testing, phases.reviewing] }
+          : undefined,
+      );
+
+      const { deps, started } = harness({
+        phases: [phases.testing, phases.reviewing, phases.finalizing],
+        directivePhases: [phases.revising],
+        context: contextFor,
+      });
+
+      await runPipeline(deps);
+
+      expect(started.filter((label) => label === "revise")).toHaveLength(2);
+      expect(started.at(-1)).toBe("finalize");
+    });
+
+    it("throws when a directive names a phase this pipeline does not know about", async () => {
+      const stranger: Phase = {
+        status: "revising",
+        label: "smuggled",
+        durationMs: 0,
+        recovery: "replay",
+      };
+      const phases = loopPhases(() => ({ kind: "cycle", phases: [stranger] }));
+
+      const { deps, started, completed } = harness({
+        phases: [phases.testing, phases.reviewing, phases.finalizing],
+        // Note the omission: `stranger` wears a status the pipeline uses, and is
+        // still refused, because membership is by identity.
+        directivePhases: [phases.revising],
+        context: contextFor,
+      });
+
+      await expect(runPipeline(deps)).rejects.toThrow(/not a phase this pipeline knows about/);
+
+      // Refused before the phase was reported complete, and nothing after it ran.
+      expect(started).toEqual(["test", "review"]);
+      expect(completed.map((entry) => entry.label)).toEqual(["test"]);
+    });
+
+    it("throws the abort reason unchanged when the signal fires mid-loop", async () => {
+      const cancelled = new JobCancelledError("cancel requested");
+      const phases = loopPhases(() => ({
+        kind: "cycle",
+        phases: [phases.revising, phases.testing, phases.reviewing],
+      }));
+
+      const { deps, controller, started } = harness({
+        phases: [phases.testing, phases.reviewing, phases.finalizing],
+        directivePhases: [phases.revising],
+        context: contextFor,
+      });
+
+      const onPhaseStart = (phase: Phase) => {
+        started.push(phase.label);
+        // Abort on the second trip around, so the signal fires with the queue
+        // already extended rather than at its original end.
+        if (started.filter((label) => label === "revise").length === 2) {
+          controller.abort(cancelled);
+        }
+        return Promise.resolve();
+      };
+
+      await expect(runPipeline({ ...deps, onPhaseStart })).rejects.toBe(cancelled);
+
+      // A directive that never stops still stops here, which is why the runner
+      // needs no loop guard of its own: the signal is the bound.
+      expect(started.at(-1)).toBe("revise");
+      expect(started).not.toContain("finalize");
+    });
+  });
+
+  /**
+   * The property the runner's whole shape exists to protect, asserted rather
+   * than assumed. Real phases, the real `abortableSleep`, no fake timers: at
+   * `speed: 0` every duration scales to zero and the walk is pure control flow.
+   *
+   * The bound is deliberately loose against a busy CI runner. The real figure is
+   * tens of microseconds, and what would break it is a runner that started
+   * sleeping, importing or reading configuration - all of which cost orders of
+   * magnitude more than this leaves room for.
+   */
+  it("runs the whole simulated pipeline in well under a millisecond at speed 0", async () => {
+    const { deps } = harness({ phases: simulatedPipeline(), sleep: abortableSleep });
+
+    const startedAt = performance.now();
+    await runPipeline(deps);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(elapsedMs).toBeLessThan(5);
   });
 });
 
