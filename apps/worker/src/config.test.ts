@@ -37,6 +37,8 @@ describe("parseWorkerConfig", () => {
       sweepIntervalMs: 60_000,
       maxAttempts: 3,
       pipelineSpeed: 1,
+      reviewMode: "independent",
+      maxReviewLoops: 2,
       artifactMaxBytes: 262_144,
       checkpointMaxBytes: 4_194_304,
       checkpointTimeoutMs: 30_000,
@@ -187,6 +189,8 @@ describe("parseWorkerConfig", () => {
       WORKER_LEASE_SECONDS: "60",
       WORKER_HEARTBEAT_SECONDS: "5",
       RIVET_PIPELINE_SPEED: "0",
+      RIVET_REVIEW_MODE: "none",
+      RIVET_MAX_REVIEW_LOOPS: "5",
       LOG_LEVEL: "debug",
     });
 
@@ -194,7 +198,16 @@ describe("parseWorkerConfig", () => {
     expect(config.leaseSeconds).toBe(60);
     expect(config.heartbeatSeconds).toBe(5);
     expect(config.pipelineSpeed).toBe(0);
+    expect(config.reviewMode).toBe("none");
+    expect(config.maxReviewLoops).toBe(5);
     expect(config.logLevel).toBe("debug");
+  });
+
+  it("bounds the review defaults", () => {
+    expect(() => parseWorkerConfig({ RIVET_REVIEW_MODE: "off" })).toThrow(WorkerConfigError);
+    expect(() => parseWorkerConfig({ RIVET_MAX_REVIEW_LOOPS: "-1" })).toThrow(WorkerConfigError);
+    expect(() => parseWorkerConfig({ RIVET_MAX_REVIEW_LOOPS: "6" })).toThrow(WorkerConfigError);
+    expect(() => parseWorkerConfig({ RIVET_MAX_REVIEW_LOOPS: "1.5" })).toThrow(WorkerConfigError);
   });
 
   it("treats an empty string as unset rather than as zero", () => {

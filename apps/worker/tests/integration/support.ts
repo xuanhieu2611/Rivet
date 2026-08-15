@@ -57,6 +57,8 @@ export const TEST_CONFIG: WorkerConfig = {
   sweepIntervalMs: 1_000,
   maxAttempts: 3,
   pipelineSpeed: 0,
+  reviewMode: "independent",
+  maxReviewLoops: 2,
   artifactMaxBytes: 262_144,
   checkpointMaxBytes: 4 * 1_024 * 1_024,
   checkpointTimeoutMs: 30_000,
@@ -235,6 +237,9 @@ export async function createTestJob(
     maxCostUsd: string;
     maxModelCalls: number;
     maxToolCalls: number;
+    reviewMode: "independent" | "none";
+    maxReviewLoops: number;
+    reviewLoops: number;
   }> = {},
 ) {
   const job = await createJob({
@@ -242,8 +247,8 @@ export async function createTestJob(
     description: "Created by the integration suite.",
     repoUrl: "https://github.com/rivet/example",
     baseBranch: "main",
-    reviewMode: "independent",
-    maxReviewLoops: 2,
+    reviewMode: overrides.reviewMode ?? "independent",
+    maxReviewLoops: overrides.maxReviewLoops ?? 2,
   });
 
   const patch = {
@@ -253,6 +258,7 @@ export async function createTestJob(
     ...(overrides.maxCostUsd === undefined ? {} : { maxCostUsd: overrides.maxCostUsd }),
     ...(overrides.maxModelCalls === undefined ? {} : { maxModelCalls: overrides.maxModelCalls }),
     ...(overrides.maxToolCalls === undefined ? {} : { maxToolCalls: overrides.maxToolCalls }),
+    ...(overrides.reviewLoops === undefined ? {} : { reviewLoops: overrides.reviewLoops }),
   };
   if (Object.keys(patch).length > 0) {
     // Not a status write, so it does not need `transitionJob`. `createJob` takes

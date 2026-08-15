@@ -101,8 +101,10 @@ async function main(): Promise<void> {
         "change in your final message.",
       repoUrl: FIXTURE_REPOSITORY,
       baseBranch: FIXTURE_BRANCH,
-      reviewMode: "independent",
-      maxReviewLoops: 2,
+      // This demo isolates M6 recovery. Its scripted agent intentionally has
+      // no reviewer session, so the job opts out of M8 review explicitly.
+      reviewMode: "none",
+      maxReviewLoops: 0,
     });
 
     console.log(`Created job ${job.id}`);

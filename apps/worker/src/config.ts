@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { reviewModeSchema, type ReviewMode } from "@rivet/contracts";
 import { config as loadEnvFile } from "dotenv";
 import { z } from "zod";
 
@@ -237,6 +238,10 @@ export interface WorkerConfig {
   maxAttempts: number;
   /** Scales every simulated phase duration. 0 makes a run instant. */
   pipelineSpeed: number;
+  /** Default review mode used when a worker-side job creator omits it. */
+  reviewMode: ReviewMode;
+  /** Default maximum number of review revisions for a newly-created job. */
+  maxReviewLoops: number;
   /**
    * Cap on one stored artifact - a diff, a summary - before truncation.
    *
@@ -273,6 +278,10 @@ const schema = z.object({
   WORKER_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
   WORKER_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
   RIVET_PIPELINE_SPEED: z.coerce.number().min(0).max(100).default(1),
+  // Review is a job default, not a run-time switch. A job records these values
+  // when it is created, so a replacement worker cannot change its workflow.
+  RIVET_REVIEW_MODE: reviewModeSchema.default("independent"),
+  RIVET_MAX_REVIEW_LOOPS: z.coerce.number().int().min(0).max(5).default(2),
   // 256KB, which holds a large refactor's diff whole. The ceiling is 8MB
   // because `content` is a Postgres `text` column read back by a page render,
   // not object storage.
@@ -377,6 +386,8 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
     sweepIntervalMs: parsed.data.WORKER_SWEEP_INTERVAL_MS,
     maxAttempts: parsed.data.WORKER_MAX_ATTEMPTS,
     pipelineSpeed: parsed.data.RIVET_PIPELINE_SPEED,
+    reviewMode: parsed.data.RIVET_REVIEW_MODE,
+    maxReviewLoops: parsed.data.RIVET_MAX_REVIEW_LOOPS,
     artifactMaxBytes: parsed.data.RIVET_ARTIFACT_MAX_BYTES,
     checkpointMaxBytes: parsed.data.RIVET_CHECKPOINT_MAX_BYTES,
     checkpointTimeoutMs: parsed.data.RIVET_CHECKPOINT_TIMEOUT_MS,

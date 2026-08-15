@@ -14,7 +14,7 @@ import {
 import { closeDb } from "@rivet/database";
 import { closeJobQueue, closeRedis, getBullJobQueue, type BullJobQueue } from "@rivet/queue";
 
-import { DEFAULT_MODEL_PROVIDER, DEFAULT_MODEL, loadRootEnv } from "./config";
+import { DEFAULT_MODEL, DEFAULT_MODEL_PROVIDER, loadRootEnv, parseWorkerConfig } from "./config";
 import { selectDemoTask } from "./demo-tasks";
 
 const FIXTURE_REPOSITORY = "https://github.com/xuanhieu2611/rivet-fixture-node";
@@ -39,6 +39,7 @@ const TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set([
 async function main(): Promise<void> {
   loadRootEnv();
   assertDemoConfiguration();
+  const workerConfig = parseWorkerConfig(process.env);
 
   const root = resolve(import.meta.dirname, "../../..");
   const worker = startWorker(root);
@@ -52,8 +53,8 @@ async function main(): Promise<void> {
       description: task.description,
       repoUrl: FIXTURE_REPOSITORY,
       baseBranch: FIXTURE_BRANCH,
-      reviewMode: "independent",
-      maxReviewLoops: 2,
+      reviewMode: workerConfig.reviewMode,
+      maxReviewLoops: workerConfig.maxReviewLoops,
     });
 
     const enqueued = await requestJobRun(job.id, job.dispatchGeneration, queue);

@@ -13,7 +13,9 @@ import {
   closeConnections,
   createTestJob,
   createTestQueue,
+  patchTestJob,
   readEvents,
+  readJob,
   resetDatabase,
   startTestWorker,
   type TestQueue,
@@ -148,6 +150,18 @@ describe("resuming from a durable checkpoint", () => {
 
     const resumed = (await readEvents(job.id)).find((event) => event.type === "run.resumed");
     expect(resumed?.data).toMatchObject({ resumePhase: "implementing", turn: 2 });
+  });
+
+  it("does not reset the durable review loop counter while resuming", async () => {
+    const { job } = await jobWithCheckpoint({ kind: "phase_boundary", completedPhase: "planning" });
+    await patchTestJob(job.id, { reviewLoops: 1, maxReviewLoops: 2 });
+
+    worker = startTestWorker({ queue: testQueue.queue });
+    await waitForStatus(job.id, "completed");
+
+    const resumed = await readJob(job.id);
+    expect(resumed.reviewLoops).toBe(1);
+    expect(resumed.maxReviewLoops).toBe(2);
   });
 
   it("runs every phase when there is nothing to resume", async () => {

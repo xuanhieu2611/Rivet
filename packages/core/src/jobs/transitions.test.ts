@@ -58,9 +58,11 @@ describe("ALLOWED_TRANSITIONS", () => {
     // Both phases spend from the same cumulative job ceilings, so both can be
     // the one that crosses them. A phase that could breach but could not record
     // it would throw inside the failure path and be redelivered to breach again.
-    for (const status of ["planning", "implementing"] as const) {
+    for (const status of ["planning", "implementing", "reviewing", "revising"] as const) {
       expect(ALLOWED_TRANSITIONS[status]).toContain("budget_exceeded");
     }
+
+    expect(ALLOWED_TRANSITIONS.provisioning).toContain("revising");
   });
 
   it("lists no status twice", () => {
