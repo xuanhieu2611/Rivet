@@ -112,6 +112,30 @@ export interface StoredImplementationPlan {
   plan: ImplementationPlan;
 }
 
+/**
+ * Reads the newest content for one artifact type.
+ *
+ * Review context is assembled from durable outputs rather than from values a
+ * previous phase happened to keep in memory. Unlike structured report readers,
+ * this helper deliberately returns truncated content too: a diff or a summary
+ * is still useful with an explicit storage-bound marker, while callers that
+ * need complete JSON use their type-specific reader instead.
+ */
+export async function readLatestArtifactContent(
+  jobId: string,
+  type: ArtifactType,
+  executor: Executor = db,
+): Promise<string | null> {
+  const [row] = await executor
+    .select({ content: jobArtifacts.content })
+    .from(jobArtifacts)
+    .where(and(eq(jobArtifacts.jobId, jobId), eq(jobArtifacts.type, type)))
+    .orderBy(desc(jobArtifacts.id))
+    .limit(1);
+
+  return row?.content ?? null;
+}
+
 /** The writer refuses a complete artifact rather than silently clipping it. */
 export class ArtifactTooLargeError extends Error {
   constructor(message: string) {

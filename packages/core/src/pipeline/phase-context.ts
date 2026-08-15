@@ -9,11 +9,16 @@ import type {
   JobEventData,
   JobEventType,
   JobStatus,
+  ReviewReport,
   ValidationReport,
 } from "@rivet/contracts";
 import { db, type Database } from "@rivet/database";
 
-import { readLatestImplementationPlan, recordArtifact } from "../artifacts/artifact-store";
+import {
+  readLatestArtifactContent,
+  readLatestImplementationPlan,
+  recordArtifact,
+} from "../artifacts/artifact-store";
 import {
   getLatestCheckpoint,
   recordCheckpoint,
@@ -31,6 +36,7 @@ import { type BaselineOutcome, readBaseline } from "../events/baseline-log";
 import { readBaselineReport } from "../events/baseline-report";
 import { appendEvent } from "../events/event-service";
 import { readSummary } from "../events/session-log";
+import { readLatestReviewReport } from "../events/review-log";
 import {
   readValidation,
   readValidationReport,
@@ -44,6 +50,7 @@ import {
   LeaseLostError,
 } from "../jobs/failure";
 import { type ProvisioningPatch, recordProvisioning } from "../jobs/provisioning";
+import { type ReviewPatch, recordReview as persistReview } from "../jobs/review";
 import { recordCommand } from "../sandbox/command-log";
 import type { ExecResult } from "../sandbox/sandbox";
 import type { SandboxHolder } from "../sandbox/sandbox-holder";
@@ -149,10 +156,23 @@ export interface PhaseContext {
   /** The latest complete multi-check validation report, or null for legacy/unreadable jobs. */
   readValidationReport(): Promise<ValidationReport | null>;
 
+  /**
+   * Reads the newest artifact body for review context.
+   *
+   * Optional for compatibility with focused phase harnesses that do not need
+   * artifact reads. The production factory always supplies it.
+   */
+  readLatestArtifactContent?: (type: ArtifactType) => Promise<string | null>;
+
+  /** The latest complete structured review report, or null when none is trusted. */
+  readLatestReviewReport?: () => Promise<ReviewReport | null>;
+
   /** Records what the run is executing in. Throws `LeaseLostError` if the lease is gone. */
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
   /** Records cumulative coding-agent usage. Throws `LeaseLostError` if the lease is gone. */
   recordAgentUsage(patch: AgentUsagePatch): Promise<void>;
+  /** Records the last review verdict and durable loop counter under the lease. */
+  recordReview?(patch: ReviewPatch): Promise<void>;
   /** Reads the current in-run usage totals, including another phase's session. */
   readAgentUsage?: () => AgentUsageTotals;
 
@@ -515,6 +535,14 @@ export function createPhaseContextFactory(
       return readValidationReport(job.id, database);
     },
 
+    readLatestArtifactContent(type) {
+      return readLatestArtifactContent(job.id, type, database);
+    },
+
+    readLatestReviewReport() {
+      return readLatestReviewReport(job.id, database);
+    },
+
     async recordProvisioning(patch) {
       const held = await recordProvisioning(job.id, leaseOwner, patch, database);
       if (!held) {
@@ -552,6 +580,25 @@ export function createPhaseContextFactory(
         totalModelCalls: patch.totalModelCalls ?? currentAgentUsage.totalModelCalls,
         totalToolCalls: patch.totalToolCalls ?? currentAgentUsage.totalToolCalls,
       };
+    },
+
+    async recordReview(patch) {
+      const held = await persistReview(job.id, leaseOwner, patch, database);
+      if (!held) {
+        throw new LeaseLostError(
+          `Job ${job.id} is no longer leased by ${leaseOwner}; review accounting stood down.`,
+        );
+      }
+
+      // The phase runner reuses this context factory for every cycle in one
+      // attempt. Keep the in-memory view aligned with the fenced row so the
+      // next reviewing phase reads the loop count just recorded rather than
+      // the value from the initial claim.
+      if (patch.reviewDecision !== undefined) job.reviewDecision = patch.reviewDecision;
+      if (patch.reviewLoops !== undefined) job.reviewLoops = patch.reviewLoops;
+      if (patch.reviewBlockingCount !== undefined) {
+        job.reviewBlockingCount = patch.reviewBlockingCount;
+      }
     },
 
     readAgentUsage() {
