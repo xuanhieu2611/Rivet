@@ -1,7 +1,7 @@
 import type { ArtifactType, JobArtifact, JobArtifactSummary } from "@rivet/contracts";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDateTime } from "@/lib/format";
+import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const ARTIFACT_LABELS: Record<ArtifactType, string> = {
@@ -227,10 +227,4 @@ function formatDiffStats(stats: DiffStats): string {
 
 function plural(count: number, noun: string): string {
   return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1_024) return `${String(bytes)} B`;
-  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
-  return `${(bytes / (1_024 * 1_024)).toFixed(bytes < 10 * 1_024 * 1_024 ? 1 : 0)} MB`;
 }

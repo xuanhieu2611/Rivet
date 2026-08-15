@@ -12,6 +12,7 @@ import { LiveConnectionIndicator, LiveStatusBadge } from "@/components/job-live/
 import { LiveAgentUsage } from "@/components/job-live/live-agent-usage";
 import { LiveCommandLog } from "@/components/job-live/live-command-log";
 import { LiveExecutionTimeline } from "@/components/job-live/live-execution-timeline";
+import { ImplementationPlanPanel } from "@/components/implementation-plan-panel";
 import { JobArtifactsPanel } from "@/components/job-artifacts-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/format";
@@ -44,7 +45,7 @@ export default async function JobDetailPage({ params }: PageProps) {
     listArtifacts(job.id),
   ]);
 
-  const latestArtifact = (type: "diff" | "implementation_summary") => {
+  const latestArtifact = (type: "diff" | "implementation_summary" | "implementation_plan") => {
     for (let index = artifactSummaries.length - 1; index >= 0; index -= 1) {
       const artifact = artifactSummaries[index];
       if (artifact?.type === type) return artifact;
@@ -54,9 +55,11 @@ export default async function JobDetailPage({ params }: PageProps) {
 
   const latestDiff = latestArtifact("diff");
   const latestSummary = latestArtifact("implementation_summary");
-  const [diff, summary] = await Promise.all([
+  const latestPlan = latestArtifact("implementation_plan");
+  const [diff, summary, plan] = await Promise.all([
     latestDiff ? getArtifact(job.id, latestDiff.id) : Promise.resolve(null),
     latestSummary ? getArtifact(job.id, latestSummary.id) : Promise.resolve(null),
+    latestPlan ? getArtifact(job.id, latestPlan.id) : Promise.resolve(null),
   ]);
   const finished = isTerminal(job.status);
 
@@ -107,6 +110,8 @@ export default async function JobDetailPage({ params }: PageProps) {
                 <p className="text-sm leading-relaxed whitespace-pre-wrap">{job.description}</p>
               </CardContent>
             </Card>
+
+            <ImplementationPlanPanel artifact={plan} />
 
             <Card>
               <CardHeader>

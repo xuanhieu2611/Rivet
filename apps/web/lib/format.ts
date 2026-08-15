@@ -95,6 +95,13 @@ export function formatCommandDuration(milliseconds: number): string {
   return `${seconds.toFixed(seconds >= 10 ? 0 : 1)}s`;
 }
 
+/** `1536` -> `"1.5 KB"`. Binary units, because every producer of these counts is a byte length. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1_024) return `${String(bytes)} B`;
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(bytes < 10 * 1_024 * 1_024 ? 1 : 0)} MB`;
+}
+
 /** `https://github.com/acme/widgets` -> `github.com/acme/widgets`, for dense table cells. */
 export function shortenRepoUrl(url: string): string {
   try {

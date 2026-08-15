@@ -684,6 +684,30 @@ The existing terminal `router.refresh()` is enough to load the final plan artifa
 recovery events already travel through the Postgres SSE stream, so no new live transport or polling
 loop is added.
 
+**Both surfaces landed, and the recovery copy is a pure function.**
+`apps/web/lib/recovery-events.ts` turns one event row into a label, an emphasis, a sentence saying
+what the entry means, and its supporting facts; `ExecutionTimeline` renders that for
+`plan.recorded`, `checkpoint.created`, `checkpoint.restored`, `checkpoint.rejected`, `run.resumed`
+and `job.reclaimed`, and `describeEventData` stands down for those types so the attempt and the
+lease owner are not printed twice. Keeping the copy out of the JSX is what lets `pnpm test` cover it
+in a node environment with no renderer, which is the only kind of web test this repo runs. The extra
+sentence per row is deliberate: a reader looking at a reclaimed job needs to be told that the
+container changed and the base commit did not, and neither is legible from "Restored checkpoint 3".
+
+`ImplementationPlanPanel` renders the six sections from the latest `implementation_plan` artifact
+through the contract's own `renderImplementationPlan`, read on the server after the terminal
+refresh, exactly like the summary and diff. `readImplementationPlanSections` degrades an unreadable
+or truncated body to nothing rather than throwing, because a page is a reader and a row written by a
+newer Rivet must not be able to take the whole detail page down. The card renders when there is no
+plan too - an absent card reads as an absent feature rather than as a run that has not planned yet.
+
+Two facts the events carry needed care. The checkpoint `turn` is the job's cumulative completed-turn
+count, not the zero-based per-session index `agent.turn_started` carries and `displayTurn` renders
+with a `+1`, so it is worded "after turn N" rather than presented as a number the reader could line
+up against the agent rows. And `checkpointSequence`/`sequence` and `checkpointKind`/`kind` are both
+live aliases in `JobEventData`; a reader that knew only one name would drop the number from half the
+rows, so both are resolved. No checkpoint payload, and no download endpoint, reaches the browser.
+
 ## Stage 10 - recovery demo, verification, and documentation
 
 Add a deterministic `pnpm demo:recovery` harness. It uses the public fixture, real Postgres, Redis,

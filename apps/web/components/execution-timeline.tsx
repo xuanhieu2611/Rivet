@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 
 import { commandAnchorId } from "@/components/job-live/command-anchor";
 import { JOB_EVENT_TONE, statusLabel } from "@/lib/job-status";
-import { formatAgentCost, formatTimeOfDay, formatTokenCount } from "@/lib/format";
+import { formatAgentCost, formatBytes, formatTimeOfDay, formatTokenCount } from "@/lib/format";
+import { describeRecoveryEvent, isRecoveryEvent } from "@/lib/recovery-events";
 import { cn } from "@/lib/utils";
 
 interface AgentToolTimelineItem {
@@ -254,9 +255,57 @@ function EventContent({ event }: { event: JobEvent }): ReactNode {
     case "validation.recorded":
       return <ValidationEventContent event={event} />;
 
+    case "plan.recorded":
+    case "checkpoint.created":
+    case "checkpoint.restored":
+    case "checkpoint.rejected":
+    case "run.resumed":
+    case "job.reclaimed":
+      return <RecoveryEventContent event={event} />;
+
     default:
       return <p className="text-sm leading-snug">{event.message}</p>;
   }
+}
+
+const RECOVERY_EMPHASIS_CLASS = {
+  neutral: "text-foreground",
+  positive: "text-emerald-700 dark:text-emerald-300",
+  negative: "text-destructive",
+} as const;
+
+/**
+ * A recovery entry: what happened, why it matters, and the facts behind it.
+ *
+ * The extra sentence is deliberate. A reader looking at a rerun job needs to
+ * know that the container changed and the base commit did not, and neither of
+ * those is legible from a message that says a checkpoint was restored.
+ */
+function RecoveryEventContent({ event }: { event: JobEvent }) {
+  const presentation = describeRecoveryEvent(event);
+  if (!presentation) return <p className="text-sm leading-snug">{event.message}</p>;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className={cn("text-sm font-medium", RECOVERY_EMPHASIS_CLASS[presentation.emphasis])}>
+          {presentation.label}
+        </span>
+        <p className="text-sm leading-snug">{event.message}</p>
+      </div>
+      <p className="text-muted-foreground text-xs leading-snug">{presentation.explanation}</p>
+      {presentation.facts.length > 0 ? (
+        <p className="text-muted-foreground text-xs break-words">
+          {presentation.facts.join(" · ")}
+        </p>
+      ) : null}
+      {event.data?.stderr ? (
+        <pre className="text-destructive max-h-40 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-words">
+          {event.data.stderr}
+        </pre>
+      ) : null}
+    </div>
+  );
 }
 
 function ArtifactEventContent({ event }: { event: JobEvent }) {
@@ -363,6 +412,9 @@ function UsageContent({ event }: { event: JobEvent }) {
 function describeEventData(event: JobEvent): string | null {
   const data = event.data;
   if (!data || event.type === "agent.message" || event.type === "agent.usage") return null;
+  // A recovery row states its own facts, and in its own order. Appending the
+  // generic line under it would repeat the attempt and the lease owner.
+  if (isRecoveryEvent(event)) return null;
   if (
     event.type === "agent.turn_started" ||
     event.type === "agent.tool_started" ||
@@ -448,10 +500,4 @@ function timelineTone(event: JobEvent): string {
   if (event.type !== "validation.recorded") return JOB_EVENT_TONE[event.type];
   const outcome = event.data?.validation;
   return outcome ? VALIDATION_PRESENTATION[outcome].tone : JOB_EVENT_TONE[event.type];
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1_024) return `${String(bytes)} B`;
-  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
-  return `${(bytes / (1_024 * 1_024)).toFixed(bytes < 10 * 1_024 * 1_024 ? 1 : 0)} MB`;
 }
