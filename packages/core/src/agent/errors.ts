@@ -72,9 +72,60 @@ export class PlanNotProducedError extends TerminalJobError {
   }
 }
 
+/**
+ * The reviewer ended without submitting a valid structured verdict.
+ *
+ * Terminal, and it mirrors `PlanNotProducedError` deliberately: a session that
+ * said JSON-shaped things and never called its submit tool produced nothing
+ * durable, and a second attempt asks the same model the same question. The
+ * reason this class exists at all rather than the phase shrugging is that
+ * treating a missing verdict as an approval would be the one bug in this
+ * workflow that nobody would ever notice.
+ */
+export class ReviewNotProducedError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "review_not_produced", options);
+  }
+}
+
+/**
+ * The last review loop ended with the reviewer still naming blocking findings.
+ *
+ * Terminal, and it is the trade the review workflow rests on: validation was
+ * green and Rivet's own reviewer still says the patch is wrong, so completing
+ * the job would make review decorative and would open a pull request the
+ * reviewer rejected. A retry would spend another set of loops to reach the same
+ * verdict.
+ *
+ * The counts ride along for the same reason `CheckpointRestoreFailedError`
+ * carries its argv: the event that precedes the throw is structured, but
+ * `failure_reason` is written from this error, and a rejection that says how
+ * many findings over how many loops is attributable where a bare sentence is
+ * not. The findings themselves stay in the durable `review_report` artifact,
+ * which is readable on the failed job.
+ */
+export class ReviewerRejectionError extends TerminalJobError {
+  readonly blockingCount: number;
+  readonly reviewLoops: number;
+  readonly maxReviewLoops: number;
+
+  constructor(
+    message: string,
+    details: { blockingCount: number; reviewLoops: number; maxReviewLoops: number },
+    options?: { cause?: unknown },
+  ) {
+    super(message, "reviewer_rejection", options);
+    this.blockingCount = details.blockingCount;
+    this.reviewLoops = details.reviewLoops;
+    this.maxReviewLoops = details.maxReviewLoops;
+  }
+}
+
 /** The categories this layer raises, for the tests that prove the table in the docs. */
 export const AGENT_FAILURE_CATEGORIES = [
   "agent_unavailable",
   "agent_failed",
   "plan_not_produced",
+  "review_not_produced",
+  "reviewer_rejection",
 ] as const satisfies readonly FailureCategory[];

@@ -16,6 +16,11 @@ import {
 } from "./failure";
 
 import {
+  PlanNotProducedError,
+  ReviewerRejectionError,
+  ReviewNotProducedError,
+} from "../agent/errors";
+import {
   CommandTimedOutError,
   DependencyInstallFailedError,
   OutOfMemoryError,
@@ -91,6 +96,60 @@ describe("validation failure classification", () => {
     // container and another bill to find out.
     expect(classify(error)).toBe("terminal");
     expect(failureCategoryFor(error)).toBe(category);
+  });
+});
+
+describe("review failure classification", () => {
+  it("classifies a missing verdict as terminal, exactly as a missing plan is", () => {
+    // A session that never submitted produced nothing durable, and a second
+    // attempt asks the same model the same question. The pairing with
+    // PlanNotProducedError is the assertion: treating a missing verdict as an
+    // approval is the failure this category exists to make impossible.
+    expect(classify(new PlanNotProducedError("no plan"))).toBe("terminal");
+    expect(failureCategoryFor(new PlanNotProducedError("no plan"))).toBe("plan_not_produced");
+
+    const error = new ReviewNotProducedError("the reviewer never called submit_review");
+    expect(classify(error)).toBe("terminal");
+    expect(failureCategoryFor(error)).toBe("review_not_produced");
+  });
+
+  it("classifies an exhausted review loop as terminal", () => {
+    // Retrying would spend another set of loops to reach the same verdict, and
+    // completing the job anyway would make review decorative.
+    const error = new ReviewerRejectionError("still blocking after 2 revisions", {
+      blockingCount: 3,
+      reviewLoops: 2,
+      maxReviewLoops: 2,
+    });
+
+    expect(classify(error)).toBe("terminal");
+    expect(failureCategoryFor(error)).toBe("reviewer_rejection");
+  });
+
+  it("carries the counts a rejection has to be attributable by", () => {
+    const error = new ReviewerRejectionError("rejected", {
+      blockingCount: 3,
+      reviewLoops: 2,
+      maxReviewLoops: 2,
+    });
+
+    expect(error.name).toBe("ReviewerRejectionError");
+    expect(error.blockingCount).toBe(3);
+    expect(error.reviewLoops).toBe(2);
+    expect(error.maxReviewLoops).toBe(2);
+    expect(describeError(error)).toBe("ReviewerRejectionError: rejected");
+  });
+
+  it("keeps the underlying cause on both", () => {
+    const cause = new Error("session ended");
+    expect(new ReviewNotProducedError("no verdict", { cause }).cause).toBe(cause);
+    expect(
+      new ReviewerRejectionError(
+        "rejected",
+        { blockingCount: 1, reviewLoops: 1, maxReviewLoops: 1 },
+        { cause },
+      ).cause,
+    ).toBe(cause);
   });
 });
 

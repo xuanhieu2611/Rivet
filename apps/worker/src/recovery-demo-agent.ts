@@ -85,9 +85,15 @@ class RecoveryDemoAgent implements CodingAgent {
     if (tools.role === "planner") {
       return Promise.resolve(new PlannerSession(spec, tools));
     }
-    return Promise.resolve(
-      new ImplementerSession(spec, tools, spec.context.includes(RECOVERY_MARKER)),
-    );
+    if (tools.role === "implementer") {
+      return Promise.resolve(
+        new ImplementerSession(spec, tools, spec.context.includes(RECOVERY_MARKER)),
+      );
+    }
+    // The demo proves crash recovery, not review, so it plays no reviewer
+    // session. Refusing loudly beats a session that returns nothing and looks
+    // like a reviewer with no findings.
+    return Promise.reject(new Error(`The recovery demo agent has no ${tools.role} session.`));
   }
 }
 

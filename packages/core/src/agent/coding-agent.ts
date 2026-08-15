@@ -33,7 +33,7 @@ import type { RecordedCommand } from "../pipeline/phase-context";
  * a forgotten ceiling is a session that runs until someone notices the bill.
  * `apps/worker` reads these from the environment and passes them in.
  */
-export const CODING_AGENT_ROLES = ["planner", "implementer"] as const;
+export const CODING_AGENT_ROLES = ["planner", "implementer", "reviewer"] as const;
 export type CodingAgentRole = (typeof CODING_AGENT_ROLES)[number];
 
 export interface CodingAgentSpec {
@@ -223,8 +223,37 @@ export interface ImplementerAgentToolbox {
   exec(input: AgentExecInput): Promise<RecordedCommand>;
 }
 
+/**
+ * The read-only capabilities of a review session.
+ *
+ * The planner's set with `submitPlan` swapped for `submitReview`, and the
+ * absence of a shell is the whole of the read-only claim. A shell can write, so
+ * handing the reviewer one would turn "read-only" from a property the adapter
+ * asserts into a sentence in a prompt, and it would let the session dirty the
+ * very diff it is judging - a diff that validation has already run against, so
+ * a reviewer-authored edit would reach `finalizing` having been validated by
+ * nothing.
+ *
+ * The reviewer does not run tests, and it does not need to: the checks ran
+ * before it and it is handed the parsed report. Re-running the suite inside the
+ * review session would buy a second opinion on a deterministic fact and pay for
+ * it in container minutes.
+ *
+ * `submitReview` takes `unknown` for the same reason `submitPlan` does. The
+ * value comes from a model, so it is validated by the phase against the review
+ * report schema, and the adapter reports a rejection back to the session as a
+ * tool error the model can correct on its next turn.
+ */
+export interface ReviewerAgentToolbox {
+  readonly role: "reviewer";
+  listFiles(signal: AbortSignal): Promise<string>;
+  readFile(path: string, signal: AbortSignal): Promise<AgentFileRead>;
+  searchText(query: string, signal: AbortSignal): Promise<string>;
+  submitReview(value: unknown, signal: AbortSignal): Promise<void>;
+}
+
 /** The role-specific capability boundary passed to an adapter. */
-export type AgentToolbox = PlannerAgentToolbox | ImplementerAgentToolbox;
+export type AgentToolbox = PlannerAgentToolbox | ImplementerAgentToolbox | ReviewerAgentToolbox;
 
 export interface AgentFileRead {
   content: string;
