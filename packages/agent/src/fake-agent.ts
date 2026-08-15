@@ -26,7 +26,7 @@ import type {
 
 export interface ScriptedSession {
   /** Yielded in order, before the script's own ending. */
-  events: CodingAgentEvent[];
+  events?: CodingAgentEvent[];
   /** A valid plan submitted automatically when this is used for a planner. */
   plan?: ImplementationPlan | null;
   /**
@@ -224,7 +224,7 @@ export class FakeCodingAgentSession implements CodingAgentSession {
 
     let turns = 0;
     let usage = emptyUsage();
-    for (const event of this.script.events) {
+    for (const event of this.script.events ?? []) {
       if (this.script.delayMs) await pause(this.script.delayMs, signal);
       signal.throwIfAborted();
       if (event.type === "turn_started") turns += 1;

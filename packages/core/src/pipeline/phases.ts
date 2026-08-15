@@ -8,6 +8,8 @@ import { implementingPhase } from "./implementing-phase";
 import type { PhaseContext } from "./phase-context";
 import { planningPhase } from "./planning-phase";
 import { provisioningPhase } from "./provisioning-phase";
+import { revisingPhase } from "./revising-phase";
+import { reviewingPhase, type ReviewCyclePhases } from "./reviewing-phase";
 import type { PhaseDirective } from "./run-pipeline";
 import { validationPhase } from "./validation-phase";
 
@@ -67,6 +69,20 @@ export interface Phase {
    * is `undefined` - "carry on with the queue". See `run-pipeline.ts`.
    */
   run?: (ctx: PhaseContext) => Promise<PhaseDirective>;
+}
+
+/**
+ * A pipeline walk plus phases that may only be reached through a directive.
+ *
+ * It remains an array so existing callers can inspect and pass the ordinary
+ * phase walk unchanged. The non-enumerable metadata is what lets the worker
+ * hand `revising` to `runPipeline` without putting it in `PHASE_TEMPLATE`.
+ * `phases` is an explicit object-style alias for callers that want the
+ * template and directive set as named values.
+ */
+export interface PhasePipeline extends ReadonlyArray<Phase> {
+  readonly phases: readonly Phase[];
+  readonly directivePhases: readonly Phase[];
 }
 
 /**
@@ -197,8 +213,11 @@ const PHASE_TEMPLATE: readonly Phase[] = [
  * selecting this one is a decision someone made and can be refused in
  * production.
  */
-export function simulatedPipeline(): readonly Phase[] {
-  return PHASE_TEMPLATE.map((phase) => ({ ...phase }));
+export function simulatedPipeline(): PhasePipeline {
+  return withDirectivePhases(
+    PHASE_TEMPLATE.map((phase) => ({ ...phase })),
+    [],
+  );
 }
 
 /**
@@ -207,11 +226,12 @@ export function simulatedPipeline(): readonly Phase[] {
  * `provisioning` creates a container, clones the repository and installs its
  * dependencies; `analyzing` runs the repository's own suite and records the
  * baseline; a configured agent makes `planning` run a dedicated read-only
- * planner, `implementing` run a coding session, `testing` judge what it did and
- * `finalizing` record what it said and what the run came to. `reviewing` still
- * sleeps, and there is nothing clever about that sleep in the meantime. Without
- * an agent, planning, implementation, validation and finalization remain
- * simulated so the infrastructure-free worker path stays usable.
+ * planner, `implementing` run a coding session, `testing` judge what it did,
+ * `reviewing` run an independent verdict, and `finalizing` record what it said
+ * and what the run came to. A blocking review reaches `revising` through the
+ * directive metadata rather than through the ordinary template. Without an
+ * agent, planning, implementation, validation and finalization remain simulated
+ * so the infrastructure-free worker path stays usable.
  *
  * The baseline is wired to `analyzing` rather than `testing` because that is
  * what it was always for. PRD §11 C asks whether the repository was healthy
@@ -241,24 +261,74 @@ export function simulatedPipeline(): readonly Phase[] {
  * `NODE_ENV=production` - a worker that cannot write code is not a worker that
  * should be judging code.
  */
-export function buildPipeline(options: PipelineOptions): readonly Phase[] {
+export function buildPipeline(options: PipelineOptions): PhasePipeline {
+  const phases = PHASE_TEMPLATE.map((phase) => ({ ...phase }));
   const bodies: Partial<Record<JobStatus, (ctx: PhaseContext) => Promise<PhaseDirective>>> = {
     provisioning: provisioningPhase(options),
     analyzing: baselinePhase(options),
-    ...(options.agent
-      ? {
-          planning: planningPhase(options.agent, options),
-          implementing: implementingPhase(options.agent, options),
-          testing: validationPhase(options),
-          finalizing: finalizingPhase(),
-        }
-      : {}),
   };
+  let directivePhases: readonly Phase[] = [];
 
-  return PHASE_TEMPLATE.map((phase) => {
+  if (options.agent) {
+    bodies.planning = planningPhase(options.agent, options);
+    bodies.implementing = implementingPhase(options.agent, options);
+    bodies.testing = validationPhase(options);
+    bodies.finalizing = finalizingPhase();
+
+    const reviewing = phaseForStatus(phases, "reviewing");
+    const testing = phaseForStatus(phases, "testing");
+    const revising: Phase = {
+      status: "revising",
+      label: "Revise change",
+      durationMs: 5_000,
+      recovery: "checkpoint",
+      run: revisingPhase(options.agent, options),
+    };
+    const cycle: ReviewCyclePhases = { revising, testing, reviewing };
+    bodies.reviewing = reviewingPhase(options.agent, options, cycle);
+    directivePhases = [revising];
+  }
+
+  for (const phase of phases) {
     const run = bodies[phase.status];
-    return run ? { ...phase, run } : { ...phase };
+    if (run) phase.run = run;
+  }
+
+  return withDirectivePhases(phases, directivePhases);
+}
+
+/** Reads the optional directive metadata without requiring every test pipeline to carry it. */
+export function directivePhasesFor(phases: readonly Phase[]): readonly Phase[] {
+  const pipeline = phases as readonly Phase[] & {
+    readonly directivePhases?: readonly Phase[];
+  };
+  return pipeline.directivePhases ?? [];
+}
+
+function withDirectivePhases(
+  phases: readonly Phase[],
+  directivePhases: readonly Phase[],
+): PhasePipeline {
+  const pipeline = [...phases] as unknown as PhasePipeline;
+  Object.defineProperty(pipeline, "phases", {
+    configurable: false,
+    enumerable: false,
+    value: pipeline,
+    writable: false,
   });
+  Object.defineProperty(pipeline, "directivePhases", {
+    configurable: false,
+    enumerable: false,
+    value: [...directivePhases],
+    writable: false,
+  });
+  return pipeline;
+}
+
+function phaseForStatus(phases: readonly Phase[], status: JobStatus): Phase {
+  const phase = phases.find((candidate) => candidate.status === status);
+  if (!phase) throw new Error(`Pipeline template is missing ${status}.`);
+  return phase;
 }
 
 /** The status a pipeline leaves a job in when every phase succeeded. */

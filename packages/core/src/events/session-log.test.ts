@@ -15,6 +15,18 @@ const started = (): MessageEventLike => ({
   type: "agent.session_started",
   message: "Started deepseek/deepseek-v4-flash on openrouter.",
 });
+type AgentRole = NonNullable<MessageEventLike["agentRole"]>;
+
+const roleStarted = (agentRole: AgentRole): MessageEventLike => ({
+  type: "agent.session_started",
+  message: "Started a session.",
+  agentRole,
+});
+const roleSaid = (message: string, agentRole: AgentRole): MessageEventLike => ({
+  type: "agent.message",
+  message,
+  agentRole,
+});
 
 describe("summaryFrom", () => {
   it("reads back the last thing the model said", () => {
@@ -82,5 +94,34 @@ describe("summaryFrom", () => {
     expect(summaryFrom([started(), said("Here is my plan."), started(), said("Fixed it.")])).toBe(
       "Fixed it.",
     );
+  });
+
+  it("keeps the implementation summary when a reviewer runs afterward", () => {
+    expect(
+      summaryFrom(
+        [
+          roleStarted("planner"),
+          roleSaid("Here is my plan.", "planner"),
+          roleStarted("implementer"),
+          roleSaid("Fixed the order total.", "implementer"),
+          roleStarted("reviewer"),
+          roleSaid("The patch needs one boundary fix.", "reviewer"),
+        ],
+        "implementer",
+      ),
+    ).toBe("Fixed the order total.");
+  });
+
+  it("does not inherit an older implementation summary after a silent retry", () => {
+    expect(
+      summaryFrom(
+        [
+          roleStarted("implementer"),
+          roleSaid("First attempt.", "implementer"),
+          roleStarted("implementer"),
+        ],
+        "implementer",
+      ),
+    ).toBeNull();
   });
 });

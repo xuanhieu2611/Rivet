@@ -17,7 +17,7 @@ import type { BaselineOutcome } from "../events/baseline-log";
 import { remainingJobMinutes } from "../jobs/deadline";
 import { truncate } from "../sandbox/command-log";
 import { splitLines } from "./command-output";
-import { runAgentSession } from "./agent-session";
+import { runAgentSession, type SessionAccounting } from "./agent-session";
 import type { PhaseContext } from "./phase-context";
 import type { AgentOptions, PipelineOptions } from "./phases";
 import { detectPackageManager, type ProjectPlan, REPO_DIRNAME } from "./project";
@@ -98,63 +98,84 @@ export function implementingPhase(
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
 
   return async function implement(ctx: PhaseContext): Promise<PhaseDirective> {
-    const sandbox = ctx.sandboxes.require();
-
-    const spec: CodingAgentSpec = {
-      role: "implementer",
-      workdir: repoDir,
-      task: { title: ctx.job.title, description: ctx.job.description },
-      context: await buildAgentContext(ctx, options, repoDir, "implementer", agent),
-      sessionTimeoutMs: agent.sessionTimeoutMs,
-      commandTimeoutMs: options.commandTimeoutMs,
-      previewMaxBytes: agent.previewMaxBytes,
-      limits: {
-        maxTurns: agent.maxTurns,
-        maxToolCalls: ctx.job.maxToolCalls,
-        maxModelCalls: ctx.job.maxModelCalls,
-        // `numeric` comes back from Postgres as a string, and `Number("")` is
-        // zero rather than NaN - which would be a budget of nothing rather than
-        // an absent one. Parsed explicitly so an unusable value becomes null,
-        // which the enforcement below reports rather than silently applies.
-        maxCostUsd: parseCostCeiling(ctx.job.maxCostUsd),
-      },
-    };
-
-    /**
-     * Every capability the model has, and there are exactly three.
-     *
-     * `exec` is deliberately the phase's own, which is the whole reason the
-     * agent's commands are recorded like everyone else's. The two file methods
-     * come straight off the sandbox, bounded by configuration rather than by
-     * anything in this package.
-     */
-    const toolbox: AgentToolbox = {
-      role: "implementer",
-      readFile: (path, signal) => sandbox.getFile(path, { maxBytes: agent.fileMaxBytes }, signal),
-      writeFile: (path, content, signal) => sandbox.putFile(path, content, signal),
-      exec: (input) => ctx.exec({ argv: input.argv, cwd: input.cwd, timeoutMs: input.timeoutMs }),
-    };
-
-    const state = await runAgentSession(agent, spec, toolbox, ctx);
-
-    // Said out loud because a session that ended on a tool call leaves no
-    // summary at all, and that is a property of the run worth being able to see
-    // before `finalizing` reports it. Stage 6 turns this into the
-    // `implementation_summary` artifact; until then it is a log line rather than
-    // a fact quietly held in memory and never mentioned.
-    ctx.log.info(
-      {
-        hasSummary: state.lastAssistantMessage !== undefined,
-        summaryBytes: state.lastAssistantMessage
-          ? Buffer.byteLength(state.lastAssistantMessage, "utf8")
-          : 0,
-      },
-      "the coding session finished",
-    );
+    const context = await buildAgentContext(ctx, options, repoDir, "implementer", agent);
+    await runImplementerSession(agent, options, ctx, context);
 
     // Nothing to ask the runner for: the queue carries on. See `PhaseDirective`.
     return undefined;
   };
+}
+
+/**
+ * Runs an implementer-role session with the sandbox-backed coding capabilities.
+ *
+ * `implementing` and `revising` are different workflow phases, but they are
+ * deliberately the same coding capability. Keeping this plumbing here means a
+ * revision gets the same tool boundary, usage accounting, budget enforcement,
+ * session cleanup and turn checkpoints as the first implementation session.
+ */
+export async function runImplementerSession(
+  agent: AgentOptions,
+  options: PipelineOptions,
+  ctx: PhaseContext,
+  context: string,
+): Promise<SessionAccounting> {
+  const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
+  const sandbox = ctx.sandboxes.require();
+
+  const spec: CodingAgentSpec = {
+    role: "implementer",
+    workdir: repoDir,
+    task: { title: ctx.job.title, description: ctx.job.description },
+    context,
+    sessionTimeoutMs: agent.sessionTimeoutMs,
+    commandTimeoutMs: options.commandTimeoutMs,
+    previewMaxBytes: agent.previewMaxBytes,
+    limits: {
+      maxTurns: agent.maxTurns,
+      maxToolCalls: ctx.job.maxToolCalls,
+      maxModelCalls: ctx.job.maxModelCalls,
+      // `numeric` comes back from Postgres as a string, and `Number("")` is
+      // zero rather than NaN - which would be a budget of nothing rather than
+      // an absent one. Parsed explicitly so an unusable value becomes null,
+      // which the enforcement below reports rather than silently applies.
+      maxCostUsd: parseCostCeiling(ctx.job.maxCostUsd),
+    },
+  };
+
+  /**
+   * Every capability the model has, and there are exactly three.
+   *
+   * `exec` is deliberately the phase's own, which is the whole reason the
+   * agent's commands are recorded like everyone else's. The two file methods
+   * come straight off the sandbox, bounded by configuration rather than by
+   * anything in this package.
+   */
+  const toolbox: AgentToolbox = {
+    role: "implementer",
+    readFile: (path, signal) => sandbox.getFile(path, { maxBytes: agent.fileMaxBytes }, signal),
+    writeFile: (path, content, signal) => sandbox.putFile(path, content, signal),
+    exec: (input) => ctx.exec({ argv: input.argv, cwd: input.cwd, timeoutMs: input.timeoutMs }),
+  };
+
+  const state = await runAgentSession(agent, spec, toolbox, ctx);
+
+  // Said out loud because a session that ended on a tool call leaves no
+  // summary at all, and that is a property of the run worth being able to see
+  // before `finalizing` reports it. Stage 6 turns this into the
+  // `implementation_summary` artifact; until then it is a log line rather than
+  // a fact quietly held in memory and never mentioned.
+  ctx.log.info(
+    {
+      hasSummary: state.lastAssistantMessage !== undefined,
+      summaryBytes: state.lastAssistantMessage
+        ? Buffer.byteLength(state.lastAssistantMessage, "utf8")
+        : 0,
+    },
+    "the coding session finished",
+  );
+
+  return state;
 }
 
 /**

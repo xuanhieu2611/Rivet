@@ -118,8 +118,11 @@ describe("checkpoint state and phase mapping", () => {
     expect(nextPhaseAfter("implementing")).toBe("testing");
     expect(nextPhaseAfter("finalizing")).toBeNull();
     expect(resumePhaseForCheckpoint("agent_turn")).toBe("implementing");
+    expect(resumePhaseForCheckpoint("agent_turn", null, "revising")).toBe("revising");
     expect(resumePhaseForCheckpoint("phase_boundary", "planning")).toBe("implementing");
+    expect(resumePhaseForCheckpoint("phase_boundary", "reviewing", "revising")).toBe("revising");
     expect(isLegalCheckpointResume("phase_boundary", "testing", "reviewing")).toBe(true);
+    expect(isLegalCheckpointResume("phase_boundary", "reviewing", "revising")).toBe(true);
     expect(isLegalCheckpointResume("phase_boundary", "testing", "planning")).toBe(false);
   });
 });

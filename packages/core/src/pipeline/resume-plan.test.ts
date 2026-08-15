@@ -16,6 +16,12 @@ import { BOUNDARY_CHECKPOINT_PHASES, isBoundaryCheckpointPhase, planResume } fro
  */
 
 const PHASES = simulatedPipeline();
+const REVISING: Phase = {
+  status: "revising",
+  label: "Revise change",
+  durationMs: 0,
+  recovery: "checkpoint",
+};
 
 const statuses = (phases: readonly Phase[]): JobStatus[] => phases.map((phase) => phase.status);
 
@@ -108,6 +114,42 @@ describe("planResume", () => {
     expect(plan.kind === "checkpoint" && plan.resumePhase).toBe("implementing");
   });
 
+  it("inserts a directive-only revising phase when recovery resumes there", () => {
+    const plan = planResume({
+      phases: PHASES,
+      directivePhases: [REVISING],
+      checkpoint: checkpoint({
+        kind: "phase_boundary",
+        completedPhase: "reviewing",
+        resumePhase: "revising",
+        agentTurn: null,
+      }),
+    });
+
+    expect(statuses(plan.phases)).toEqual([
+      "provisioning",
+      "revising",
+      "testing",
+      "reviewing",
+      "finalizing",
+    ]);
+  });
+
+  it("does not insert a skipped revision into an ordinary recovery suffix", () => {
+    const plan = planResume({
+      phases: PHASES,
+      directivePhases: [REVISING],
+      checkpoint: checkpoint({
+        kind: "phase_boundary",
+        completedPhase: "testing",
+        resumePhase: "reviewing",
+        agentTurn: null,
+      }),
+    });
+
+    expect(statuses(plan.phases)).toEqual(["provisioning", "reviewing", "finalizing"]);
+  });
+
   it("refuses a cursor this pipeline cannot honour rather than starting over", () => {
     // Silently falling back to the fresh walk would discard acknowledged work
     // while claiming to recover it, which is the one outcome M6 exists to
@@ -129,6 +171,22 @@ describe("planResume", () => {
     expect(() =>
       planResume({ phases: PHASES, checkpoint: checkpoint({ resumePhase: "provisioning" }) }),
     ).toThrow(CheckpointCorruptError);
+  });
+
+  it("resumes an interrupted revision turn at revising", () => {
+    const plan = planResume({
+      phases: PHASES,
+      directivePhases: [REVISING],
+      checkpoint: checkpoint({ kind: "agent_turn", resumePhase: "revising" }),
+    });
+
+    expect(statuses(plan.phases)).toEqual([
+      "provisioning",
+      "revising",
+      "testing",
+      "reviewing",
+      "finalizing",
+    ]);
   });
 
   it("refuses a pipeline that does not start by provisioning", () => {

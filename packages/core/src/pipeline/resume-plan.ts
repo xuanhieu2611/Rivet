@@ -26,6 +26,9 @@ import type { Phase } from "./phases";
  *
  * checkpoint says resume testing
  *   -> provisioning, testing, reviewing, finalizing
+ *
+ * checkpoint says resume revising
+ *   -> provisioning, revising, testing, reviewing, finalizing
  * ```
  */
 export type ResumePlan =
@@ -41,6 +44,8 @@ export type ResumePlan =
 export interface ResumePlanInput {
   /** The pipeline this worker would run from scratch. */
   phases: readonly Phase[];
+  /** Phases reachable only through a runtime directive. */
+  directivePhases?: readonly Phase[];
   /** The newest durable checkpoint, or null on a first attempt. */
   checkpoint: JobCheckpoint | null;
 }
@@ -78,7 +83,15 @@ export function planResume(input: ResumePlanInput): ResumePlan {
     );
   }
 
-  const index = phases.findIndex((phase) => phase.status === resumePhase);
+  const attachedDirectivePhases = (
+    phases as readonly Phase[] & { readonly directivePhases?: readonly Phase[] }
+  ).directivePhases;
+  const ordered = phaseOrder(
+    phases,
+    input.directivePhases ?? attachedDirectivePhases ?? [],
+    resumePhase,
+  );
+  const index = ordered.findIndex((phase) => phase.status === resumePhase);
   if (index === -1) {
     throw new CheckpointCorruptError(
       `Checkpoint ${checkpoint.sequence} resumes at ${resumePhase}, which this pipeline does not run.`,
@@ -92,8 +105,41 @@ export function planResume(input: ResumePlanInput): ResumePlan {
     resumePhase,
     // The entry phase from the original list rather than a copy, so a pipeline
     // built with fault injection resumes into the same instrumented bodies.
-    phases: [entry, ...phases.slice(index)],
+    phases: [entry, ...ordered.slice(index)],
   };
+}
+
+/**
+ * Places directive-only phases at the point their cycle enters the base walk.
+ *
+ * M8 currently has one such phase: `revising` runs before `testing`. Keeping
+ * this ordering here means a checkpoint can name that phase without putting a
+ * skipped copy into the ordinary template or teaching the processor about an
+ * agent's workflow.
+ */
+function phaseOrder(
+  phases: readonly Phase[],
+  directivePhases: readonly Phase[],
+  resumePhase: JobStatus,
+): readonly Phase[] {
+  const ordered = [...phases];
+
+  for (const directive of directivePhases) {
+    // Directive-only phases are not part of an ordinary recovered suffix. They
+    // are included only when the durable cursor explicitly says to resume at
+    // that phase; otherwise the next directive will insert them at runtime.
+    if (
+      directive.status !== resumePhase ||
+      ordered.some((phase) => phase === directive || phase.status === directive.status)
+    ) {
+      continue;
+    }
+
+    const insertBefore = ordered.findIndex((phase) => phase.status === "testing");
+    ordered.splice(insertBefore === -1 ? ordered.length : insertBefore, 0, directive);
+  }
+
+  return ordered;
 }
 
 /**

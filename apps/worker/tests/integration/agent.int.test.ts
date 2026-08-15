@@ -11,7 +11,12 @@ import {
   type AgentOptions,
   type PipelineOptions,
 } from "@rivet/core";
-import { FakeCodingAgent, type ScriptedSession } from "@rivet/agent";
+import {
+  approvingReview,
+  FakeCodingAgent,
+  revisingReview,
+  type ScriptedSession,
+} from "@rivet/agent";
 import { FakeSandboxProvider, type ScriptedCommand } from "@rivet/sandbox";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -279,6 +284,57 @@ describe("coding-agent execution through the worker", () => {
     expect(sandbox.sandboxes.every((entry) => entry.destroyed)).toBe(true);
   });
 
+  it("runs one durable review revision before approving the corrected patch", async () => {
+    const sandbox = fixtureProvider();
+    const agent = new FakeCodingAgent({
+      script: [successfulSession("implementation-session"), successfulSession("revision-session")],
+      reviewerScript: [{ review: revisingReview() }, { review: approvingReview() }],
+    });
+    const job = await createTestJob();
+    await requestJobRun(job.id, queue.queue);
+
+    worker = startTestWorker({ queue: queue.queue, phases: agentPipeline(sandbox, agent) });
+
+    const completed = await waitForStatus(job.id, "completed");
+    const events = await readEvents(job.id);
+    const phases = events
+      .filter((event) => event.type === "phase.started")
+      .map((event) => event.data?.phase);
+
+    expect(phases).toEqual([
+      "Provision sandbox",
+      "Establish test baseline",
+      "Create plan",
+      "Implement change",
+      "Validate change",
+      "Review patch",
+      "Revise change",
+      "Validate change",
+      "Review patch",
+      "Finalize",
+    ]);
+    expect(completed.reviewLoops).toBe(1);
+    expect(completed.reviewDecision).toBe("approve");
+    expect((await eventTypes(job.id)).filter((type) => type === "review.recorded")).toHaveLength(2);
+    expect(
+      (await eventTypes(job.id)).filter((type) => type === "validation.recorded"),
+    ).toHaveLength(2);
+
+    const reviewCheckpoint = events.find(
+      (event) => event.type === "checkpoint.created" && event.data?.completedPhase === "reviewing",
+    );
+    expect(reviewCheckpoint?.data).toMatchObject({ resumePhase: "revising" });
+    const revisionCheckpoint = events.find(
+      (event) => event.type === "checkpoint.created" && event.data?.completedPhase === "revising",
+    );
+    expect(revisionCheckpoint?.data).toMatchObject({ resumePhase: "testing" });
+
+    const reviewArtifacts = (await listArtifacts(job.id)).filter(
+      (artifact) => artifact.type === "review_report",
+    );
+    expect(reviewArtifacts).toHaveLength(2);
+  });
+
   it("cancels a hanging session within one heartbeat and records an aborted ending", async () => {
     const sandbox = fixtureProvider();
     const agent = new FakeCodingAgent({ script: [{ events: [sessionStarted()], hang: true }] });
@@ -375,14 +431,15 @@ describe("coding-agent execution through the worker", () => {
 
     const completed = await waitForStatus(job.id, "completed");
     expect(completed.attemptCount).toBe(2);
-    // Three sessions, not four: the first attempt planned before its
+    // Four sessions, not five: the first attempt planned before its
     // implementation session hit the 429, and that plan was acknowledged by a
     // phase-boundary checkpoint. The retry resumes at `implementing` and spends
-    // nothing on a second planner.
+    // nothing on a second planner before the final reviewer.
     expect(agent.starts.map((start) => start.role)).toEqual([
       "planner",
       "implementer",
       "implementer",
+      "reviewer",
     ]);
     expect(
       (await eventTypes(job.id)).filter((type) => type === "job.retry_scheduled"),
@@ -552,15 +609,16 @@ describe("validation through the worker", () => {
         (event) => event.type === "validation.check_recorded" && event.data?.check === "test",
       )?.data,
     ).toMatchObject({ checkOutcome: "verified" });
-    // Six, in the order the run produced them: analyzing keeps its report,
-    // planning persists the plan, testing keeps the diff and report, and
-    // finalizing keeps the session's own account.
+    // Seven, in the order the run produced them: analyzing keeps its report,
+    // planning persists the plan, testing keeps the diff and report, reviewing
+    // keeps its verdict, and finalizing keeps the session's own account.
     expect(artifacts.map((artifact) => artifact.type)).toEqual([
       "baseline_report",
       "implementation_plan",
       "diff",
       "diff_stat",
       "validation_report",
+      "review_report",
       "implementation_summary",
     ]);
     const diff = artifacts.find((artifact) => artifact.type === "diff");
@@ -690,6 +748,7 @@ describe("validation through the worker", () => {
       "diff",
       "diff_stat",
       "validation_report",
+      "review_report",
       "implementation_summary",
     ]);
   });

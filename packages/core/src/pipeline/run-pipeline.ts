@@ -78,7 +78,7 @@ export interface PipelineDeps {
   onPhaseStart: (phase: Phase) => Promise<void>;
 
   /** Called after the phase's work, with how long it really took. */
-  onPhaseComplete: (phase: Phase, elapsedMs: number) => Promise<void>;
+  onPhaseComplete: (phase: Phase, elapsedMs: number, directive: PhaseDirective) => Promise<void>;
 
   /**
    * Fault injection. Returns an error to throw, or nothing to proceed.
@@ -122,8 +122,16 @@ export async function runPipeline(deps: PipelineDeps): Promise<void> {
   const now = deps.now ?? Date.now;
 
   // Identity, not status: see `directivePhases`. Built once, because the set of
-  // phases a worker was configured with cannot change mid-run.
-  const known = new Set<Phase>([...deps.phases, ...(deps.directivePhases ?? [])]);
+  // phases a worker was configured with cannot change mid-run. Pipelines built
+  // by `buildPipeline` carry the same metadata on their array, so direct callers
+  // do not have to unpack it merely to run the queue.
+  const attachedDirectivePhases = (
+    deps.phases as readonly Phase[] & { readonly directivePhases?: readonly Phase[] }
+  ).directivePhases;
+  const known = new Set<Phase>([
+    ...deps.phases,
+    ...(deps.directivePhases ?? attachedDirectivePhases ?? []),
+  ]);
   const queue: Phase[] = [...deps.phases];
 
   for (let phase = queue.shift(); phase !== undefined; phase = queue.shift()) {
@@ -160,7 +168,7 @@ export async function runPipeline(deps: PipelineDeps): Promise<void> {
 
     deps.signal.throwIfAborted();
 
-    await deps.onPhaseComplete(phase, now() - startedAt);
+    await deps.onPhaseComplete(phase, now() - startedAt, directive);
 
     // Ahead of the remaining queue, never appended to the end of it - which is
     // what keeps `finalPhaseStatus()` true: `finalizing` is still the last thing

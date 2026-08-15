@@ -233,12 +233,17 @@ export class SessionAccounting {
         });
 
         // Planner turns contribute to the job's cumulative counter, but only
-        // implementation turns produce workspace checkpoints. A planner has
+        // implementer-role turns produce workspace checkpoints. A planner has
         // no writable workspace and its phase boundary is the durable handoff.
+        // The revising phase uses the same role and cursor, but its cursor must
+        // resume at revising rather than silently becoming a fresh implementing
+        // session after a crash.
         if (this.spec.role === "implementer") {
+          const resumePhase = this.ctx.phase.status === "revising" ? "revising" : "implementing";
           await this.ctx.checkpoint({
             kind: "agent_turn",
             agentTurn: this.cumulativeTurns,
+            resumePhase,
             repositoryDir: this.spec.workdir,
             state: { version: 1 },
           });

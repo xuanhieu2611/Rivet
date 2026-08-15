@@ -186,8 +186,17 @@ describe("buildPipeline", () => {
       "planning",
       "implementing",
       "testing",
+      "reviewing",
       "finalizing",
     ]);
+    expect(withAgent.map((phase) => phase.status)).not.toContain("revising");
+    expect(withAgent.directivePhases).toHaveLength(1);
+    expect(withAgent.directivePhases[0]).toMatchObject({
+      status: "revising",
+      label: "Revise change",
+      recovery: "checkpoint",
+    });
+    expect(typeof withAgent.directivePhases[0]?.run).toBe("function");
   });
 
   it("does not share phase objects with the simulated pipeline", () => {

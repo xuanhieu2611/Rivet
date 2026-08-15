@@ -31,14 +31,15 @@ export const ALLOWED_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
   // A reclaimed job still provisions - it has to create and verify an
   // environment before it can truthfully display a later phase - and then jumps
   // to the phase its newest checkpoint says is next. They are legal only after a
-  // lease-fenced `checkpoint.restored` record; `revising` is absent because no
-  // checkpoint kind resumes there.
+  // lease-fenced `checkpoint.restored` record. `revising` is included because a
+  // review loop can now be resumed there.
   provisioning: [
     "analyzing",
     "planning",
     "implementing",
     "testing",
     "reviewing",
+    "revising",
     "finalizing",
     "failed",
     "cancelled",
@@ -54,7 +55,17 @@ export const ALLOWED_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
   planning: ["implementing", "failed", "cancelled", "timed_out", "budget_exceeded", "queued"],
   implementing: ["testing", "failed", "cancelled", "timed_out", "budget_exceeded", "queued"],
   testing: ["reviewing", "implementing", "failed", "cancelled", "timed_out", "queued"],
-  reviewing: ["revising", "finalizing", "failed", "cancelled", "timed_out", "queued"],
+  // Reviewing is a model session too, so a cumulative budget breach needs a
+  // legal terminal edge just like planning and implementing.
+  reviewing: [
+    "revising",
+    "finalizing",
+    "failed",
+    "cancelled",
+    "timed_out",
+    "budget_exceeded",
+    "queued",
+  ],
   revising: ["testing", "failed", "cancelled", "timed_out", "budget_exceeded", "queued"],
   finalizing: ["completed", "failed", "cancelled", "timed_out", "queued"],
   // Terminal. No outgoing edges, by definition and by test.

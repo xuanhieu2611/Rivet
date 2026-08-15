@@ -124,9 +124,8 @@ export const CHECKPOINT_PATCH_COMPRESSION: CheckpointPatchCompression = "gzip";
 /**
  * The phase order used by the durable workflow cursor.
  *
- * `revising` is included even though the current pipeline does not enter it;
- * its legal edge already exists and the mapping should not need a rewrite when
- * the review loop becomes real.
+ * `revising` is included even though the base pipeline does not list it; it is
+ * reached through a review directive and must remain a legal recovery cursor.
  */
 export const CHECKPOINT_PHASE_ORDER = [
   "provisioning",
@@ -169,23 +168,39 @@ export const nextPhase = nextPhaseAfter;
 export function resumePhaseForCheckpoint(
   kind: CheckpointKind,
   completedPhase?: JobStatus | null,
+  requestedResumePhase?: JobStatus,
 ): JobStatus {
   if (kind === "agent_turn") {
     if (completedPhase !== undefined && completedPhase !== null) {
       throw new Error("An agent-turn checkpoint cannot complete a phase.");
     }
-    return "implementing";
+    if (requestedResumePhase === undefined) return "implementing";
+    if (requestedResumePhase !== "implementing" && requestedResumePhase !== "revising") {
+      throw new Error(
+        `An agent-turn checkpoint can resume only implementing or revising, not ${requestedResumePhase}.`,
+      );
+    }
+    return requestedResumePhase;
   }
 
   if (completedPhase === undefined || completedPhase === null) {
     throw new Error("A phase-boundary checkpoint must name its completed phase.");
   }
 
-  const resumePhase = nextPhaseAfter(completedPhase);
-  if (!resumePhase) {
+  const defaultResumePhase = nextPhaseAfter(completedPhase);
+  if (!defaultResumePhase) {
     throw new Error(`No resumable phase follows ${completedPhase}.`);
   }
-  return resumePhase;
+  if (requestedResumePhase === undefined) return defaultResumePhase;
+
+  const allowedResumePhases =
+    completedPhase === "reviewing" ? ["finalizing", "revising"] : [defaultResumePhase];
+  if (!allowedResumePhases.includes(requestedResumePhase)) {
+    throw new Error(
+      `A ${completedPhase} checkpoint can resume only ${allowedResumePhases.join(" or ")}, not ${requestedResumePhase}.`,
+    );
+  }
+  return requestedResumePhase;
 }
 
 /** Checks a stored or caller-supplied resume phase against the checkpoint kind. */
@@ -195,7 +210,7 @@ export function isLegalCheckpointResume(
   resumePhase: JobStatus,
 ): boolean {
   try {
-    return resumePhaseForCheckpoint(kind, completedPhase) === resumePhase;
+    return resumePhaseForCheckpoint(kind, completedPhase, resumePhase) === resumePhase;
   } catch {
     return false;
   }
@@ -310,7 +325,7 @@ export function toRestorableCheckpoint(
   const patchCompression = parsePatchCompression(row.patchCompression);
   const completedPhase = parseNullableStatus(row.completedPhase, "completed_phase");
   const resumePhase = parseStatus(row.resumePhase, "resume_phase");
-  const expectedResumePhase = safeResumePhase(kind, completedPhase);
+  const expectedResumePhase = safeResumePhase(kind, completedPhase, resumePhase);
 
   if (resumePhase !== expectedResumePhase) {
     throw new CheckpointCorruptError(
@@ -439,7 +454,7 @@ export async function recordCheckpoint(
     input.patchCompression ?? CHECKPOINT_PATCH_COMPRESSION,
   );
   const completedPhase = input.completedPhase ?? null;
-  const resumePhase = safeResumePhase(kind, completedPhase);
+  const resumePhase = safeResumePhase(kind, completedPhase, input.resumePhase);
   assertCheckpointKindFields(kind, completedPhase, input.agentTurn ?? null);
   if (input.resumePhase !== undefined && input.resumePhase !== resumePhase) {
     throw new CheckpointCorruptError(
@@ -713,9 +728,13 @@ function parseNullableStatus(value: string | null, field: string): JobStatus | n
   return value === null ? null : parseStatus(value, field);
 }
 
-function safeResumePhase(kind: CheckpointKind, completedPhase: JobStatus | null): JobStatus {
+function safeResumePhase(
+  kind: CheckpointKind,
+  completedPhase: JobStatus | null,
+  requestedResumePhase?: JobStatus,
+): JobStatus {
   try {
-    return resumePhaseForCheckpoint(kind, completedPhase);
+    return resumePhaseForCheckpoint(kind, completedPhase, requestedResumePhase);
   } catch (error) {
     throw new CheckpointCorruptError(
       `Invalid ${kind} checkpoint phase mapping: ${describeError(error)}.`,

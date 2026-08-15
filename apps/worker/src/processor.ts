@@ -12,6 +12,8 @@ import {
   JobTimedOutError,
   type Phase,
   type PhaseContext,
+  type PhaseDirective,
+  directivePhasesFor,
   planResume,
   releaseJob,
   remainingJobMs,
@@ -97,6 +99,8 @@ export interface ProcessorDeps {
    * need a sandbox-backed pipeline.
    */
   phaseFactory?: (injection: FaultInjection) => readonly Phase[];
+  /** Directive-reachable phases for a custom phase array without metadata. */
+  directivePhases?: readonly Phase[];
   /**
    * Fault injection and the sleep that goes with it.
    *
@@ -118,6 +122,7 @@ export interface ProcessorDeps {
 export function createProcessor(deps: ProcessorDeps) {
   const { config, workerId, runs } = deps;
   const phases = deps.phases ?? simulatedPipeline();
+  const configuredDirectivePhases = deps.directivePhases ?? directivePhasesFor(phases);
   const faults: () => FaultInjection = deps.faults ?? (() => ({ sleep: abortableSleep }));
 
   return async function processMessage(job: Job<JobRunsMessage>, token?: string): Promise<void> {
@@ -229,6 +234,9 @@ export function createProcessor(deps: ProcessorDeps) {
       // Build after the try begins so a faulty per-run factory follows the same
       // cleanup path as every other phase failure.
       const runPhases = deps.phaseFactory?.(injection) ?? phases;
+      const directivePhases = directivePhasesFor(runPhases);
+      const runDirectivePhases =
+        directivePhases.length > 0 ? directivePhases : configuredDirectivePhases;
 
       // One factory for the whole run, shared by the phase bodies and by the
       // boundary capture below. It is not merely convenient: the factory
@@ -253,6 +261,7 @@ export function createProcessor(deps: ProcessorDeps) {
       const resume = await selectResumePlan({
         jobId,
         phases: runPhases,
+        directivePhases: runDirectivePhases,
         maxBytes: config.checkpointMaxBytes,
         log,
       });
@@ -270,6 +279,7 @@ export function createProcessor(deps: ProcessorDeps) {
 
       const pipeline = runPipeline({
         phases: resume.phases,
+        directivePhases: runDirectivePhases,
         signal: controller.signal,
         speed: config.pipelineSpeed,
         sleep: injection.sleep,
@@ -305,14 +315,14 @@ export function createProcessor(deps: ProcessorDeps) {
           currentStatus = phase.status;
         },
 
-        onPhaseComplete: async (phase, elapsedMs) => {
+        onPhaseComplete: async (phase, elapsedMs, directive) => {
           log.debug({ phase: phase.label, elapsedMs }, "phase complete");
 
           // The capture comes first, and the order is the acknowledgement. A
           // phase is not safely complete until the workspace it produced is
           // durable, so a crash between these two writes replays the phase
           // rather than skipping it on the strength of an event.
-          await captureBoundary(contextFor, phase, sandboxes, jobId, log);
+          await captureBoundary(contextFor, phase, directive, sandboxes, jobId, log);
 
           await appendEvent({
             jobId,
@@ -409,6 +419,7 @@ export function createProcessor(deps: ProcessorDeps) {
 interface ResumeSelection {
   jobId: string;
   phases: readonly Phase[];
+  directivePhases: readonly Phase[];
   maxBytes: number;
   log: Logger;
 }
@@ -427,10 +438,10 @@ interface ResumeSelection {
  * provisioning is its first phase, and it will refuse before reaching a second.
  */
 async function selectResumePlan(input: ResumeSelection): Promise<ResumePlan> {
-  const { jobId, phases, maxBytes, log } = input;
+  const { jobId, phases, directivePhases, maxBytes, log } = input;
   try {
     const checkpoint = await getLatestCheckpoint(jobId, { maxBytes });
-    return planResume({ phases, checkpoint });
+    return planResume({ phases, directivePhases, checkpoint });
   } catch (error) {
     log.warn(
       { err: error },
@@ -454,6 +465,7 @@ async function selectResumePlan(input: ResumeSelection): Promise<ResumePlan> {
 async function captureBoundary(
   contextFor: (phase: Phase) => PhaseContext,
   phase: Phase,
+  directive: PhaseDirective,
   sandboxes: SandboxHolder,
   jobId: string,
   log: Logger,
@@ -461,9 +473,20 @@ async function captureBoundary(
   if (!isBoundaryCheckpointPhase(phase.status)) return;
   if (!sandboxes.current) return;
 
+  // A blocking review is the one boundary whose next phase is chosen by the
+  // directive rather than by the ordinary template. Persisting `finalizing`
+  // here would let a crash during revision skip the very work the reviewer
+  // required.
+  const resumePhase =
+    phase.status === "reviewing" &&
+    directive?.kind === "cycle" &&
+    directive.phases[0]?.status === "revising"
+      ? "revising"
+      : undefined;
   const checkpoint = await contextFor(phase).checkpoint({
     kind: "phase_boundary",
     completedPhase: phase.status,
+    ...(resumePhase === undefined ? {} : { resumePhase }),
     state: { version: 1 },
   });
   log.debug(

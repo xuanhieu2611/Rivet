@@ -52,6 +52,7 @@ export * from "./pipeline/planning-phase";
 export * from "./pipeline/project";
 export * from "./pipeline/project-probe";
 export * from "./pipeline/provisioning-phase";
+export * from "./pipeline/revising-phase";
 export * from "./pipeline/reviewing-phase";
 export * from "./pipeline/resume-plan";
 export * from "./pipeline/run-pipeline";
