@@ -57,6 +57,14 @@ describe("serialized job artifacts", () => {
     expect(parseSerializedJobArtifact(serializeJobArtifact(stat))).toEqual(stat);
   });
 
+  it.each(["baseline_report", "validation_report"] as const)(
+    "round-trips the %s artifact vocabulary",
+    (type) => {
+      const artifact = { ...ARTIFACT, type };
+      expect(parseSerializedJobArtifact(serializeJobArtifact(artifact))).toEqual(artifact);
+    },
+  );
+
   it("drops content from a summary and still validates", () => {
     const { content: _content, ...summary } = ARTIFACT;
 

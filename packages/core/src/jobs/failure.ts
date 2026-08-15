@@ -124,6 +124,13 @@ export class ValidationFailedError extends TerminalJobError {
   }
 }
 
+/** A present repository validation configuration is malformed. */
+export class ValidationConfigInvalidError extends TerminalJobError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, "validation_config_invalid", options);
+  }
+}
+
 /** A checkpoint exceeded the complete-payload bound and cannot be truncated. */
 export class CheckpointTooLargeError extends TerminalJobError {
   constructor(message: string, options?: { cause?: unknown }) {

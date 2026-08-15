@@ -106,6 +106,7 @@ export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
   agent_failed: "Agent failed",
   no_changes_produced: "No changes produced",
   validation_failed: "Validation failed",
+  validation_config_invalid: "Validation configuration invalid",
   plan_not_produced: "Plan not produced",
   checkpoint_corrupt: "Checkpoint corrupt",
   checkpoint_restore_failed: "Checkpoint restore failed",
@@ -144,6 +145,7 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "command.started": "bg-sky-500",
   "command.completed": "bg-sky-500/40",
   "command.failed": "bg-red-500",
+  "baseline.check_recorded": "bg-sky-500/40",
   "baseline.recorded": "bg-sky-500",
   // The agent's own entries read as progress, because that is what they are.
   // Only the two that end something get a colour of their own, and a tool call
@@ -162,6 +164,7 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   // nothing, which is the opposite of something the reader needs to notice.
   "plan.deferred": "bg-muted-foreground/40",
   "artifact.recorded": "bg-violet-500",
+  "validation.check_recorded": "bg-sky-500/40",
   // Neutral rather than green or red, because the outcome is in the payload:
   // `regressed` and `fixed` are the same event type. Stage 7 colours the row
   // by `data.validation`; the marker only says the comparison happened.

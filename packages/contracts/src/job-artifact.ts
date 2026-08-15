@@ -10,7 +10,7 @@ import { jobStatusSchema, type JobStatus } from "./job";
  * milestone - a plan in M6, validation reports in M7, review reports in M8 - and
  * is never queried as a state machine. A migration per new entry buys nothing.
  *
- * Milestone 5 declares three:
+ * Milestones 5 through 7 declare:
  *
  * - `diff` - `git diff --cached` against the clone's `base_commit_sha`. A diff
  *   rather than a commit: M9 owns git identity, branch and push.
@@ -19,12 +19,16 @@ import { jobStatusSchema, type JobStatus } from "./job";
  *   describing what changed and why.
  * - `implementation_plan` - the canonical JSON representation of the structured
  *   plan submitted by the planning session.
+ * - `baseline_report` - the canonical pre-implementation validation checks.
+ * - `validation_report` - the canonical per-check comparisons and attribution.
  */
 export const ARTIFACT_TYPES = [
   "diff",
   "diff_stat",
   "implementation_summary",
   "implementation_plan",
+  "baseline_report",
+  "validation_report",
 ] as const;
 
 export const artifactTypeSchema = z.enum(ARTIFACT_TYPES);

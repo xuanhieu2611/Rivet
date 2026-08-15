@@ -9,6 +9,8 @@ const ARTIFACT_LABELS: Record<ArtifactType, string> = {
   diff_stat: "Diff stats",
   implementation_summary: "Implementation summary",
   implementation_plan: "Implementation plan",
+  baseline_report: "Baseline report",
+  validation_report: "Validation report",
 };
 
 interface JobArtifactsPanelProps {

@@ -10,6 +10,7 @@ import {
 } from "./checkpoint";
 import { jobStatusSchema, type JobStatus } from "./job";
 import { artifactTypeSchema, type ArtifactType } from "./job-artifact";
+import type { CheckKind, CheckStatus } from "./validation-check";
 
 /**
  * The vocabulary of the append-only job event log.
@@ -57,6 +58,8 @@ export const JOB_EVENT_TYPES = [
   "command.completed",
   /** The sandbox could not start or finish the command call. */
   "command.failed",
+  /** One resolved validation check was recorded before implementation. */
+  "baseline.check_recorded",
   /**
    * The repository's own test suite was run before anything was modified.
    *
@@ -92,6 +95,8 @@ export const JOB_EVENT_TYPES = [
   "plan.deferred",
   /** A durable output was persisted: its id, type and true byte size. Never its content. */
   "artifact.recorded",
+  /** One validation check was compared with its own baseline. */
+  "validation.check_recorded",
   /**
    * The test suite was re-run after the session and compared with the baseline.
    *
@@ -205,6 +210,8 @@ export const FAILURE_CATEGORIES = [
    * is where resumption gets designed properly.
    */
   "validation_failed",
+  /** A present `rivet.json` did not satisfy the strict validation contract. */
+  "validation_config_invalid",
 
   // --- planning and recovery (M6) --------------------------------------
   /** The planner ended without submitting a valid structured plan. */
@@ -392,6 +399,21 @@ export type JobEventData = {
   truncated?: boolean;
   /** The comparison outcome, on `validation.recorded`. */
   validation?: ValidationOutcome;
+  /** The validation check described by a per-check event. */
+  check?: CheckKind;
+  /** The result of comparing this check with its own baseline. */
+  checkOutcome?: ValidationOutcome;
+  /** What running this check established before comparison. */
+  checkStatus?: CheckStatus;
+  /** Parsed test totals, when a reporter produced a usable result. */
+  testsTotal?: number;
+  testsFailed?: number;
+  /** Attribution counts for the full test comparison. */
+  newFailures?: number;
+  preExistingFailures?: number;
+  fixedFailures?: number;
+  /** Paths selected for the non-binding targeted test run. */
+  targetedPaths?: string[];
   /**
    * Parsed `git diff --cached --numstat` totals.
    *
@@ -504,6 +526,15 @@ const jobEventDataSchema = z
     byteSize: z.number().int().nonnegative().optional(),
     truncated: z.boolean().optional(),
     validation: validationOutcomeSchema.optional(),
+    check: z.enum(["targeted_test", "test", "typecheck", "lint"]).optional(),
+    checkOutcome: validationOutcomeSchema.optional(),
+    checkStatus: z.enum(["passed", "failed", "skipped"]).optional(),
+    testsTotal: z.number().int().nonnegative().optional(),
+    testsFailed: z.number().int().nonnegative().optional(),
+    newFailures: z.number().int().nonnegative().optional(),
+    preExistingFailures: z.number().int().nonnegative().optional(),
+    fixedFailures: z.number().int().nonnegative().optional(),
+    targetedPaths: z.array(z.string()).optional(),
     filesChanged: z.number().int().nonnegative().optional(),
     insertions: z.number().int().nonnegative().optional(),
     deletions: z.number().int().nonnegative().optional(),
@@ -599,6 +630,17 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.byteSize === undefined ? {} : { byteSize: value.byteSize }),
     ...(value.truncated === undefined ? {} : { truncated: value.truncated }),
     ...(value.validation === undefined ? {} : { validation: value.validation }),
+    ...(value.check === undefined ? {} : { check: value.check }),
+    ...(value.checkOutcome === undefined ? {} : { checkOutcome: value.checkOutcome }),
+    ...(value.checkStatus === undefined ? {} : { checkStatus: value.checkStatus }),
+    ...(value.testsTotal === undefined ? {} : { testsTotal: value.testsTotal }),
+    ...(value.testsFailed === undefined ? {} : { testsFailed: value.testsFailed }),
+    ...(value.newFailures === undefined ? {} : { newFailures: value.newFailures }),
+    ...(value.preExistingFailures === undefined
+      ? {}
+      : { preExistingFailures: value.preExistingFailures }),
+    ...(value.fixedFailures === undefined ? {} : { fixedFailures: value.fixedFailures }),
+    ...(value.targetedPaths === undefined ? {} : { targetedPaths: value.targetedPaths }),
     ...(value.filesChanged === undefined ? {} : { filesChanged: value.filesChanged }),
     ...(value.insertions === undefined ? {} : { insertions: value.insertions }),
     ...(value.deletions === undefined ? {} : { deletions: value.deletions }),

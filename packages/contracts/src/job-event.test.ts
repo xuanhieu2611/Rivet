@@ -129,6 +129,39 @@ describe("coding agent events", () => {
 });
 
 describe("validation and artifact events", () => {
+  it("round-trips both M7 per-check event types and their fields", () => {
+    const baseline: JobEvent = {
+      ...EVENT,
+      type: "baseline.check_recorded",
+      message: "Test baseline failed.",
+      data: {
+        check: "test",
+        checkStatus: "failed",
+        testsTotal: 12,
+        testsFailed: 2,
+      },
+    };
+    const validation: JobEvent = {
+      ...EVENT,
+      type: "validation.check_recorded",
+      message: "Test failures were attributed.",
+      data: {
+        check: "targeted_test",
+        checkStatus: "passed",
+        checkOutcome: "verified",
+        testsTotal: 3,
+        testsFailed: 0,
+        newFailures: 0,
+        preExistingFailures: 1,
+        fixedFailures: 1,
+        targetedPaths: ["src/widget.test.ts"],
+      },
+    };
+
+    expect(parseSerializedJobEvent(serializeJobEvent(baseline))).toEqual(baseline);
+    expect(parseSerializedJobEvent(serializeJobEvent(validation))).toEqual(validation);
+  });
+
   it("round-trips every M5 field it claims to know about", () => {
     const artifact: JobEvent = {
       ...EVENT,
@@ -183,6 +216,7 @@ describe("validation and artifact events", () => {
   it("recognises both validation failure categories", () => {
     expect(parseFailureCategory("no_changes_produced")).toBe("no_changes_produced");
     expect(parseFailureCategory("validation_failed")).toBe("validation_failed");
+    expect(parseFailureCategory("validation_config_invalid")).toBe("validation_config_invalid");
   });
 });
 

@@ -10,6 +10,7 @@ import {
   NoChangesProducedError,
   RetryableJobError,
   TerminalJobError,
+  ValidationConfigInvalidError,
   ValidationFailedError,
   WorkerShuttingDownError,
 } from "./failure";
@@ -79,6 +80,7 @@ describe("validation failure classification", () => {
   const cases = [
     [NoChangesProducedError, "no_changes_produced"],
     [ValidationFailedError, "validation_failed"],
+    [ValidationConfigInvalidError, "validation_config_invalid"],
   ] as const;
 
   it.each(cases)("classifies %s as terminal with category %s", (ErrorType, category) => {
