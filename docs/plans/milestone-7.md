@@ -1,6 +1,6 @@
 # Milestone 7: Validation pipeline
 
-**Status: not started.**
+**Status: complete.**
 
 Milestone 5 gave Rivet the right to disagree with the model. `testing` re-runs the repository's own
 test script, compares the exit code against the baseline `analyzing` recorded, and lands the job on
@@ -706,24 +706,24 @@ rule; `README.md` gains a short section on repository-specific validation config
 
 ## Definition of done
 
-- [ ] Baseline test, lint and typecheck all run at `analyzing` and none of them fails a job for a
+- [x] Baseline test, lint and typecheck all run at `analyzing` and none of them fails a job for a
       non-zero exit
-- [ ] Targeted tests are selected from the diff and run at `testing`, deterministically, with no
+- [x] Targeted tests are selected from the diff and run at `testing`, deterministically, with no
       model involvement
-- [ ] Full tests, lint and typecheck all re-run at `testing` and each is compared against its own
+- [x] Full tests, lint and typecheck all re-run at `testing` and each is compared against its own
       baseline
-- [ ] Test results are parsed for vitest and jest, and a parse failure degrades rather than fails
-- [ ] New failures are distinguished from pre-existing ones by test name, proven end to end by the
+- [x] Test results are parsed for vitest and jest, and a parse failure degrades rather than fails
+- [x] New failures are distinguished from pre-existing ones by test name, proven end to end by the
       hermetic `attribution` sandbox variant in both directions
-- [ ] `baseline_report` and `validation_report` artifacts are stored, bounded, and canonical
-- [ ] A regression fails the job; a pre-existing lint or typecheck failure does not
-- [ ] `rivet.json` overrides inference, declares a reporter, and an invalid one is terminal
-- [ ] Zero migrations
-- [ ] The web surface renders the report, and no new endpoint was added
-- [ ] `demo:job` and `demo:recovery` still run against `rivet-fixture-node` on `main` and still end
+- [x] `baseline_report` and `validation_report` artifacts are stored, bounded, and canonical
+- [x] A regression fails the job; a pre-existing lint or typecheck failure does not
+- [x] `rivet.json` overrides inference, declares a reporter, and an invalid one is terminal
+- [x] Zero migrations
+- [x] The web surface renders the report, and no new endpoint was added
+- [x] `demo:job` and `demo:recovery` still run against `rivet-fixture-node` on `main` and still end
       green, with no edit to either demo script
-- [ ] The sandbox suite still reaches neither GitHub nor the npm registry
-- [ ] `pnpm test`, `pnpm test:integration`, `pnpm test:sandbox`, `pnpm test:streaming`,
+- [x] The sandbox suite still reaches neither GitHub nor the npm registry
+- [x] `pnpm test`, `pnpm test:integration`, `pnpm test:sandbox`, `pnpm test:streaming`,
       `pnpm build`, `pnpm lint`, `pnpm typecheck` and `pnpm format:check` all pass
 
 ---

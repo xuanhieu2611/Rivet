@@ -10,7 +10,7 @@ import type { ChildProcess } from "node:child_process";
 
 const run = promisify(execFile);
 
-export type FixtureVariant = "green" | "failing" | "no-tests" | "attribution";
+export type FixtureVariant = "green" | "failing" | "no-tests" | "attribution" | "invalid-config";
 
 export interface GitFixture {
   url(variant: FixtureVariant): string;
@@ -19,7 +19,7 @@ export interface GitFixture {
 }
 
 /**
- * Builds four tiny repositories and serves their bare clones with git-daemon.
+ * Builds five tiny repositories and serves their bare clones with git-daemon.
  *
  * A bind-mounted `file://` repository cannot satisfy `git clone --depth 1`, and
  * a host path is not visible inside the container anyway. The git protocol is
@@ -30,7 +30,13 @@ export async function startGitFixture(): Promise<GitFixture> {
   const root = await mkdtemp(join(tmpdir(), "rivet-sandbox-fixture-"));
   const commits = new Map<FixtureVariant, string>();
 
-  for (const variant of ["green", "failing", "no-tests", "attribution"] as const) {
+  for (const variant of [
+    "green",
+    "failing",
+    "no-tests",
+    "attribution",
+    "invalid-config",
+  ] as const) {
     commits.set(variant, await buildRepository(root, variant));
   }
 
@@ -65,7 +71,14 @@ async function buildRepository(root: string, variant: FixtureVariant): Promise<s
   await mkdir(worktree);
 
   const name = `rivet-fixture-${variant}`;
-  const scripts = variant === "no-tests" ? {} : { test: "node test.js" };
+  const scripts =
+    variant === "no-tests"
+      ? {}
+      : {
+          test: "node test.js",
+          typecheck: "node typecheck.js",
+          lint: "node lint.js",
+        };
   const manifest = {
     name,
     version: "1.0.0",
@@ -83,6 +96,13 @@ async function buildRepository(root: string, variant: FixtureVariant): Promise<s
 
   await writeFile(join(worktree, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFile(join(worktree, "package-lock.json"), `${JSON.stringify(lockfile, null, 2)}\n`);
+  // An empty lockfile needs no registry. Pointing npm at a closed local port
+  // turns that property into an assertion: a dependency or audit request makes
+  // the hermetic suite fail instead of reaching the public npm registry.
+  await writeFile(
+    join(worktree, ".npmrc"),
+    "registry=http://127.0.0.1:9/\naudit=false\nfund=false\n",
+  );
   await writeFile(
     join(worktree, "test.js"),
     variant === "failing"
@@ -94,6 +114,16 @@ async function buildRepository(root: string, variant: FixtureVariant): Promise<s
 
   if (variant === "attribution") {
     await writeAttributionFixture(worktree);
+  } else {
+    await writeFile(join(worktree, "typecheck.js"), 'console.log("fixture typecheck passed");\n');
+    await writeFile(join(worktree, "lint.js"), 'console.log("fixture lint passed");\n');
+  }
+
+  if (variant === "invalid-config") {
+    await writeFile(
+      join(worktree, "rivet.json"),
+      `${JSON.stringify({ validation: { test: "node test.js" } }, null, 2)}\n`,
+    );
   }
 
   await run("git", ["init", "-b", "main"], { cwd: worktree });

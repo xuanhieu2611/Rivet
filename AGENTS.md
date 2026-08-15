@@ -12,24 +12,32 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 6 is complete.** Jobs execute and now survive their worker. Creating one
-enqueues it, a worker claims it under a Postgres lease, provisions a sandbox, records a baseline,
-plans, runs a Pi coding session during `implementing`, heartbeats while it runs, and lands it in a
-terminal status. Retries, cancellation, timeouts, crash recovery, agent budgets, usage persistence
-and provider failure classification all work and are covered by the unit, integration, sandbox and
-streaming suites. Review remains simulated until Milestone 8, and the branch, commit and pull
-request belong to Milestone 9.
+**Current state: Milestone 7 is complete.** Jobs execute, survive their worker, and
+deterministically validate what the coding session changed. Creating one enqueues it, a worker
+claims it under a Postgres lease, provisions a sandbox, records per-check baselines, plans, runs a
+Pi coding session, heartbeats while it runs, compares targeted tests plus the full test, typecheck
+and lint checks, and lands it in a terminal status. Retries, cancellation, timeouts, crash recovery,
+agent budgets, usage persistence, provider failure classification and named test-failure attribution
+all work and are covered by the unit, integration, sandbox and streaming suites. Review remains
+simulated until Milestone 8, and the branch, commit and pull request belong to Milestone 9.
 
-M5's phase layout is the base: the baseline runs at `analyzing`, before anything has been edited,
-and `testing` is validation. It stages the working tree, keeps `git diff --cached` and its
-`--numstat` totals as `diff` and `diff_stat` artifacts, re-runs the script the baseline ran, and
-compares: `verified`, `fixed`, `regressed`, `unresolved` or `unverified` on a `validation.recorded`
-event. The last two green outcomes are deliberate and the two failing ones are terminal.
-`finalizing` keeps the session's last assistant message as an `implementation_summary` artifact -
-reading it back out of the event log rather than across a phase boundary, because `runPipeline`
-hands nothing from one phase to the next - and writes the run's closing `run.summarized` line
-carrying the validation outcome and the diff totals. `pnpm demo:job` exercises that flow against the
-public fixture with a real Pi session.
+M7 generalizes M5's baseline and validation into a shared check runner. `analyzing` resolves and
+runs test, typecheck and lint in that order, records one `baseline.check_recorded` event per check,
+keeps the test-only `baseline.recorded` compatibility event, and stores a canonical
+`baseline_report`. `testing` first stages and records `diff` and `diff_stat`, selects targeted tests
+deterministically from changed and tracked paths, runs targeted test, full test, typecheck and lint,
+records `validation.check_recorded` for each, and stores a canonical `validation_report`. Vitest and
+Jest JSON reports identify failures as repository-relative `file::full name` values, allowing the
+report to distinguish new, pre-existing and fixed failures. Reporter files live under the sandbox
+workdir outside the repository, so Rivet's instrumentation never enters the diff or its totals.
+
+Each check compares as `verified`, `fixed`, `regressed`, `unresolved` or `unverified`. A parsed new
+test failure makes the full test check `regressed`, even when the suite was already red. At job
+level, full test `regressed` or `unresolved` fails; typecheck and lint fail only on `regressed`; and
+targeted test never fails a job on its own. The aggregate is the worst binding outcome ordered
+`regressed > unresolved > unverified > fixed > verified`, with pre-existing typecheck and lint
+failures treated as `unverified` for aggregation. `finalizing` reads the validation report back and
+writes the report-aware closing `run.summarized` line.
 
 **M6 makes the attempt durable, and it is four things.** `planning` is a real read-only planner
 session whose only tools are `list_files`, `read`, `search_text` and `submit_plan`, and whose
@@ -79,6 +87,38 @@ whatever the exit code was: PRD §11 C wants to know whether the repository was 
 _before_ Rivet touched it, and failing the job would make Rivet unable to work on the repositories
 it is most useful for. Only a command that was killed - `command_timed_out`, `oom_killed` - fails a
 job from that phase, because those are facts about the sandbox rather than about the repository.
+
+**Repository validation is inferred per check, and `rivet.json` overrides it.** A `test`,
+`typecheck` or `lint` script in `package.json` becomes that check; a missing script becomes a
+recorded skip. A root `rivet.json` may override any check independently while omitted checks still
+fall back to inference:
+
+```json
+{
+  "validation": {
+    "test": {
+      "argv": ["pnpm", "test"],
+      "timeoutMs": 600000,
+      "reporter": { "framework": "vitest", "outputArg": "--outputFile" }
+    },
+    "typecheck": { "argv": ["pnpm", "typecheck"] },
+    "lint": { "argv": ["pnpm", "lint"] },
+    "targeted": { "argv": ["pnpm", "vitest", "run"], "appendPaths": true }
+  }
+}
+```
+
+The schema is strict. Commands are non-empty argv arrays, never shell strings; per-command
+`timeoutMs` is optional from 1,000 through 3,600,000; `reporter.framework` is `vitest` or `jest`;
+`outputArg` is optional; and targeted configuration requires `appendPaths`. A present malformed or
+unreadable file is terminal `validation_config_invalid`. The M7 vocabulary additions are artifacts
+`baseline_report` and `validation_report`, events `baseline.check_recorded` and
+`validation.check_recorded`, and failure category `validation_config_invalid`. The legacy
+`baseline.recorded` and `validation.recorded` events retain their existing meaning and shape. Check
+events carry `check`, `checkStatus`, command details and parsed test totals;
+`validation.check_recorded` additionally carries `checkOutcome`, attribution counts and, for the
+targeted check, `targetedPaths`. The aggregate `validation.recorded` row carries the same
+attribution counts and targeted paths while its `validation` field remains the job outcome.
 
 ## Commands
 
@@ -434,6 +474,11 @@ pure function of an env object.
 - `DATABASE_URL_UNPOOLED` - the **direct** endpoint. Migrations only; DDL through PgBouncer in
   transaction pooling mode is unreliable. The migrate script falls back to `DATABASE_URL` when
   unset, which is how CI points migrations at an ephemeral branch with one variable.
+- `SANDBOX_CHECK_TIMEOUT_MS` - lint and typecheck command budget, 180,000 ms by default.
+- `RIVET_VALIDATION_REPORT_MAX_BYTES` - complete reporter-file read cap, 4,194,304 bytes by default.
+  It must remain above `RIVET_ARTIFACT_MAX_BYTES`, because truncated JSON is not a report.
+- `RIVET_TARGETED_MAX_FILES` - deterministic targeted-test selection cap, 25 by default. A selection
+  above it is recorded as skipped rather than mislabeled as a targeted full-suite run.
 
 Schema changes go: edit `packages/database/src/schema/`, run `pnpm db:generate`, **commit the
 generated SQL** under `packages/database/drizzle/`, then `pnpm db:migrate`. Migrations are applied

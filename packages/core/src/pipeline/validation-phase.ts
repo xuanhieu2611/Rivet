@@ -386,10 +386,14 @@ function compareChecks(
       after.kind === "test" && before?.tests?.parsed === true && after.tests?.parsed === true
         ? attribute(before.tests, after.tests)
         : undefined;
+    const outcome =
+      after.kind === "test" && attribution && attribution.newFailures.length > 0
+        ? "regressed"
+        : validationOutcome(baseline, after.status);
     return {
       ...after,
       baseline,
-      outcome: validationOutcome(baseline, after.status),
+      outcome,
       ...(attribution === undefined ? {} : { attribution }),
     };
   });

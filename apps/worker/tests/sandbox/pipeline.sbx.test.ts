@@ -1,5 +1,11 @@
 import { FakeCodingAgent } from "@rivet/agent";
 import {
+  parseSerializedBaselineReport,
+  parseSerializedValidationReport,
+  type ArtifactType,
+  type CheckComparison,
+} from "@rivet/contracts";
+import {
   buildPipeline,
   createJob,
   getArtifact,
@@ -7,6 +13,7 @@ import {
   listCommands,
   listEvents,
   type AgentOptions,
+  type ImplementerAgentToolbox,
 } from "@rivet/core";
 import { DockerSandboxProvider } from "@rivet/sandbox";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -24,7 +31,7 @@ import {
   type TestWorker,
   waitForStatus,
 } from "../integration/support";
-import { type GitFixture, startGitFixture } from "./fixtures/repo";
+import { type FixtureVariant, type GitFixture, startGitFixture } from "./fixtures/repo";
 
 let fixture: GitFixture;
 let queue: TestQueue | undefined;
@@ -112,13 +119,64 @@ function startRealWorker(
   return { queue: testQueue, worker: testWorker };
 }
 
-async function createFixtureJob(variant: "green" | "failing" | "no-tests", branch = "main") {
+async function createFixtureJob(variant: FixtureVariant, branch = "main") {
   return createJob({
     title: `${variant} sandbox fixture`,
     description: "Run the Milestone 2 pipeline against a hermetic repository.",
     repoUrl: fixture.url(variant),
     baseBranch: branch,
   });
+}
+
+function editingAgent(
+  edit: (tools: ImplementerAgentToolbox, signal: AbortSignal) => Promise<void>,
+): AgentOptions {
+  return {
+    coding: new FakeCodingAgent({
+      script: [
+        {
+          events: [
+            {
+              type: "assistant_message",
+              turn: 0,
+              text: "Applied the scripted acceptance change.",
+            },
+          ],
+          useTools: edit,
+        },
+      ],
+    }),
+    sessionTimeoutMs: 30_000,
+    maxTurns: 4,
+    previewMaxBytes: 512,
+    fileMaxBytes: 16_384,
+  };
+}
+
+function harmlessEditingAgent(): AgentOptions {
+  return editingAgent(async (tools, signal) => {
+    await tools.writeFile(
+      "/home/node/workspace/repo/acceptance-change.js",
+      "export const acceptanceChange = true;\n",
+      signal,
+    );
+  });
+}
+
+async function reportArtifact(jobId: string, type: ArtifactType) {
+  const artifacts = await listArtifacts(jobId);
+  const metadata = artifacts.find((artifact) => artifact.type === type);
+  if (!metadata) throw new Error(`Expected ${type} artifact.`);
+  const artifact = await getArtifact(jobId, metadata.id);
+  if (!artifact) throw new Error(`Could not read ${type} artifact.`);
+  return artifact;
+}
+
+function comparisonsByKind(checks: CheckComparison[]) {
+  return Object.fromEntries(checks.map((check) => [check.kind, check])) as Record<
+    CheckComparison["kind"],
+    CheckComparison
+  >;
 }
 
 describe("real sandbox pipeline", () => {
@@ -255,10 +313,8 @@ describe("real sandbox pipeline", () => {
 
     const events = await listEvents(job.id, { limit: 500 });
     expect(events.find((event) => event.type === "validation.recorded")?.data).toMatchObject({
-      // This fixture has a passing test script but no typecheck or lint scripts.
-      // The full test check is verified while the multi-check aggregate honestly
-      // remains unverified.
-      validation: "unverified",
+      // The green M7 fixture runs all three binding checks before and after.
+      validation: "verified",
       filesChanged: 1,
     });
     expect(
@@ -267,5 +323,167 @@ describe("real sandbox pipeline", () => {
       )?.data,
     ).toMatchObject({ checkOutcome: "verified" });
     expect(events.some((event) => event.type === "run.summarized")).toBe(true);
+  });
+
+  it("runs a green multi-check baseline and comparison through the real pipeline", async () => {
+    const running = startRealWorker("sandbox-m7-green", { agent: harmlessEditingAgent() });
+    const job = await createFixtureJob("green");
+    await enqueue(running.queue.queue, job.id);
+
+    await waitForStatus(job.id, "completed", { timeoutMs: 45_000 });
+    const baseline = parseSerializedBaselineReport(
+      (await reportArtifact(job.id, "baseline_report")).content,
+    );
+    const validation = parseSerializedValidationReport(
+      (await reportArtifact(job.id, "validation_report")).content,
+    );
+
+    expect(baseline.checks.map(({ kind, status }) => ({ kind, status }))).toEqual([
+      { kind: "test", status: "passed" },
+      { kind: "typecheck", status: "passed" },
+      { kind: "lint", status: "passed" },
+    ]);
+    expect(comparisonsByKind(validation.checks)).toMatchObject({
+      test: { status: "passed", outcome: "verified" },
+      typecheck: { status: "passed", outcome: "verified" },
+      lint: { status: "passed", outcome: "verified" },
+    });
+  });
+
+  it("keeps a no-check repository green with every comparison unverified", async () => {
+    const running = startRealWorker("sandbox-m7-no-tests", { agent: harmlessEditingAgent() });
+    const job = await createFixtureJob("no-tests");
+    await enqueue(running.queue.queue, job.id);
+
+    await waitForStatus(job.id, "completed", { timeoutMs: 45_000 });
+    const baseline = parseSerializedBaselineReport(
+      (await reportArtifact(job.id, "baseline_report")).content,
+    );
+    const validation = parseSerializedValidationReport(
+      (await reportArtifact(job.id, "validation_report")).content,
+    );
+
+    expect(baseline.checks.every((check) => check.status === "skipped")).toBe(true);
+    expect(validation.outcome).toBe("unverified");
+    expect(validation.checks).toHaveLength(4);
+    expect(validation.checks.every((check) => check.outcome === "unverified")).toBe(true);
+  });
+
+  it("fails an unchanged red suite as unresolved after recording every check", async () => {
+    const running = startRealWorker("sandbox-m7-failing", { agent: harmlessEditingAgent() });
+    const job = await createFixtureJob("failing");
+    await enqueue(running.queue.queue, job.id);
+
+    const failed = await waitForStatus(job.id, "failed", { timeoutMs: 45_000 });
+    const validation = parseSerializedValidationReport(
+      (await reportArtifact(job.id, "validation_report")).content,
+    );
+
+    expect(failed.failureCategory).toBe("validation_failed");
+    expect(comparisonsByKind(validation.checks)).toMatchObject({
+      test: { status: "failed", outcome: "unresolved" },
+      typecheck: { status: "passed", outcome: "verified" },
+      lint: { status: "passed", outcome: "verified" },
+    });
+  });
+
+  it("attributes a fixed failure while preserving the other pre-existing failure", async () => {
+    const agent = editingAgent(async (tools, signal) => {
+      const path = "/home/node/workspace/repo/calculator.js";
+      const current = await tools.readFile(path, signal);
+      await tools.writeFile(
+        path,
+        current.content.replace("fixable = false", "fixable = true"),
+        signal,
+      );
+    });
+    const running = startRealWorker("sandbox-m7-attribution-fix", { agent });
+    const job = await createFixtureJob("attribution");
+    await enqueue(running.queue.queue, job.id);
+
+    const failed = await waitForStatus(job.id, "failed", { timeoutMs: 45_000 });
+    const baseline = parseSerializedBaselineReport(
+      (await reportArtifact(job.id, "baseline_report")).content,
+    );
+    const validation = parseSerializedValidationReport(
+      (await reportArtifact(job.id, "validation_report")).content,
+    );
+    const test = comparisonsByKind(validation.checks).test;
+    const events = await listEvents(job.id, { limit: 500 });
+    const checkSequence = events
+      .filter(
+        (event) =>
+          event.type === "baseline.check_recorded" || event.type === "validation.check_recorded",
+      )
+      .map((event) => `${event.type}:${event.data?.check}`);
+
+    expect(failed.failureCategory).toBe("validation_failed");
+    expect(baseline.checks[0]?.tests).toMatchObject({ parsed: true, failed: 2 });
+    expect(test).toMatchObject({ status: "failed", outcome: "unresolved" });
+    expect(test.attribution).toEqual({
+      newFailures: [],
+      preExistingFailures: ["calculator.test.js::B"],
+      fixedFailures: ["calculator.test.js::A"],
+    });
+    expect(checkSequence).toEqual([
+      "baseline.check_recorded:test",
+      "baseline.check_recorded:typecheck",
+      "baseline.check_recorded:lint",
+      "validation.check_recorded:targeted_test",
+      "validation.check_recorded:test",
+      "validation.check_recorded:typecheck",
+      "validation.check_recorded:lint",
+    ]);
+
+    const diff = await reportArtifact(job.id, "diff");
+    const stat = await reportArtifact(job.id, "diff_stat");
+    expect(diff.content).not.toContain("validation/");
+    expect(stat.content).not.toContain("validation/");
+    expect(diff.metadata).toMatchObject({ filesChanged: 1, insertions: 1, deletions: 1 });
+    expect(stat.metadata).toMatchObject({ filesChanged: 1, insertions: 1, deletions: 1 });
+  });
+
+  it("classifies a newly broken named test as a regression against a red baseline", async () => {
+    const agent = editingAgent(async (tools, signal) => {
+      const path = "/home/node/workspace/repo/calculator.js";
+      const current = await tools.readFile(path, signal);
+      await tools.writeFile(
+        path,
+        current.content.replace("protectedBehavior = true", "protectedBehavior = false"),
+        signal,
+      );
+    });
+    const running = startRealWorker("sandbox-m7-attribution-break", { agent });
+    const job = await createFixtureJob("attribution");
+    await enqueue(running.queue.queue, job.id);
+
+    const failed = await waitForStatus(job.id, "failed", { timeoutMs: 45_000 });
+    const validation = parseSerializedValidationReport(
+      (await reportArtifact(job.id, "validation_report")).content,
+    );
+    const test = comparisonsByKind(validation.checks).test;
+
+    expect(failed.failureCategory).toBe("validation_failed");
+    expect(validation.outcome).toBe("regressed");
+    expect(test.outcome).toBe("regressed");
+    expect(test.attribution).toEqual({
+      newFailures: ["calculator.test.js::C"],
+      preExistingFailures: ["calculator.test.js::A", "calculator.test.js::B"],
+      fixedFailures: [],
+    });
+  });
+
+  it("fails a present invalid rivet.json terminally without retrying", async () => {
+    const running = startRealWorker("sandbox-m7-invalid-config");
+    const job = await createFixtureJob("invalid-config");
+    await enqueue(running.queue.queue, job.id);
+
+    const failed = await waitForStatus(job.id, "failed", { timeoutMs: 45_000 });
+
+    expect(failed.failureCategory).toBe("validation_config_invalid");
+    expect((await readJob(job.id)).attemptCount).toBe(1);
+    expect(await listArtifacts(job.id)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "baseline_report" })]),
+    );
   });
 });

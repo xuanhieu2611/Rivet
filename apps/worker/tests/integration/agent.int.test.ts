@@ -517,13 +517,13 @@ describe("coding-agent execution through the worker", () => {
 });
 
 /**
- * The opinion Milestone 5 added, through the real processor.
+ * The deterministic validation opinion, through the real processor.
  *
  * The green path is already covered above - every completing test in this file
  * now walks validation on its way there. What is left is the half that matters
  * as much and is easy to leave untested: a run that produced nothing, and a run
- * that produced something worse than nothing. An M5 that can only report success
- * has not validated anything.
+ * that produced something worse than nothing. A validation pipeline that can
+ * only report success has not validated anything.
  */
 describe("validation through the worker", () => {
   it("records the comparison and keeps the diff on a green run", async () => {
@@ -539,27 +539,37 @@ describe("validation through the worker", () => {
     const artifacts = await listArtifacts(job.id);
 
     // The fixture's suite passes before and after, which is the path a feature
-    // request takes rather than the path a bug fix does.
+    // request takes rather than the path a bug fix does. Its absent typecheck
+    // and lint scripts keep the M7 aggregate honestly unverified.
     expect(events.find((event) => event.type === "validation.recorded")?.data).toMatchObject({
-      validation: "verified",
+      validation: "unverified",
       filesChanged: 1,
       insertions: 1,
       deletions: 1,
     });
-    // Four, in the order the run produced them: planning persists the structured
-    // plan, testing keeps the evidence of what changed, and finalizing keeps the
-    // session's own account of it.
+    expect(
+      events.find(
+        (event) => event.type === "validation.check_recorded" && event.data?.check === "test",
+      )?.data,
+    ).toMatchObject({ checkOutcome: "verified" });
+    // Six, in the order the run produced them: analyzing keeps its report,
+    // planning persists the plan, testing keeps the diff and report, and
+    // finalizing keeps the session's own account.
     expect(artifacts.map((artifact) => artifact.type)).toEqual([
+      "baseline_report",
       "implementation_plan",
       "diff",
       "diff_stat",
+      "validation_report",
       "implementation_summary",
     ]);
-    expect(artifacts[1]?.byteSize).toBe(Buffer.byteLength(DIFF, "utf8"));
+    const diff = artifacts.find((artifact) => artifact.type === "diff");
+    const summary = artifacts.find((artifact) => artifact.type === "implementation_summary");
+    expect(diff?.byteSize).toBe(Buffer.byteLength(DIFF, "utf8"));
     // The last thing the model said, read back out of the event log rather than
     // handed across the phase boundary - which is what makes this survive a
     // resume in a process that never ran the session.
-    expect(await getArtifact(job.id, artifacts[3]!.id)).toMatchObject({
+    expect(await getArtifact(job.id, summary!.id)).toMatchObject({
       content: "I found the fixture.",
       metadata: { present: true },
       phase: "finalizing",
@@ -574,7 +584,7 @@ describe("validation through the worker", () => {
     // everything after it belongs to the processor closing the job out.
     const summarized = events.findIndex((event) => event.type === "run.summarized");
     expect(events[summarized]?.data).toMatchObject({
-      validation: "verified",
+      validation: "unverified",
       filesChanged: 1,
       insertions: 1,
       deletions: 1,
@@ -601,6 +611,7 @@ describe("validation through the worker", () => {
     expect(failed.failureCategory).toBe("no_changes_produced");
     expect(failed.attemptCount).toBe(1);
     expect((await listArtifacts(job.id)).map((artifact) => artifact.type)).toEqual([
+      "baseline_report",
       "implementation_plan",
     ]);
   });
@@ -635,9 +646,11 @@ describe("validation through the worker", () => {
       validation: "regressed",
     });
     expect((await listArtifacts(job.id)).map((artifact) => artifact.type)).toEqual([
+      "baseline_report",
       "implementation_plan",
       "diff",
       "diff_stat",
+      "validation_report",
     ]);
   });
 
@@ -664,12 +677,19 @@ describe("validation through the worker", () => {
       baseline: "failed",
     });
     expect(events.find((event) => event.type === "validation.recorded")?.data).toMatchObject({
-      validation: "fixed",
+      validation: "unverified",
     });
+    expect(
+      events.find(
+        (event) => event.type === "validation.check_recorded" && event.data?.check === "test",
+      )?.data,
+    ).toMatchObject({ checkOutcome: "fixed" });
     expect(artifacts.map((artifact) => artifact.type)).toEqual([
+      "baseline_report",
       "implementation_plan",
       "diff",
       "diff_stat",
+      "validation_report",
       "implementation_summary",
     ]);
   });
@@ -716,6 +736,7 @@ describe("validation through the worker", () => {
     expect(events.some((event) => event.type === "agent.session_ended")).toBe(true);
     expect(events.some((event) => event.type === "validation.recorded")).toBe(false);
     expect((await listArtifacts(job.id)).map((artifact) => artifact.type)).toEqual([
+      "baseline_report",
       "implementation_plan",
       "diff",
       "diff_stat",

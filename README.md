@@ -15,33 +15,35 @@ boundary is the point of the project, and it is what the architecture is organiz
 
 ## Status
 
-**Milestone 6 - planning, persistence and recovery - is complete.** A job killed mid-session is no
-longer a job restarted. `planning` is a real, read-only model session that submits a structured
-`ImplementationPlan`; every completed phase and every completed implementation turn captures a
-lossless binary Git patch of the workspace; and a reclaimed job is provisioned into a **new**
-container at the original commit, restored from that patch, checksum-verified, and continued by a
-fresh session that is told what it inherited. Budgets and the wall-clock deadline are cumulative
+**Milestone 7 - deterministic validation - is complete.** `analyzing` establishes separate test,
+typecheck and lint baselines before the agent edits anything. `testing` deterministically selects a
+targeted test run from the diff, re-runs every full check, and compares each one with its own
+baseline. Vitest and Jest reports distinguish newly failing, pre-existing and fixed tests by name;
+the resulting baseline and validation reports are durable artifacts rendered on the job page.
+
+Milestone 6's planning, persistence and recovery remain underneath it. A job killed mid-session is
+provisioned into a new container at the original commit, restored from a checksum-verified binary
+Git patch, and continued by a fresh session. Budgets and the wall-clock deadline remain cumulative
 across attempts, so a crash grants nobody another hour.
 
-The delivery half of that is a dispatch generation on every message id: a reclaim increments it in
-the same transaction that clears the lease, so the replacement worker can claim immediately instead
-of waiting for BullMQ to declare the dead worker's message stalled. A stale generation can never
-claim the row.
+The recovery delivery mechanism is a dispatch generation on every message id: a reclaim increments
+it in the same transaction that clears the lease, so the replacement worker can claim immediately
+instead of waiting for BullMQ to declare the dead worker's message stalled. A stale generation can
+never claim the row.
 
-Underneath it is Milestone 5's coding job, unchanged. A Docker-backed job provisions a repository,
-records its baseline before anything is edited, and gives `implementing` to a Pi session running in
-the trusted worker. Pi has exactly four tools - `read`, `write`, `edit`, `bash` - and every one is
-backed by the job's sandbox; the planner has four different ones and no way to write anything. The
-OpenRouter credential stays on the worker host and never enters the container that runs cloned
-repository code.
+The Docker-backed coding job provisions a repository, records its baseline before anything is
+edited, and gives `implementing` to a Pi session running in the trusted worker. Pi has exactly four
+tools - `read`, `write`, `edit`, `bash` - and every one is backed by the job's sandbox; the planner
+has four different ones and no way to write anything. The OpenRouter credential stays on the worker
+host and never enters the container that runs cloned repository code.
 
 The append-only Postgres event log records session starts, turns, completed assistant messages, tool
 calls, usage, budget breaches, session endings, plans, checkpoints, reclaims, restores and resumed
 runs. Shell calls also use the command ledger, so their bounded transcripts are visible through the
-same live SSE timeline and lazy command log as Rivet's own commands. Validation compares the
-post-session suite with the baseline, and finalization persists the diff stats and the session's own
-summary. Review remains simulated until Milestone 8, and branch, commit, push and pull request
-remain Milestone 9 work.
+same live SSE timeline and lazy command log as Rivet's own commands. Validation records per-check
+events, parsed failure attribution and canonical report artifacts before finalization persists the
+session's own summary. Review remains simulated until Milestone 8, and branch, commit, push and pull
+request remain Milestone 9 work.
 
 The integration suite uses a scripted agent with real Postgres, Redis, BullMQ and the production
 worker, including a worker killed with `SIGKILL` in a process of its own; the sandbox suite proves a
@@ -50,7 +52,7 @@ Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with a re
 `pnpm demo:recovery` kills a worker mid-job and checks every fact the recovery claim rests on.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together and
-[docs/plans/milestone-6.md](docs/plans/milestone-6.md) for the committed M6 record.
+[docs/plans/milestone-7.md](docs/plans/milestone-7.md) for the committed M7 record.
 
 ## Prerequisites
 
@@ -224,6 +226,32 @@ allowlist; isolate each job's network; and provide only per-job credentials with
 Control-plane database, Redis and provider credentials should never enter that environment. Docker
 remains appropriate for this local milestone because the limits, lifecycle and adapter boundary
 carry forward when the isolation backend changes.
+
+## Repository validation configuration
+
+Rivet infers `test`, `typecheck` and `lint` checks from `package.json` scripts. A repository can
+override any check independently with a strict `rivet.json` at its root; omitted checks still use
+inference. Commands must be argv arrays, never shell strings. A present malformed file fails the job
+terminally as `validation_config_invalid` rather than being ignored.
+
+```json
+{
+  "validation": {
+    "test": {
+      "argv": ["pnpm", "test"],
+      "timeoutMs": 600000,
+      "reporter": { "framework": "vitest", "outputArg": "--outputFile" }
+    },
+    "typecheck": { "argv": ["pnpm", "typecheck"] },
+    "lint": { "argv": ["pnpm", "lint"] },
+    "targeted": { "argv": ["pnpm", "vitest", "run"], "appendPaths": true }
+  }
+}
+```
+
+`reporter` is optional and supports `vitest` or `jest`; Rivet otherwise detects those runners from
+the manifest and test script. `timeoutMs` is optional per command, from 1,000 to 3,600,000 ms. The
+targeted check is advisory and never fails a job on its own.
 
 ## Environment variables
 

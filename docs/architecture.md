@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, at the end of Milestone 6, and names the
+This document describes Rivet **as it exists today**, at the end of Milestone 7, and names the
 places where the current shape is a deliberate shortcut rather than the intended end state. It is
 updated as each milestone lands rather than describing a system that does not exist yet.
 
@@ -35,8 +35,11 @@ summary and diff, and gives the new event types their own timeline presentation.
 the attempt itself durable: `planning` runs a real read-only planner session and persists a
 structured plan, every completed phase and every completed model turn captures a lossless workspace
 patch, and a reclaimed job is restored into a **new** container at the original commit and continues
-from where it stopped. Review remains simulated until Milestone 8, and the branch, commit and pull
-request belong to Milestone 9.
+from where it stopped. Milestone 7 generalized the one-suite baseline into deterministic test,
+typecheck and lint checks, added diff-derived targeted tests, parsed Vitest and Jest reports for
+named failure attribution, and persisted canonical baseline and validation reports that the job page
+renders. Review remains simulated until Milestone 8, and the branch, commit and pull request belong
+to Milestone 9.
 
 ## What exists today
 
@@ -59,9 +62,10 @@ dispatch generation, and the sandbox's resolved commit and environment fingerpri
 the append-only history behind the execution timeline. `job_commands` is the append-only command
 ledger; transcripts live there rather than bloating every timeline read. `job_artifacts` is the
 append-only store of a run's durable output - the diff, its stats, the implementation plan, the
-implementation summary - bounded and read one fetch away for the same reason. `job_checkpoints` is
-the durable workflow cursor: one row per safe boundary, carrying the phase to resume at and a
-complete compressed workspace patch. Columns that only later milestones can fill remain nullable.
+implementation summary, and the baseline and validation reports - bounded and read one fetch away
+for the same reason. `job_checkpoints` is the durable workflow cursor: one row per safe boundary,
+carrying the phase to resume at and a complete compressed workspace patch. Columns that only later
+milestones can fill remain nullable.
 
 ## The two deployables and the package they share
 
@@ -298,17 +302,58 @@ second, read-only model session whose only capabilities are `list_files`, `read`
 `submit_plan`, and whose validated `ImplementationPlan` is persisted as an artifact that every later
 implementation session - including one started by a replacement worker - reads back. A session that
 ends without submitting a plan fails with `plan_not_produced`; read-only is a capability boundary
-here rather than a sentence in a prompt. Testing is validation: it stages the working tree, keeps
-the diff and its stats as artifacts, re-runs the script the baseline ran, and compares the two.
-Finalizing persists the session's own account of the change and writes the run's closing line;
-reviewing is still simulated. The `RIVET_AGENT=off` integration configuration deliberately leaves
-implementing simulated, and leaves testing and finalizing simulated with it - validating a run that
-never had a session would be validating the absence of a phase, and every job would fail with
-`no_changes_produced` while nothing was wrong, and a phase whose two outputs are the session's
+here rather than a sentence in a prompt. Analyzing and testing share one check runner, so command
+execution, killed-command classification, event recording and optional reporter parsing cannot drift
+between phases. Analyzing runs test, typecheck and lint before any edit and writes a canonical
+`baseline_report`. Testing stages the tree, records the diff and stats, derives targeted tests from
+the changed and tracked path sets, then runs targeted test, full test, typecheck and lint and writes
+a canonical `validation_report`. Finalizing reads that report back to write a report-aware closing
+line; reviewing is still simulated. The `RIVET_AGENT=off` integration configuration deliberately
+leaves implementing simulated, and leaves testing and finalizing simulated with it - validating a
+run that never had a session would be validating the absence of a phase, and every job would fail
+with `no_changes_produced` while nothing was wrong, and a phase whose two outputs are the session's
 summary and the validation outcome has nothing to summarize when neither was produced - so lifecycle
 tests need no model key. That is the entire reason `runPipeline` takes its clock, its sleep, its
 callbacks and its fault injector as arguments rather than importing them: the same runner drives the
 demo at `speed: 1` and the unit tests at `speed: 0`.
+
+### The validation pipeline
+
+Validation configuration resolves per check. A strict root `rivet.json` entry wins, then a non-empty
+`package.json` script is run through the detected package manager, and otherwise the check is
+skipped with a reason. Commands in `rivet.json` are argv arrays, with optional bounded timeouts;
+test and targeted commands may declare a `vitest` or `jest` reporter. A present malformed file is a
+terminal `validation_config_invalid` failure because silently ignoring it would run a check set the
+repository did not request.
+
+The shared check runner writes ordinary command lifecycle events and ledger rows, then records
+`baseline.check_recorded` or `validation.check_recorded`. Reporter JSON is written under
+`<workdir>/validation`, outside the clone, and read through `RIVET_VALIDATION_REPORT_MAX_BYTES`. It
+can therefore never enter `git diff --cached` or its `--numstat` totals. Parsing is best-effort:
+malformed, absent, unsupported or truncated reporter output degrades to exit-code comparison and
+never fails a job by itself. Parsed identities are repository-relative `file::full name` strings,
+stable across recovery containers.
+
+Both check event types carry the check kind and status, command details, and parsed test totals when
+available. Validation check events add the per-check outcome, attribution counts and the targeted
+path list. The compatibility `validation.recorded` event keeps its job-level outcome and diff totals
+and adds the same attribution counts and targeted paths. Failure names themselves live only in the
+bounded report artifacts, keeping ordinary timeline rows compact.
+
+Each full check compares with its own baseline as `verified`, `fixed`, `regressed`, `unresolved` or
+`unverified`. Parsed test sets additionally record new, pre-existing and fixed names; any new named
+test failure makes the full test check `regressed`, including when the suite was already red. Full
+test fails the job on `regressed` or `unresolved`; typecheck and lint fail only on `regressed`; the
+heuristic targeted check is always advisory. The aggregate takes the worst binding outcome ordered
+`regressed > unresolved > unverified > fixed > verified`, treating unresolved typecheck and lint as
+unverified so pre-existing repository debt does not fail unrelated work.
+
+The `baseline_report` and `validation_report` artifacts are strict, canonical JSON. They are read
+back from the artifact store rather than carried in phase memory, because an M6 replacement process
+may run testing without having run analyzing. Legacy jobs with only `baseline.recorded` degrade to
+the old test-only comparison. The server-rendered Validation panel reads the report through the
+existing artifact endpoint and shows per-check outcomes, targeted paths and attributed test names;
+M7 added no endpoint and no migration.
 
 Seven fault-injection modes exist so the recovery machinery and the sandbox failure taxonomy have
 something to recover from on demand: `throw` (retryable), `fatal` (terminal), `hang` (ignores the
@@ -643,13 +688,13 @@ after each usage event under the current lease.
 
 ## The artifact store
 
-`job_artifacts` holds a run's durable output - the diff it produced, the parsed stats of that diff,
-the summary its session ended on - and follows the event log's two rules for the same reasons.
-`recordArtifact()` in `packages/core/src/artifacts/` is the only writer, nothing updates or deletes
-a row, and it takes an `Executor`, so `PhaseContext.artifact()` can write the row and its
-`artifact.recorded` event in one transaction. An event carrying an `artifactId` that resolves to
-nothing would be worse than no event at all, which is the same argument `exec` already makes for
-`job_commands`.
+`job_artifacts` holds a run's durable output - the diff and stats, implementation plan, session
+summary, `baseline_report` and `validation_report` - and follows the event log's two rules for the
+same reasons. `recordArtifact()` in `packages/core/src/artifacts/` is the only writer, nothing
+updates or deletes a row, and it takes an `Executor`, so `PhaseContext.artifact()` can write the row
+and its `artifact.recorded` event in one transaction. An event carrying an `artifactId` that
+resolves to nothing would be worse than no event at all, which is the same argument `exec` already
+makes for `job_commands`.
 
 Content is bounded by the writer rather than by its callers, with the head+tail elision a command
 transcript gets, and the cap is `RIVET_ARTIFACT_MAX_BYTES` on the worker rather than a constant in
@@ -657,6 +702,12 @@ core - `packages/core` holds no policy. `byte_size` records the size of what arr
 size of what was stored, which is the whole reason it is a column: a 4MB diff kept as 256KB is a
 fact a reader should get off the row without fetching either version, and `truncated` says the gap
 in the middle is Rivet's.
+
+The two validation reports opt into `requireComplete`: canonical JSON cannot be useful when
+head-and-tail clipped, so exceeding the artifact cap fails rather than persisting an unparseable
+partial report. Reporter files have a separate, larger complete-read cap before canonicalization;
+`RIVET_VALIDATION_REPORT_MAX_BYTES` must therefore remain above the artifact cap for the same reason
+the diff read cap does.
 
 That honesty depends on one thing outside the writer: `RIVET_DIFF_MAX_BYTES`, which caps how much
 diff text may cross the sandbox boundary at once, has to sit **above** the artifact bound. It
@@ -668,8 +719,8 @@ Reads are split. `listArtifacts()` returns metadata without content, because the
 the timeline should not pull a diff into every render; `getArtifact()` returns one artifact's
 content and is scoped by `jobId`, since ids are globally monotonic and an unscoped fetch would let
 one job's URL read another job's diff. The job detail page uses those two reads directly on the
-server: metadata is listed with the timeline, while the latest diff and implementation summary are
-fetched separately and rendered as bounded output.
+server: metadata is listed with the timeline, while the latest diff, implementation summary and
+validation report are fetched separately and rendered as bounded output.
 
 PRD §8 asks for S3-compatible object storage and PRD §10.8 gives `Artifact` a `storage_url`. Both
 are right for the end state and wrong here, where a fourth local service would have to be absent

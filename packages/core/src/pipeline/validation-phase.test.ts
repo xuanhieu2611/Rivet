@@ -678,7 +678,7 @@ describe("validationPhase", () => {
     const error = await test.run().catch((thrown: unknown) => thrown);
 
     expect(error).toBeInstanceOf(ValidationFailedError);
-    expect((error as Error).message).toContain("test unresolved");
+    expect((error as Error).message).toContain("test regressed");
     expect(test.executed.some((input) => input.argv.join(" ").includes("mkdir -p"))).toBe(true);
     expect(test.reads).toEqual([
       "/home/node/workspace/validation/after-targeted_test.json",
@@ -691,7 +691,7 @@ describe("validationPhase", () => {
       fixedFailures: ["src/discount.test.js::discount rejects A"],
     });
     expect(test.recorded()?.data).toMatchObject({
-      validation: "unresolved",
+      validation: "regressed",
       newFailures: 1,
       preExistingFailures: 0,
       fixedFailures: 1,
