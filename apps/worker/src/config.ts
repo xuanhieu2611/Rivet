@@ -130,6 +130,17 @@ export interface SandboxConfig {
    * truncated.
    */
   diffMaxBytes: number;
+  /**
+   * How old a container must be before the reaper will consider it abandoned.
+   *
+   * A grace period rather than zero because the reaper asks Postgres whether a
+   * container's job is still running, and a container created moments ago may
+   * belong to a job whose row has not yet been written - reaping that is the
+   * reaper causing the exact failure it exists to clean up after. Two minutes
+   * in production; `pnpm demo:recovery` compresses it so the orphan a killed
+   * worker left behind is provably gone before the demo ends.
+   */
+  reapGraceMs: number;
 }
 
 /**
@@ -140,8 +151,15 @@ export interface SandboxConfig {
  * legitimate answer in both places; in production it would mean every job
  * sleeping through the one phase that is supposed to do the work while
  * reporting `completed`, which is the worst failure mode on offer.
+ *
+ * `scripted` is the third answer and the narrowest: it loads a `CodingAgent`
+ * from a module path and calls no provider at all. It exists for
+ * `pnpm demo:recovery`, which has to prove that a killed worker's work is
+ * restored rather than that a model can be sampled twice and reach the same
+ * place. It is refused in production for the same reason `off` is - a
+ * deployment whose sessions are canned is a deployment doing no work.
  */
-export const AGENT_MODES = ["pi", "off"] as const;
+export const AGENT_MODES = ["pi", "off", "scripted"] as const;
 export type AgentMode = (typeof AGENT_MODES)[number];
 
 /**
@@ -177,6 +195,13 @@ export interface AgentConfig {
    * bug available here.
    */
   homeDir: string;
+  /**
+   * The module that supplies the agent under `RIVET_AGENT=scripted`.
+   *
+   * Present only in that mode, and required by it: a scripted mode with no
+   * script would be a worker that says it has an agent and does not.
+   */
+  scriptPath?: string;
 }
 
 /**
@@ -273,6 +298,7 @@ const schema = z.object({
   // truncated is truncated by the artifact writer - which records how big it
   // really was - rather than by the container's transcript cap, which does not.
   RIVET_DIFF_MAX_BYTES: z.coerce.number().int().min(1_024).max(16_777_216).default(1_048_576),
+  SANDBOX_REAP_GRACE_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(120_000),
 
   // --- coding agent (M4) -----------------------------------------------
   RIVET_AGENT: z.enum(AGENT_MODES).default("pi"),
@@ -285,6 +311,7 @@ const schema = z.object({
   AGENT_FILE_MAX_BYTES: z.coerce.number().int().min(1_024).max(8_388_608).default(262_144),
   AGENT_PREVIEW_MAX_BYTES: z.coerce.number().int().min(128).max(65_536).default(2_048),
   AGENT_HOME_DIR: z.string().min(1).default(join(tmpdir(), "rivet-pi")),
+  RIVET_AGENT_SCRIPT: z.string().min(1).optional(),
 });
 
 /** Every problem with the environment at once, rather than one per restart. */
@@ -359,6 +386,7 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
       baselineTimeoutMs: parsed.data.SANDBOX_BASELINE_TIMEOUT_MS,
       maxOutputBytes: parsed.data.SANDBOX_MAX_OUTPUT_BYTES,
       diffMaxBytes: parsed.data.RIVET_DIFF_MAX_BYTES,
+      reapGraceMs: parsed.data.SANDBOX_REAP_GRACE_MS,
     },
     agent: {
       mode: parsed.data.RIVET_AGENT,
@@ -370,6 +398,7 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
       fileMaxBytes: parsed.data.AGENT_FILE_MAX_BYTES,
       previewMaxBytes: parsed.data.AGENT_PREVIEW_MAX_BYTES,
       homeDir: parsed.data.AGENT_HOME_DIR,
+      ...parseAgentScript(parsed.data.RIVET_AGENT, parsed.data.RIVET_AGENT_SCRIPT),
     },
   };
 
@@ -416,6 +445,45 @@ export function assertRealAgentInProduction(mode: AgentMode, nodeEnv?: string): 
         "Set RIVET_AGENT=pi, or run this worker outside production.",
     ]);
   }
+  if (mode === "scripted" && nodeEnv === "production") {
+    throw new WorkerConfigError([
+      "RIVET_AGENT=scripted replays a canned session from RIVET_AGENT_SCRIPT, which cannot be " +
+        "used with NODE_ENV=production: every job would complete having written whatever that " +
+        "script says rather than what a model decided. It exists for pnpm demo:recovery. " +
+        "Set RIVET_AGENT=pi, or run this worker outside production.",
+    ]);
+  }
+}
+
+/**
+ * `RIVET_AGENT_SCRIPT` and `RIVET_AGENT=scripted` need each other.
+ *
+ * The same argument as `parseFault`, and the same two silent failures: a
+ * scripted mode with no module has no session to run, and a module named
+ * without the mode looks armed while `pi` quietly calls the real provider -
+ * which is the expensive direction of that mistake.
+ */
+function parseAgentScript(
+  mode: AgentMode,
+  scriptPath: string | undefined,
+): { scriptPath?: string } {
+  if (mode === "scripted") {
+    if (!scriptPath) {
+      throw new WorkerConfigError([
+        "RIVET_AGENT=scripted needs RIVET_AGENT_SCRIPT: the path to a module exporting " +
+          "createCodingAgent(). Without it there is no session for the implementing phase to run.",
+      ]);
+    }
+    return { scriptPath };
+  }
+
+  if (scriptPath !== undefined) {
+    throw new WorkerConfigError([
+      `RIVET_AGENT_SCRIPT is set but RIVET_AGENT is ${mode}, so the script would be ignored. ` +
+        "Set RIVET_AGENT=scripted to run it, or unset RIVET_AGENT_SCRIPT.",
+    ]);
+  }
+  return {};
 }
 
 /**

@@ -12,42 +12,56 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 5 is complete.** Jobs execute. Creating one enqueues it, a worker claims
-it under a Postgres lease, provisions a sandbox, records a baseline, runs a Pi coding session during
-`implementing`, heartbeats while it runs, and lands it in a terminal status. Retries, cancellation,
-timeouts, crash recovery, agent budgets, usage persistence, and provider failure classification all
-work and are covered by the unit, integration, sandbox and streaming suites. Review remains
-simulated until Milestone 8, and the branch, commit and pull request belong to Milestone 9.
+**Current state: Milestone 6 is complete.** Jobs execute and now survive their worker. Creating one
+enqueues it, a worker claims it under a Postgres lease, provisions a sandbox, records a baseline,
+plans, runs a Pi coding session during `implementing`, heartbeats while it runs, and lands it in a
+terminal status. Retries, cancellation, timeouts, crash recovery, agent budgets, usage persistence
+and provider failure classification all work and are covered by the unit, integration, sandbox and
+streaming suites. Review remains simulated until Milestone 8, and the branch, commit and pull
+request belong to Milestone 9.
 
-Milestone 5 is complete. Its phase layout has landed - the baseline runs at `analyzing`, before
-anything has been edited, and `planning` records one `plan.deferred` event instead of sleeping for
-two seconds as though a plan were being made - and `testing` is now validation. It stages the
-working tree, keeps `git diff --cached` and its `--numstat` totals as `diff` and `diff_stat`
-artifacts, re-runs the script the baseline ran, and compares: `verified`, `fixed`, `regressed`,
-`unresolved` or `unverified` on a `validation.recorded` event. The last two green outcomes are
-deliberate and the two failing ones are terminal. `finalizing` is real too: it keeps the session's
-last assistant message as an `implementation_summary` artifact - reading it back out of the event
-log rather than across a phase boundary, because `runPipeline` hands nothing from one phase to the
-next - and writes the run's closing `run.summarized` line carrying the validation outcome and the
-diff totals. `pnpm demo:job` exercises the completed flow against the public fixture with a real Pi
-session. Branch, commit, push and pull request stay with Milestone 9.
+M5's phase layout is the base: the baseline runs at `analyzing`, before anything has been edited,
+and `testing` is validation. It stages the working tree, keeps `git diff --cached` and its
+`--numstat` totals as `diff` and `diff_stat` artifacts, re-runs the script the baseline ran, and
+compares: `verified`, `fixed`, `regressed`, `unresolved` or `unverified` on a `validation.recorded`
+event. The last two green outcomes are deliberate and the two failing ones are terminal.
+`finalizing` keeps the session's last assistant message as an `implementation_summary` artifact -
+reading it back out of the event log rather than across a phase boundary, because `runPipeline`
+hands nothing from one phase to the next - and writes the run's closing `run.summarized` line
+carrying the validation outcome and the diff totals. `pnpm demo:job` exercises that flow against the
+public fixture with a real Pi session.
+
+**M6 makes the attempt durable, and it is four things.** `planning` is a real read-only planner
+session whose only tools are `list_files`, `read`, `search_text` and `submit_plan`, and whose
+validated `ImplementationPlan` is persisted as an artifact every later implementation session reads
+back; a session that submits nothing fails with `plan_not_produced`. Every completed phase (except
+`provisioning` and `finalizing`) and every completed implementation turn captures a lossless binary
+Git patch of the workspace into `job_checkpoints`. A reclaim increments `jobs.dispatch_generation`
+in the same transaction that clears the lease, so the replacement worker claims immediately rather
+than waiting for BullMQ to declare the dead worker's message stalled. And recovery provisions a
+**new** container at the original commit, applies the patch, re-derives it, compares the SHA-256,
+and only then writes `checkpoint.restored` and `run.resumed` and continues from the checkpointed
+phase with a fresh session that is told what it inherited. `pnpm demo:recovery` proves all of it
+against Docker with a `kill -9`.
 
 `packages/sandbox` is real; `buildPipeline()` gives `provisioning`, `analyzing`, `planning`,
 `implementing`, `testing` and `finalizing` real bodies - create a container, clone the repository,
-resolve the commit, install dependencies, run the repository's own test suite and record the
-baseline, state that no plan was produced, run a coding session, judge what it did, then keep what
-it said and state what the run came to - and `apps/worker` calls it, selected by `RIVET_SANDBOX`
-(`docker` by default, `off` for the simulated pipeline). The processor owns the container and
-destroys it on every exit; the sweeper reaps whatever a `kill -9` left behind.
+resolve the commit, restore a checkpoint when there is one, install dependencies, run the
+repository's own test suite and record the baseline, produce a structured plan, run a coding
+session, judge what it did, then keep what it said and state what the run came to - and
+`apps/worker` calls it, selected by `RIVET_SANDBOX` (`docker` by default, `off` for the simulated
+pipeline). The processor owns the container and destroys it on every exit; the sweeper reaps
+whatever a `kill -9` left behind.
 
-**`implementing`, `testing` and `finalizing` are wired to the same condition: an agent.** Without
-one, all three stay sleeps. Validation's first act is to fail a job whose diff is empty, which is
-the right answer for a session that changed nothing and the wrong one for a pipeline that never had
-a session - it would be validating the absence of a phase, and every job under `RIVET_AGENT=off`
-would fail with `no_changes_produced` while nothing was wrong. `finalizing` follows for the milder
-version of the same reason: a phase whose two outputs are the session's summary and the validation
-outcome has nothing to summarize when neither of the phases producing them ran. Production is
-unaffected, because `parseWorkerConfig` refuses `RIVET_AGENT=off` under `NODE_ENV=production`.
+**`planning`, `implementing`, `testing` and `finalizing` are wired to the same condition: an
+agent.** Without one, all four stay sleeps. Validation's first act is to fail a job whose diff is
+empty, which is the right answer for a session that changed nothing and the wrong one for a pipeline
+that never had a session - it would be validating the absence of a phase, and every job under
+`RIVET_AGENT=off` would fail with `no_changes_produced` while nothing was wrong. `finalizing`
+follows for the milder version of the same reason: a phase whose two outputs are the session's
+summary and the validation outcome has nothing to summarize when neither of the phases producing
+them ran. Production is unaffected, because `parseWorkerConfig` refuses `RIVET_AGENT=off` - and
+`RIVET_AGENT=scripted` - under `NODE_ENV=production`.
 
 M3 makes the append-only event log observable. The job detail route serves JSON to ordinary callers
 and a Postgres-backed SSE stream to live viewers. The browser reducer reconnects from durable event
@@ -55,7 +69,9 @@ ids, deduplicates replayed rows, closes hidden tabs, and drains terminal cleanup
 refresh. Commands expose a start event immediately and fetch their bounded transcript lazily. The M5
 web surface lists artifact metadata at `/api/jobs/:id/artifacts`, fetches one artifact's content on
 demand, and renders the latest summary and diff on the server after the terminal refresh. The
-validation, artifact and deferred-plan events have dedicated timeline presentations.
+validation, artifact, plan, checkpoint, reclaim, restore and resume events have dedicated timeline
+presentations, and the M6 surface adds an implementation-plan panel rendering the six structured
+sections. No checkpoint payload reaches the browser and there is no checkpoint download endpoint.
 
 **A red baseline is not a failed job.** The `analyzing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
@@ -78,7 +94,8 @@ pnpm test:integration    # the *.int.test.ts suite; needs a LOCAL Postgres and R
 pnpm test:sandbox        # the *.sbx.test.ts suite; needs LOCAL Postgres, Redis and Docker
 pnpm test:streaming      # the web SSE suite; needs LOCAL Postgres, no Redis or Docker
 pnpm demo:agent          # one real Pi session against a disposable Docker fixture
-pnpm demo:job             # full M5 job against rivet-fixture-node with Pi, Postgres, Redis and Docker
+pnpm demo:job            # full job against rivet-fixture-node with Pi, Postgres, Redis and Docker
+pnpm demo:recovery       # kill a worker mid-job and prove the replacement resumes; no model key
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 
@@ -117,6 +134,12 @@ redis-server --port 6379 --daemonize yes --save "" --appendonly no
 
 pnpm test:integration
 ```
+
+One case in that suite spawns worker processes of its own and kills one with `SIGKILL`
+(`tests/integration/crash-worker.ts`), because a thrown error is a graceful failure and
+`process.exit()` still unwinds - neither is the thing M6's recovery path exists for. Its checkpoint
+is written from the phase rather than captured, since `RIVET_SANDBOX=off` leaves no working tree to
+snapshot; the sandbox suite proves the bytes and `pnpm demo:recovery` proves both together.
 
 The suite defaults to `postgresql://postgres:postgres@localhost:5432/rivet_test` and
 `redis://localhost:6379`, matching CI's service containers, and reads `.env.test` if one exists. It
@@ -244,8 +267,12 @@ runs in the worker process; its four tools - `read`, `write`, `edit`, `bash` - e
 `bash` tool hands its operations an `env` built from the worker's own `process.env`; forwarding it
 would put `OPENROUTER_API_KEY` inside a container running arbitrary cloned code, so it is ignored,
 always. And after `createAgentSession` returns, `PiCodingAgent` asserts that
-`session.getActiveToolNames()` is exactly those four and fails the job otherwise - which is the
-difference between believing no host-side tool survived and knowing it. Be honest about what this
+`session.getActiveToolNames()` is exactly the role's set - `bash, edit, read, write` for an
+implementer, `list_files, read, search_text, submit_plan` for a planner - and fails the job
+otherwise, which is the difference between believing no host-side tool survived and knowing it. The
+planner's read-only-ness is therefore a capability boundary rather than a sentence in a prompt, and
+`submit_plan` is the one deliberate worker-side tool: it validates a structured value and hands it
+to the phase, and can read nothing, write nothing and execute nothing. Be honest about what this
 buys: it contains the _model_, not the harness. Nothing sandboxes the harness process itself.
 
 **`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
@@ -253,14 +280,14 @@ merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, 
 sneak a status through the patch. There are exactly five `.update(jobs)` sites in `packages/`, and
 the other four touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
 `cancel_requested_at`, `jobs/provisioning.ts` writes `sandbox_id`, `base_commit_sha` and
-`env_fingerprint`, and `jobs/agent-usage.ts` writes cumulative model totals fenced on `lease_owner`.
-The last two take the same patch type, so neither can touch `status`; they exist because those facts
-become true when a command or model turn answers, not when the job later changes phase, and a fact
-recorded at a moment that has nothing to do with the fact is how a timeline starts lying. Stamping a
-cancel is deliberately not a status change; the job reaches `cancelled` through the worker's own
-transition under its own lease. Every status change is a compare-and-swap on the expected `from`
-status, optionally fenced on `lease_owner`, and writes its event row in the same transaction. Adding
-another status writer breaks all of that at once.
+`env_fingerprint`, and `jobs/agent-usage.ts` writes the cumulative model, tool, turn, token and cost
+totals fenced on `lease_owner`. The last two take the same patch type, so neither can touch
+`status`; they exist because those facts become true when a command or model turn answers, not when
+the job later changes phase, and a fact recorded at a moment that has nothing to do with the fact is
+how a timeline starts lying. Stamping a cancel is deliberately not a status change; the job reaches
+`cancelled` through the worker's own transition under its own lease. Every status change is a
+compare-and-swap on the expected `from` status, optionally fenced on `lease_owner`, and writes its
+event row in the same transaction. Adding another status writer breaks all of that at once.
 
 **`appendEvent()` is the only writer of `job_events`, and it takes an `Executor`.** Pass the
 transaction and the event lands atomically with the status change it describes; pass nothing and it
@@ -281,6 +308,54 @@ That last property has one dependency outside the writer: `RIVET_DIFF_MAX_BYTES`
 which bounds one `git diff` read, must stay **above** `RIVET_ARTIFACT_MAX_BYTES`. Read a diff
 through the ordinary 64KB transcript cap and it arrives already clipped, so `byte_size` records the
 clipped length as the true one - the exact failure that column exists to prevent.
+
+**`recordCheckpoint()` is the only writer of `job_checkpoints`, and a checkpoint is never
+truncated.** Same shape again, with two additions that matter. It locks the job row and verifies
+`lease_owner` before it allocates the next per-job sequence, so a phase that has lost its lease can
+still compute a patch and can never make it authoritative. And where an artifact above its cap is
+clipped to head and tail, a patch above `RIVET_CHECKPOINT_MAX_BYTES` (4MiB) is **refused** with
+`checkpoint_too_large` - a clipped patch is not a patch, and storing one would promise a resume that
+cannot happen. Phases go through `PhaseContext.checkpoint()`, which captures the workspace and
+commits the row with its `checkpoint.created` event; at a phase boundary the capture happens before
+`phase.completed`, so a crash between the two replays the phase rather than skipping it.
+
+**Workspace capture goes through a temporary Git index, and the flags are not decoration.**
+`GIT_INDEX_FILE=<temp> git read-tree HEAD`, `git add -A`, then
+`git diff --cached --binary --full-index --no-renames --no-ext-diff --no-textconv HEAD`. Against the
+real index, `git add -A` would make the next session's ordinary `git diff` come back empty and
+overwrite whatever the model had staged. `--binary`/`--full-index` keep binary edits, modes,
+deletions and additions recoverable; `--no-renames` keeps the format from depending on the applying
+git's rename detection; the two `--no-*` flags stop repository configuration from changing the
+format or running another program during capture. Every patch is cut against the job's immutable
+`base_commit_sha`, never against the previous checkpoint, so one bad row cannot invalidate
+everything after it. The temporary index is removed on every exit path, including the failing ones.
+
+**A restore is not restored until its checksum agrees, and the check runs before the install.**
+Provisioning applies the patch into the working tree, re-derives it with the same capture, and
+compares SHA-256; only then may `checkpoint.restored` and `run.resumed` be written and the status
+move from `provisioning` to the resume phase. The dependency install comes after, against the
+restored manifest - an interrupted session may have changed a lockfile - but never before the
+comparison, because a package manager that rewrites one would fail a perfectly restored job with
+`checkpoint_restore_failed`.
+
+**Recovery never silently starts over.** A checkpoint that fails validation is terminal
+(`checkpoint_corrupt`), and one that will not apply is terminal (`checkpoint_restore_failed`), with
+the failing argv and bounded stderr on `checkpoint.rejected`. Discarding acknowledged progress and
+running the job again from zero would look like success and is the failure this milestone exists to
+prevent.
+
+**Budgets and `deadline_at` are the job's, not the attempt's.** Model calls, tool calls, turns,
+tokens and cost are cumulative columns on `jobs` that a session seeds from the claimed row rather
+than from zero, written back under the lease on the events the ceilings are compared against.
+`deadline_at` is fixed by the first claim from Postgres `now()` and coalesced by every later one, so
+downtime counts against the job and a claim with nothing left fails `timed_out` before a container
+is created. Only `AgentOptions.maxTurns` stays per-session, because it asks whether one conversation
+stopped getting anywhere. A crash must never hand a replacement worker a fresh budget.
+
+**`Phase.recovery` is required, and the vocabulary is three words.** `replay`, `checkpoint`,
+`reconcile_external`. Everything declares `replay` except `implementing`, whose turn checkpoints are
+a real cursor; nothing declares `reconcile_external`, and a test asserts that. It exists so
+Milestone 9's first GitHub call is a compile-time decision rather than an inherited replay policy.
 
 **`job_events` remains the source of truth for live replay.** The SSE route tails Postgres directly;
 it does not use Redis Pub/Sub or keep a second event history. A visible active job page issues at

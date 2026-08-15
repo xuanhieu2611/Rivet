@@ -1,6 +1,7 @@
 # Milestone 6: Planning, persistence, and recovery
 
-**Status: planned.**
+**Status: complete.** Every stage has landed, the verification matrix is green, and
+`pnpm demo:recovery` passes against Docker, Postgres and Redis.
 
 Milestone 5 proved that Rivet can take one coding job from a repository URL to a validated patch. It
 also left the exact recovery boundary visible: Postgres can reclaim a job after a worker dies, but
@@ -758,6 +759,41 @@ Update `docs/architecture.md`, `README.md`, `.env.example`, and `AGENTS.md` only
 implementation matches them. Architecture documentation must replace the current statement that
 there are no checkpoints or resumable jobs, explain dispatch generations, and state plainly that a
 fresh Pi session continues restored work.
+
+**The demo is a worker, not a harness pretending to be one.** `pnpm demo:recovery` starts two
+children of the production entrypoint and kills the first with `SIGKILL` the instant its first
+implementation turn is durable. What made that possible without a second copy of `index.ts` is a
+third agent mode: `RIVET_AGENT=scripted` loads a `CodingAgent` from `RIVET_AGENT_SCRIPT` and calls
+no provider, and `parseWorkerConfig` refuses it under `NODE_ENV=production` exactly as it refuses
+`off`. The script itself (`apps/worker/src/recovery-demo-agent.ts`) tells its two implementation
+sessions apart by the recovery block in `spec.context` rather than by a counter, because worker A
+and worker B are separate processes that each load it fresh - and the second session deliberately
+**makes no edit of its own**. It reads the restored file, refuses to continue if the fix is not
+already there, runs the suite and stops, so the job can only reach `completed` with a `fixed`
+outcome if the killed worker's bytes were captured, restored into a different container and
+verified. A restore that silently did nothing fails the job rather than quietly re-fixing the bug.
+
+The harness checks sixteen facts against durable rows - not against its own memory of what it did -
+and the last of them is the Stage 0 acceptance trace itself, asserted in order. That trace moved to
+`apps/worker/src/recovery-trace.ts` so the contract test and the demo check one definition rather
+than two; `tests/integration/support.ts` re-exports it. `SANDBOX_REAP_GRACE_MS` is new for the same
+reason: the orphaned container is reaped on a two-minute grace in production, and a demo that ends
+in a minute could not otherwise prove it was gone.
+
+**The crash case is split across two suites, deliberately.**
+`tests/integration/recovery-contract.int.test.ts` spawns `crash-worker.ts`, kills it with `SIGKILL`
+after its checkpoint is durable, and watches a second child claim the new generation while the dead
+worker's message is still `active` in Redis - a real process, because a thrown error is a graceful
+failure and `process.exit()` still unwinds. It runs under `RIVET_SANDBOX=off`, so its checkpoint is
+written from the phase rather than captured from a working tree; that keeps CI's integration job on
+Postgres and Redis alone. The bytes are the sandbox suite's subject, which now also covers renames,
+a restored manifest and lockfile driving the install, and an oversized capture that is refused
+without leaving its temporary index behind. `demo:recovery` is where both halves meet.
+
+The streaming suite gained the M6 event types - plan, checkpoint, reclaim, restore, resume, rejected
+
+- through replay and through a reconnect across a reclaim, because a viewer whose worker died is
+  exactly the reader that must not lose or duplicate a row.
 
 ---
 

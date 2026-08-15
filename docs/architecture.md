@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, at the end of Milestone 4, and names the
+This document describes Rivet **as it exists today**, at the end of Milestone 6, and names the
 places where the current shape is a deliberate shortcut rather than the intended end state. It is
 updated as each milestone lands rather than describing a system that does not exist yet.
 
@@ -31,8 +31,12 @@ turned `testing` into validation: it keeps the session's diff as an artifact, re
 own suite, and compares the two. `finalizing` then keeps the session's own account of the change as
 an `implementation_summary` artifact and closes the timeline with a `run.summarized` event carrying
 the outcome and the diff totals. The job detail page lists those artifacts, renders the latest
-summary and diff, and gives the new event types their own timeline presentation. Review remains
-simulated until Milestone 8, and the branch, commit and pull request belong to Milestone 9.
+summary and diff, and gives the new event types their own timeline presentation. Milestone 6 made
+the attempt itself durable: `planning` runs a real read-only planner session and persists a
+structured plan, every completed phase and every completed model turn captures a lossless workspace
+patch, and a reclaimed job is restored into a **new** container at the original commit and continues
+from where it stopped. Review remains simulated until Milestone 8, and the branch, commit and pull
+request belong to Milestone 9.
 
 ## What exists today
 
@@ -49,13 +53,15 @@ simulated until Milestone 8, and the branch, commit and pull request belong to M
 | Data access   | `packages/database`  | Drizzle schema, generated migrations, the `pg` pool                                          |
 | Shared config | `packages/config`    | The tsconfig and ESLint bases every workspace extends                                        |
 
-Four tables. `jobs` holds the domain model: the task, repository and base branch, the full status
-machine, budget ceilings, lease and retry state, and the sandbox's resolved commit and environment
-fingerprint. `job_events` is the append-only history behind the execution timeline. `job_commands`
-is the append-only command ledger; transcripts live there rather than bloating every timeline read.
-`job_artifacts` is the append-only store of a run's durable output - the diff, its stats, the
-implementation summary - bounded and read one fetch away for the same reason. Columns that only
-later milestones can fill remain nullable.
+Five tables. `jobs` holds the domain model: the task, repository and base branch, the full status
+machine, budget ceilings, cumulative model spend, the immutable deadline, lease and retry state, the
+dispatch generation, and the sandbox's resolved commit and environment fingerprint. `job_events` is
+the append-only history behind the execution timeline. `job_commands` is the append-only command
+ledger; transcripts live there rather than bloating every timeline read. `job_artifacts` is the
+append-only store of a run's durable output - the diff, its stats, the implementation plan, the
+implementation summary - bounded and read one fetch away for the same reason. `job_checkpoints` is
+the durable workflow cursor: one row per safe boundary, carrying the phase to resume at and a
+complete compressed workspace patch. Columns that only later milestones can fill remain nullable.
 
 ## The two deployables and the package they share
 
@@ -287,19 +293,22 @@ to act and the claim is a compare-and-swap.
 The pipeline itself is seven phases - provision, analyze, plan, implement, test, review, finalize.
 Milestone 2 made provisioning and the baseline real sandbox work, Milestone 4 made implementing a
 real Pi session when an agent is supplied, and Milestone 5 moved the baseline onto `analyzing` so it
-measures the repository before the session edits it. Planning now runs a body that records one
-`plan.deferred` event and returns, rather than sleeping for two seconds as though a plan were being
-made. Testing is validation: it stages the working tree, keeps the diff and its stats as artifacts,
-re-runs the script the baseline ran, and compares the two. Finalizing persists the session's own
-account of the change and writes the run's closing line; reviewing is still simulated. The
-`RIVET_AGENT=off` integration configuration deliberately leaves implementing simulated, and leaves
-testing and finalizing simulated with it - validating a run that never had a session would be
-validating the absence of a phase, and every job would fail with `no_changes_produced` while nothing
-was wrong, and a phase whose two outputs are the session's summary and the validation outcome has
-nothing to summarize when neither was produced - so lifecycle tests need no model key. That is the
-entire reason `runPipeline` takes its clock, its sleep, its callbacks and its fault injector as
-arguments rather than importing them: the same runner drives the demo at `speed: 1` and the unit
-tests at `speed: 0`.
+measures the repository before the session edits it. Milestone 6 made planning a real phase: a
+second, read-only model session whose only capabilities are `list_files`, `read`, `search_text` and
+`submit_plan`, and whose validated `ImplementationPlan` is persisted as an artifact that every later
+implementation session - including one started by a replacement worker - reads back. A session that
+ends without submitting a plan fails with `plan_not_produced`; read-only is a capability boundary
+here rather than a sentence in a prompt. Testing is validation: it stages the working tree, keeps
+the diff and its stats as artifacts, re-runs the script the baseline ran, and compares the two.
+Finalizing persists the session's own account of the change and writes the run's closing line;
+reviewing is still simulated. The `RIVET_AGENT=off` integration configuration deliberately leaves
+implementing simulated, and leaves testing and finalizing simulated with it - validating a run that
+never had a session would be validating the absence of a phase, and every job would fail with
+`no_changes_produced` while nothing was wrong, and a phase whose two outputs are the session's
+summary and the validation outcome has nothing to summarize when neither was produced - so lifecycle
+tests need no model key. That is the entire reason `runPipeline` takes its clock, its sleep, its
+callbacks and its fault injector as arguments rather than importing them: the same runner drives the
+demo at `speed: 1` and the unit tests at `speed: 0`.
 
 Seven fault-injection modes exist so the recovery machinery and the sandbox failure taxonomy have
 something to recover from on demand: `throw` (retryable), `fatal` (terminal), `hang` (ignores the
@@ -456,6 +465,75 @@ startup. 60 seconds and not 10, because a sweep is a Postgres query on a schedul
 endpoint will not autosuspend while something keeps querying it - a chattier sweeper quietly spends
 the free tier's monthly compute allowance on finding nothing.
 
+## Checkpoints and recovery
+
+A reclaimed job used to keep only its row. Everything the dead worker's session had written was gone
+with its container, so the replacement started at `provisioning` and did the whole job again.
+Milestone 6 keeps the work instead, without pretending a model process can be snapshotted.
+
+**What is checkpointed is a workspace, not a conversation.** After every completed phase - except
+`provisioning` and `finalizing` - and after every completed implementation turn, the phase captures
+the working tree through a temporary Git index:
+
+```text
+GIT_INDEX_FILE=<temp> git read-tree HEAD
+GIT_INDEX_FILE=<temp> git add -A
+GIT_INDEX_FILE=<temp> git diff --cached --binary --full-index --no-renames --no-ext-diff --no-textconv HEAD
+```
+
+The temporary index is the point: `git add -A` against the real one would make the next session's
+ordinary `git diff` come back empty and would overwrite whatever the model had staged. `--binary`
+and `--full-index` make binary edits, modes, deletions and additions recoverable; `--no-renames`
+keeps the format from depending on the applying git's rename detection; the two `--no-*` flags stop
+repository configuration from changing the format or running another program during capture. The
+patch is always cut against the job's immutable `base_commit_sha` rather than against the previous
+checkpoint, so one bad row cannot invalidate everything after it, and it is gzipped whole - never
+truncated - under `RIVET_CHECKPOINT_MAX_BYTES`.
+
+`recordCheckpoint()` is the only writer. It locks the job row, verifies `lease_owner`, allocates the
+next per-job sequence and appends `checkpoint.created` in one transaction, so a worker that has lost
+its lease can still compute a patch and can never make it authoritative. At a phase boundary the
+capture happens **before** `phase.completed`, so a crash between the two replays the phase rather
+than skipping it.
+
+**Recovery is deterministic application code, not an agent decision.** After the claim, the
+processor reads the latest checkpoint and `planResume()` maps it onto `[provisioning, ...suffix]`.
+Every claim still enters `provisioning`, because a run has to have an environment before it can
+truthfully display `implementing`; what recovery provisioning does differently is fetch the original
+commit by SHA, upload the patch, `git apply --binary` it into the working tree, and **re-derive the
+patch and compare its SHA-256 with the stored one** before anything is called restored. Only then
+does `checkpoint.restored` name both the original and the replacement container id - the pair that
+proves this was reconstruction rather than reuse - and `run.resumed` say where the run is picking
+up. The checksum check runs before the dependency install, deliberately: a package manager that
+rewrites a lockfile changes the working tree for reasons that have nothing to do with restoration.
+The install then runs against the restored manifest, which is why it comes after the patch at all.
+
+A checkpoint that fails integrity validation is a terminal `checkpoint_corrupt` failure and one that
+will not apply is `checkpoint_restore_failed`. Neither is silently discarded: quietly restarting
+from zero after acknowledged progress is worse than stopping and saying so.
+
+**The replacement session is a fresh one, and it is told so.** Rivet does not resume a Pi session
+file - that is adapter-owned, version-sensitive state, and making it the durability boundary would
+turn a Pi upgrade into a checkpoint migration. Instead the implementation phase builds a bounded
+recovery block: the checkpoint sequence and prior attempt, the persisted plan, the baseline and the
+exact validation command, the restored patch's file and line totals, the interrupted session's last
+message, what remains of every cumulative budget, and an instruction to read `git diff` and continue
+rather than start over. The whole event stream stays in Postgres for the UI to replay; none of it is
+pasted into the prompt.
+
+Budgets and the deadline are what stop recovery from becoming a loophole. Model calls, tool calls,
+turns, tokens and cost are cumulative counters on `jobs` that a new session seeds from the row
+rather than from zero, and `deadline_at` is fixed by the **first** claim from the database clock and
+coalesced by every later one - so downtime counts against the job, and a claim with nothing left
+fails with `timed_out` before a container is created. Only `maxTurns` stays per-session, because it
+asks whether one conversation stopped getting anywhere.
+
+Every phase declares a `recovery` mode from a three-word vocabulary - `replay`, `checkpoint`,
+`reconcile_external` - and the field is required, so the compiler asks the question. Everything
+declares `replay` except `implementing`, whose turn checkpoints are a real cursor. Nothing declares
+`reconcile_external` yet, and a test asserts that: Milestone 9's first GitHub call has to change it
+deliberately rather than inheriting a replay policy by accident.
+
 ## The dual-write gap, and why the sweeper is the honest answer
 
 `POST /api/jobs` commits a row to Postgres and then sends a message to Redis. There is no
@@ -490,8 +568,11 @@ intent-to-enqueue into a table inside the job's own transaction and having a rel
 would close the window rather than reconcile it. It costs a second table, a relay, and its own
 failure modes, to buy correctness this design already gets from reconciliation, at the price of up
 to one sweep interval of latency in a rare case. That trade is worth revisiting when the latency
-matters or when a job has external side effects that must not be replayed - which is Milestone 6's
-territory, not this one's.
+matters or when a job has external side effects that must not be replayed. Milestone 6 wrote down
+the rule for those - deterministic operation key, reconcile with the provider before repeating an
+uncertain action, use its idempotency key, persist the reference before the phase is called
+complete, never read a local timeout as proof the provider did nothing - and deliberately built no
+receipt table, because there is no external effect yet whose request fingerprint it could store.
 
 ## The event log
 
@@ -591,11 +672,19 @@ server: metadata is listed with the timeline, while the latest diff and implemen
 fetched separately and rendered as bounded output.
 
 PRD §8 asks for S3-compatible object storage and PRD §10.8 gives `Artifact` a `storage_url`. Both
-are right for the end state and wrong for Milestone 5, where a fourth local service would have to be
-absent from CI's `verify` job, present in two of the other three, and credentialed in the worker,
-all to store a diff that is usually under 20KB. When it arrives it replaces the bodies of
-`recordArtifact` and `getArtifact` behind the same signatures, because phases reach the store only
-through `PhaseContext.artifact()`.
+are right for the end state and wrong here, where a fourth local service would have to be absent
+from CI's `verify` job, present in two of the other three, and credentialed in the worker, all to
+store a diff that is usually under 20KB. When it arrives it replaces the bodies of `recordArtifact`
+and `getArtifact` behind the same signatures, because phases reach the store only through
+`PhaseContext.artifact()`.
+
+Checkpoint payloads are in Postgres for the same reason and behind the same kind of seam: the
+checkpoint module owns every read and write of `patch_payload`, so object storage replaces its body
+rather than every phase. They differ from artifacts in one way that matters - a checkpoint is never
+truncated. An artifact clipped to its head and tail is still a readable record; a patch clipped
+anywhere is not a patch, so an oversized one is refused with `checkpoint_too_large` instead.
+Checkpoint bytes never reach the browser: the UI gets metadata from events, and there is no
+checkpoint download endpoint.
 
 ## Database access
 
@@ -650,15 +739,24 @@ pipeline runner at `speed: 0`, the config invariant, the in-memory queue and the
 `postgres:17` and `redis:8` service containers in CI, local services on a dev machine. It is a
 separate vitest config with no file pattern in common with the default suite, so `pnpm test` cannot
 pick it up by accident. It proves exclusive claims, fencing, retries, cancellation, timeouts, crash
-recovery, Postgres/Redis reconciliation, and the implementing phase with a scripted coding agent.
+recovery, Postgres/Redis reconciliation, and the implementing phase with a scripted coding agent. It
+also owns the Milestone 6 crash case: a worker in a child process of its own, killed with `SIGKILL`
+once its progress is durable, and a second child that claims the new dispatch generation while the
+dead worker's message is still `active` in Redis and finishes the job from the cursor it left. That
+case needs a real process, because a thrown error is a graceful failure and `process.exit()` still
+unwinds.
 
 `pnpm test:sandbox` is the third, non-overlapping suite. It uses the real Docker daemon plus local
 Postgres and Redis. It proves stream separation, non-zero exits, truncation, command timeouts,
 memory and PID limits, uid 1000, cleanup and reaping, drives a hermetic repository through the real
 worker to `completed`, and exercises the four sandbox-backed coding-agent tools without a model. Its
 git daemon serves temporary bare repositories only; no public network or package registry is
-involved. The suite refuses a non-local Docker host unless the caller explicitly opts in, just as
-the integration suite refuses remote databases.
+involved. It also proves the half of recovery no unit test can: a workspace patch captured in one
+container - modifications, additions, deletions, renames, executable bits, binary files - applies in
+a different one, re-derives the same SHA-256, installs from the restored manifest rather than the
+base commit's, refuses a patch cut from another base, and cleans up its temporary index even when it
+rejects an oversized capture. The suite refuses a non-local Docker host unless the caller explicitly
+opts in, just as the integration suite refuses remote databases.
 
 `pnpm test:streaming` is the fourth suite, in `apps/web/tests/streaming`. It uses real Postgres but
 no Redis or Docker and calls the route handler directly with `Request` objects. It proves SSE
@@ -675,15 +773,27 @@ trip to Postgres, which is where the clock that matters actually lives. And ever
 run against a host that is not plainly local, because its cases truncate `jobs` and `job_events`
 while `.env.local` on every dev machine points at the real Neon database.
 
+Two demos sit outside CI and need credentials or a daemon, which is why they are commands rather
+than tests. `pnpm demo:job` runs one real Pi session against the public fixture end to end.
+`pnpm demo:recovery` runs the Milestone 6 definition of done: worker A is killed with `SIGKILL` the
+instant its first implementation turn is durable, worker B restores the patch into a different
+container and finishes, and the harness checks the plan, the generation, the two container ids, the
+patch checksum, the un-rerun phases, the cumulative budgets and the full acceptance trace before it
+exits. Its agent is scripted on purpose - the replacement session makes no edit of its own, so the
+job can only reach `completed` if the killed worker's bytes really were restored - and a model
+sampling differently twice cannot make a recovery demo fail.
+
 ## What is deliberately absent
 
 Named so their absence reads as a decision rather than an oversight: no authentication or `user_id`
 (Milestone 9 brings GitHub identity), no `repository_id` foreign key (there is no Repository table
-to point at, so the job stores a plain `repo_url`), no checkpoints or resumable jobs (M6), no
-transactional outbox (see the dual-write section for why), and no deployment. The Pi implementation
-session is real and analysis establishes a baseline, but review is still simulated and planning
-deliberately produces nothing, and the bridge network is not the hardened isolation boundary a
-production worker needs.
+to point at, so the job stores a plain `repo_url`), no external-effect receipt table (M9, when there
+is a GitHub call whose fingerprint it could store), no object storage for artifacts or checkpoint
+payloads, no transactional outbox (see the dual-write section for why), and no deployment. The Pi
+implementation and planning sessions are real, analysis establishes a baseline and a killed job
+resumes from its checkpoint, but review is still simulated, and the bridge network is not the
+hardened isolation boundary a production worker needs - Rivet can restore repository state after a
+crash, but it cannot tell whether repository code called an external service before the worker died.
 
 The stream targets a long-lived Node.js host. Native EventSource reconnect makes interruptions safe,
 but a deployment platform that buffers or caps long responses can still terminate it. Before public
@@ -691,8 +801,7 @@ deployment, Rivet needs a streaming-capable host or a dedicated event gateway. T
 must not move event authority out of Postgres.
 
 Milestone 1's simulation knobs now have a narrower job: phase durations and `RIVET_PIPELINE_SPEED`
-remain for the four phases that are still simulated, while the fault modes also exercise real
-sandbox and coding-agent failure categories. The `simulated_failure` category is gone. Everything
-around them - claiming, leasing, heartbeating, transitioning, retrying, cancelling, recovering - is
-designed to survive the real phase bodies unchanged, which is the actual deliverable of the
-milestone.
+remain for the phases that are still simulated, while the fault modes also exercise real sandbox and
+coding-agent failure categories. The `simulated_failure` category is gone. Everything around them -
+claiming, leasing, heartbeating, transitioning, retrying, cancelling, recovering - is designed to
+survive the real phase bodies unchanged, which is the actual deliverable of the milestone.

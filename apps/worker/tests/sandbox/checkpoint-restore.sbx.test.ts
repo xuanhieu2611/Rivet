@@ -171,6 +171,124 @@ describe("checkpoint capture and restore across containers", () => {
     expect(binary.stdout).toBe("000102fafb00ff");
   });
 
+  it("carries a rename as a delete and an add, and leaves the real index alone", async () => {
+    const source = await baseRepository();
+    await run(source, ["git", "mv", "src/sum.ts", "src/total.ts"]);
+    await run(source, ["git", "reset", "-q"]);
+    await source.putFile(`${REPO}/src/staged.ts`, "export const staged = 1;\n", controller.signal);
+    await run(source, ["git", "add", "src/staged.ts"]);
+
+    const captured = await captureWorkspacePatch({
+      sandbox: source,
+      repositoryDir: REPO,
+      signal: controller.signal,
+      ...CAPTURE,
+    });
+    const patch = Buffer.from(captured.patch).toString("utf8");
+
+    // `--no-renames` on purpose: a rename recorded as a similarity score is a
+    // patch whose meaning depends on the applying git's rename detection, and a
+    // checkpoint format that can be re-interpreted is not a format.
+    expect(patch).toContain("a/src/sum.ts");
+    expect(patch).toContain("b/src/total.ts");
+    expect(patch).not.toContain("rename from");
+
+    // The capture ran through a temporary index, so the model's own staging
+    // choices are exactly as they were: one staged file, and no more.
+    const staged = await run(source, ["git", "diff", "--cached", "--name-only"]);
+    expect(staged.stdout.trim()).toBe("src/staged.ts");
+
+    const replacement = await baseRepository();
+    await replacement.putFile(PATCH_PATH, patch, controller.signal);
+    await run(replacement, ["git", "apply", "--binary", PATCH_PATH]);
+
+    const restored = await captureWorkspacePatch({
+      sandbox: replacement,
+      repositoryDir: REPO,
+      signal: controller.signal,
+      ...CAPTURE,
+    });
+    expect(sha256CheckpointPatch(restored.patch)).toBe(sha256CheckpointPatch(captured.patch));
+
+    const listing = await run(replacement, ["ls", "src"]);
+    expect(listing.stdout).toContain("total.ts");
+    expect(listing.stdout).not.toContain("sum.ts");
+  });
+
+  it("installs from the restored manifest and lockfile rather than the base commit's", async () => {
+    const source = await baseRepository();
+    await source.putFile(
+      `${REPO}/package.json`,
+      '{\n  "name": "fixture",\n  "version": "2.0.0",\n  "private": true\n}\n',
+      controller.signal,
+    );
+    await source.putFile(
+      `${REPO}/package-lock.json`,
+      '{\n  "name": "fixture",\n  "version": "2.0.0",\n  "lockfileVersion": 3,\n' +
+        '  "requires": true,\n  "packages": {\n    "": {\n      "name": "fixture",\n' +
+        '      "version": "2.0.0"\n    }\n  }\n}\n',
+      controller.signal,
+    );
+
+    const captured = await captureWorkspacePatch({
+      sandbox: source,
+      repositoryDir: REPO,
+      signal: controller.signal,
+      ...CAPTURE,
+    });
+
+    const replacement = await baseRepository();
+    await replacement.putFile(
+      PATCH_PATH,
+      Buffer.from(captured.patch).toString("utf8"),
+      controller.signal,
+    );
+    await run(replacement, ["git", "apply", "--binary", PATCH_PATH]);
+
+    // The ordering provisioning depends on: an interrupted session may have
+    // changed a manifest, and installing the base commit's first would
+    // reconstruct a filesystem that session never had.
+    await run(replacement, ["npm", "install", "--no-audit", "--no-fund"]);
+
+    // `npm ls` exits non-zero when the installed tree and the lockfile disagree,
+    // so a zero exit naming the restored version is npm's own statement that
+    // the install it just did was the restored one.
+    const installed = await run(replacement, ["npm", "ls"]);
+    expect(installed.stdout).toContain("fixture@2.0.0");
+  });
+
+  it("refuses an oversized patch and still removes its temporary index", async () => {
+    const source = await baseRepository();
+    await source.putFile(`${REPO}/big.txt`, "x".repeat(8_192), controller.signal);
+
+    const before = await run(source, ["sh", "-c", "ls /tmp | wc -l"]);
+    await expect(
+      captureWorkspacePatch({
+        sandbox: source,
+        repositoryDir: REPO,
+        signal: controller.signal,
+        timeoutMs: 30_000,
+        maxBytes: 1_024,
+      }),
+    ).rejects.toThrow(/above the 1024-byte limit|truncated/);
+
+    // Cleanup runs on every exit path, including the failing one: a rejected
+    // capture that left its index behind would leak one file per turn into a
+    // container that goes on running the job.
+    const after = await run(source, ["sh", "-c", "ls /tmp | wc -l"]);
+    expect(after.stdout.trim()).toBe(before.stdout.trim());
+
+    // And the failure is the patch's size, not the workspace's state: the same
+    // capture under the real bound still succeeds.
+    const captured = await captureWorkspacePatch({
+      sandbox: source,
+      repositoryDir: REPO,
+      signal: controller.signal,
+      ...CAPTURE,
+    });
+    expect(captured.stats.filesChanged).toBe(1);
+  });
+
   it("refuses a patch that does not apply to the base it was cut from", async () => {
     const source = await baseRepository();
     await source.putFile(

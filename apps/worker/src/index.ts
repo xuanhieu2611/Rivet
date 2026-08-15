@@ -23,6 +23,7 @@ import { createFaultInjection, type FaultInjection } from "./faults";
 import { createWorkerId } from "./identity";
 import { createLogger } from "./logger";
 import { createProcessor, RunRegistry } from "./processor";
+import { loadScriptedAgent } from "./scripted-agent";
 import { createSweepRunner } from "./sweeper";
 
 /**
@@ -85,20 +86,42 @@ const runs = new RunRegistry();
  * and `implementing` keeps the Milestone 1 sleep. That is what lets the
  * integration suite run thirty-odd lifecycle cases with no key.
  */
-const agent: AgentOptions | undefined = (() => {
+const agent: AgentOptions | undefined = await (async () => {
   if (config.agent.mode === "off") {
     log.warn("RIVET_AGENT=off: the implementing phase is simulated, no model will be called");
     return undefined;
   }
 
+  // The one place a scripted session is allowed to enter the production
+  // wiring, and it is loaded rather than constructed here so nothing about a
+  // demo fixture is compiled into the worker. `parseWorkerConfig` has already
+  // refused this mode under `NODE_ENV=production`.
+  const coding =
+    config.agent.mode === "scripted"
+      ? await loadScriptedAgent(config.agent.scriptPath ?? "").catch((error: unknown) => {
+          // A missing or malformed script is a configuration error, so it gets
+          // the configuration error's treatment: refuse to boot, say why once,
+          // and do not start taking jobs a canned session cannot run.
+          log.error(error instanceof Error ? error.message : String(error));
+          process.exit(1);
+        })
+      : new PiCodingAgent({
+          model: config.agent.model,
+          provider: config.agent.provider,
+          homeDir: config.agent.homeDir,
+          outputMaxBytes: config.agent.toolOutputMaxBytes,
+          logger: log,
+        });
+
+  if (config.agent.mode === "scripted") {
+    log.warn(
+      { script: config.agent.scriptPath },
+      "RIVET_AGENT=scripted: sessions replay a canned script, no model will be called",
+    );
+  }
+
   return {
-    coding: new PiCodingAgent({
-      model: config.agent.model,
-      provider: config.agent.provider,
-      homeDir: config.agent.homeDir,
-      outputMaxBytes: config.agent.toolOutputMaxBytes,
-      logger: log,
-    }),
+    coding,
     sessionTimeoutMs: config.agent.sessionTimeoutMs,
     maxTurns: config.agent.maxTurns,
     previewMaxBytes: config.agent.previewMaxBytes,
@@ -119,7 +142,11 @@ const { phases, phaseFactory, sandbox } = ((): {
   const target = dockerConnectionTarget();
   log.info({ socketPath: target.socketPath, source: target.source }, "using the Docker daemon");
 
-  const provider = new DockerSandboxProvider({ workerId, log });
+  const provider = new DockerSandboxProvider({
+    workerId,
+    log,
+    reapGraceMs: config.sandbox.reapGraceMs,
+  });
   const pipelineOptions = {
     ...(agent ? { agent } : {}),
     image: config.sandbox.image,

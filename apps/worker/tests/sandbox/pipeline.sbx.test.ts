@@ -67,6 +67,8 @@ function startRealWorker(
     baselineTimeoutMs: 30_000,
     diffMaxBytes: 262_144,
     maxOutputBytes: 16_384,
+    // The provider below reaps immediately; this suite builds its own.
+    reapGraceMs: 0,
   };
   const provider = new DockerSandboxProvider({
     workerId: `sandbox-pipeline-${process.pid}`,

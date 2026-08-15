@@ -15,29 +15,42 @@ boundary is the point of the project, and it is what the architecture is organiz
 
 ## Status
 
-**Milestone 5 - first autonomous coding job - is complete.** A Docker-backed job now provisions a
-repository, records its baseline, and gives the `implementing` phase to a Pi session running in the
-trusted worker. Pi has exactly four tools - `read`, `write`, `edit`, and `bash` - and every one is
-backed by the job's sandbox. The OpenRouter credential stays on the worker host; it never enters the
-container that runs cloned repository code.
+**Milestone 6 - planning, persistence and recovery - is complete.** A job killed mid-session is no
+longer a job restarted. `planning` is a real, read-only model session that submits a structured
+`ImplementationPlan`; every completed phase and every completed implementation turn captures a
+lossless binary Git patch of the workspace; and a reclaimed job is provisioned into a **new**
+container at the original commit, restored from that patch, checksum-verified, and continued by a
+fresh session that is told what it inherited. Budgets and the wall-clock deadline are cumulative
+across attempts, so a crash grants nobody another hour.
+
+The delivery half of that is a dispatch generation on every message id: a reclaim increments it in
+the same transaction that clears the lease, so the replacement worker can claim immediately instead
+of waiting for BullMQ to declare the dead worker's message stalled. A stale generation can never
+claim the row.
+
+Underneath it is Milestone 5's coding job, unchanged. A Docker-backed job provisions a repository,
+records its baseline before anything is edited, and gives `implementing` to a Pi session running in
+the trusted worker. Pi has exactly four tools - `read`, `write`, `edit`, `bash` - and every one is
+backed by the job's sandbox; the planner has four different ones and no way to write anything. The
+OpenRouter credential stays on the worker host and never enters the container that runs cloned
+repository code.
 
 The append-only Postgres event log records session starts, turns, completed assistant messages, tool
-calls, usage, budget breaches, and session endings. Shell calls also use the existing command
-ledger, so their bounded transcripts are visible through the same live SSE timeline and lazy command
-log as Rivet's own provisioning and test commands. Usage totals are persisted under the worker
-lease, and cancellation, job deadlines, budget ceilings, retryable provider outages, and terminal
-provider configuration errors all follow the existing lifecycle machinery.
+calls, usage, budget breaches, session endings, plans, checkpoints, reclaims, restores and resumed
+runs. Shell calls also use the command ledger, so their bounded transcripts are visible through the
+same live SSE timeline and lazy command log as Rivet's own commands. Validation compares the
+post-session suite with the baseline, and finalization persists the diff stats and the session's own
+summary. Review remains simulated until Milestone 8, and branch, commit, push and pull request
+remain Milestone 9 work.
 
-Analysis now establishes a pre-edit test baseline, planning records that no plan was produced yet,
-validation compares the post-session suite with that baseline, and finalization persists the diff
-stats and the session's own summary. Review remains simulated until Milestone 8, and branch, commit,
-push and pull request remain Milestone 9 work. The integration suite uses a scripted agent with real
-Postgres, Redis, BullMQ, and the production worker; the sandbox suite exercises the full pipeline
-against Docker. `pnpm demo:agent` runs one real Pi session against a tiny fixture repository, while
-`pnpm demo:job` runs the complete M5 job locally.
+The integration suite uses a scripted agent with real Postgres, Redis, BullMQ and the production
+worker, including a worker killed with `SIGKILL` in a process of its own; the sandbox suite proves a
+patch captured in one container restores byte for byte in another. `pnpm demo:agent` runs one real
+Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with a real session, and
+`pnpm demo:recovery` kills a worker mid-job and checks every fact the recovery claim rests on.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together and
-[docs/plans/milestone-5.md](docs/plans/milestone-5.md) for the committed M5 record.
+[docs/plans/milestone-6.md](docs/plans/milestone-6.md) for the committed M6 record.
 
 ## Prerequisites
 
@@ -116,13 +129,28 @@ The command starts a worker child, creates a job against `rivet-fixture-node`, w
 event log, and prints the resulting diff and implementation summary. It needs the local database,
 Redis, Docker, and a model provider, and is not part of CI.
 
-To watch the recovery machinery instead, break a job on purpose. Set `RIVET_FAULT_PHASE=testing`
-with one of the `RIVET_FAULT_MODE` values and restart the worker: `throw` retries the job with
-backoff, `fatal` fails it once with a recorded `repo_unavailable` category, `hang` runs it past the
-job budget into `timed_out`, and `exit` kills the worker mid-phase with no cleanup at all - the
-lease expires, the sweeper reclaims the job, and the next worker finishes it. With the Docker
-sandbox, `no-daemon`, `oom`, and `slow-command` exercise daemon outages, memory kills, and
-command-level timeouts. `.env.example` documents all seven.
+To watch a job survive its worker being killed, run the recovery demo:
+
+```bash
+pnpm demo:recovery
+```
+
+It starts a worker, waits until the first implementation turn is durable, sends that worker
+`SIGKILL`, starts a second one, and then checks the facts the recovery claim rests on: a persisted
+plan, a non-empty checkpoint, an incremented dispatch generation, a different container id, the same
+base commit, a checksum-verified patch, analysis and planning not rerun, cumulative budgets, and a
+job that reaches `completed`. Any missing fact exits non-zero. It needs Postgres, Redis and Docker
+but **no model key**: the sessions are scripted, because a demo of recovery should not be able to
+fail because a model sampled differently the second time. The replacement session makes no edit of
+its own, so the run can only go green if the killed worker's work really was restored.
+
+To watch the same machinery one failure at a time, break a job on purpose. Set
+`RIVET_FAULT_PHASE=testing` with one of the `RIVET_FAULT_MODE` values and restart the worker:
+`throw` retries the job with backoff, `fatal` fails it once with a recorded `repo_unavailable`
+category, `hang` runs it past the job budget into `timed_out`, and `exit` kills the worker mid-phase
+with no cleanup at all - the lease expires, the sweeper reclaims the job, and the next worker
+finishes it. With the Docker sandbox, `no-daemon`, `oom`, and `slow-command` exercise daemon
+outages, memory kills, and command-level timeouts. `.env.example` documents all seven.
 
 ## Running the integration suite
 
@@ -237,7 +265,8 @@ Every command is run from the repository root. Turborepo fans them out across th
 | ----------------------- | ------------------------------------------------------------------------------- |
 | `pnpm dev`              | Runs the Next.js dev server **and** the worker                                  |
 | `pnpm demo:agent`       | Runs one real Pi session against a disposable fixture in Docker                 |
-| `pnpm demo:job`         | Runs the full M5 job against `rivet-fixture-node` with a real Pi session        |
+| `pnpm demo:job`         | Runs a full job against `rivet-fixture-node` with a real Pi session             |
+| `pnpm demo:recovery`    | Kills a worker mid-job and proves the replacement resumes from its checkpoint   |
 | `pnpm build`            | Production build of every workspace. Needs no database and no Redis             |
 | `pnpm lint`             | ESLint across every workspace                                                   |
 | `pnpm typecheck`        | `tsc --noEmit` across every workspace                                           |
@@ -311,8 +340,10 @@ built before any agent behaviour.
       cancellation and provider failure classification; `pnpm demo:agent` proves the live adapter.
 - [x] **M5 - First autonomous coding job.** One implementation session solves a trivial fixture bug
       unattended, with budget tracking and the final diff persisted.
-- [ ] **M6 - Planning, persistence and recovery.** Checkpoints, resumable jobs, and surviving a
-      worker crash mid-run without duplicating external side effects.
+- [x] **M6 - Planning, persistence and recovery.** A real planner session and a structured plan,
+      lossless workspace checkpoints, dispatch generations, deterministic sandbox rehydration, and a
+      worker crash mid-run survived without rerunning acknowledged work; `pnpm demo:recovery` proves
+      it end to end.
 - [ ] **M7 - Validation pipeline.** Baseline, targeted and full test runs plus lint and typecheck,
       with results parsed and pre-existing failures told apart from new ones.
 - [ ] **M8 - Independent review session.** A separate read-only review pass over the diff, with

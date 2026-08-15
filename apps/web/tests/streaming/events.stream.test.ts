@@ -302,6 +302,143 @@ describe("GET /api/jobs/:id/events against Postgres", () => {
     await reader.cancel();
   });
 
+  it("replays the M6 planning and recovery event types with their durable data", async () => {
+    // The recovery rows are the ones a viewer most needs to arrive intact: a
+    // reader watching a job get reclaimed is watching the transport prove that
+    // its own worker dying did not lose the timeline.
+    const job = await createTestJob();
+    const [created] = await readAllEvents(job.id);
+    if (!created) throw new Error("Expected the job-created event.");
+
+    const expected = [
+      await appendEvent({
+        jobId: job.id,
+        type: "plan.recorded",
+        message: "Recorded an implementation plan.",
+        data: { artifactId: 7, artifactType: "implementation_plan", byteSize: 512 },
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "checkpoint.created",
+        message: "Captured checkpoint 3 after turn 2.",
+        data: {
+          checkpointId: 3,
+          checkpointSequence: 3,
+          checkpointKind: "agent_turn",
+          turn: 2,
+          attempt: 1,
+          patchByteSize: 480,
+          filesChanged: 1,
+          insertions: 2,
+          deletions: 1,
+        },
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "job.reclaimed",
+        message: "Reclaimed an expired lease.",
+        data: { attempt: 2, dispatchGeneration: 1, leaseOwner: "worker-a" },
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "checkpoint.restored",
+        message: "Restored checkpoint 3 into a new sandbox.",
+        data: {
+          checkpointSequence: 3,
+          checkpointKind: "agent_turn",
+          resumePhase: "implementing",
+          originalSandboxId: "container-a",
+          replacementSandboxId: "container-b",
+          patchSha256: "a".repeat(64),
+          patchByteSize: 480,
+        },
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "run.resumed",
+        message: "Resuming at implementing from checkpoint 3.",
+        data: { checkpointSequence: 3, resumePhase: "implementing", attempt: 2 },
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "checkpoint.rejected",
+        message: "A checkpoint could not be restored.",
+        data: { checkpointSequence: 3, failureCategory: "checkpoint_restore_failed" },
+      }),
+    ];
+
+    const reader = await openStream(job.id, { after: created.id });
+    const received: WireJobEvent[] = [];
+    for (const _event of expected) received.push(await reader.nextJobEvent());
+
+    expect(eventIds(received)).toEqual(eventIds(expected));
+    expect(received.map((event) => event.type)).toEqual([
+      "plan.recorded",
+      "checkpoint.created",
+      "job.reclaimed",
+      "checkpoint.restored",
+      "run.resumed",
+      "checkpoint.rejected",
+    ]);
+    expect(received[1]?.data).toMatchObject({
+      checkpointSequence: 3,
+      checkpointKind: "agent_turn",
+      turn: 2,
+      patchByteSize: 480,
+    });
+    // Both sandbox ids survive the wire, because they are the pair that proves
+    // recovery rebuilt an environment rather than reusing one.
+    expect(received[3]?.data).toMatchObject({
+      originalSandboxId: "container-a",
+      replacementSandboxId: "container-b",
+      resumePhase: "implementing",
+    });
+    await reader.cancel();
+  });
+
+  it("reconnects across a reclaim without duplicating or dropping a checkpoint row", async () => {
+    const job = await createTestJob();
+    const [created] = await readAllEvents(job.id);
+    if (!created) throw new Error("Expected the job-created event.");
+
+    const captured = await appendEvent({
+      jobId: job.id,
+      type: "checkpoint.created",
+      message: "Captured checkpoint 1.",
+      data: { checkpointSequence: 1, checkpointKind: "agent_turn", patchByteSize: 120 },
+    });
+
+    const firstReader = await openStream(job.id, { after: created.id });
+    expect((await firstReader.nextJobEvent()).id).toBe(captured.id);
+    await firstReader.cancel();
+
+    // The viewer's worker died here; the events it missed were written by
+    // another one entirely.
+    const afterDisconnect = [
+      await appendEvent({
+        jobId: job.id,
+        type: "job.reclaimed",
+        message: "Reclaimed an expired lease.",
+        data: { attempt: 2, dispatchGeneration: 1 },
+      }),
+      await appendEvent({
+        jobId: job.id,
+        type: "run.resumed",
+        message: "Resuming at implementing from checkpoint 1.",
+        data: { checkpointSequence: 1, resumePhase: "implementing", attempt: 2 },
+      }),
+    ];
+
+    const secondReader = await openStream(job.id, {
+      after: created.id,
+      lastEventId: captured.id,
+    });
+    const received = [await secondReader.nextJobEvent(), await secondReader.nextJobEvent()];
+
+    expect(eventIds(received)).toEqual(eventIds(afterDisconnect));
+    await secondReader.cancel();
+  });
+
   it("delivers an event appended after the stream is already live", async () => {
     const job = await createTestJob();
     const [created] = await readAllEvents(job.id);

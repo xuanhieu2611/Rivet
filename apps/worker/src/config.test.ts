@@ -56,6 +56,7 @@ describe("parseWorkerConfig", () => {
         // Above `artifactMaxBytes` on purpose: a diff clipped by the container's
         // transcript cap would record its clipped length as its true size.
         diffMaxBytes: 1_048_576,
+        reapGraceMs: 120_000,
       },
       agent: {
         mode: "pi",
@@ -307,8 +308,39 @@ describe("the coding agent", () => {
     });
   });
 
-  it("rejects an agent mode that is not one of the two", () => {
+  it("rejects an agent mode that is not one of the three", () => {
     expect(() => parseWorkerConfig({ RIVET_AGENT: "claude" })).toThrow(WorkerConfigError);
+  });
+
+  it("takes the script path for a scripted agent, and needs no key", () => {
+    const config = parse({ RIVET_AGENT: "scripted", RIVET_AGENT_SCRIPT: "./src/demo-agent.ts" });
+
+    expect(config.agent.mode).toBe("scripted");
+    expect(config.agent.scriptPath).toBe("./src/demo-agent.ts");
+  });
+
+  it("refuses a scripted agent with no script to run", () => {
+    // Both halves or neither, exactly like the fault variables: a scripted mode
+    // with no module is a worker that says it has an agent and has none.
+    expect(() => parse({ RIVET_AGENT: "scripted" })).toThrow(/needs RIVET_AGENT_SCRIPT/);
+  });
+
+  it("refuses a script that would be silently ignored", () => {
+    // The expensive direction of the same mistake: this configuration looks
+    // canned and would quietly call the real provider on every job.
+    expect(() => parseWorkerConfig({ RIVET_AGENT_SCRIPT: "./src/demo-agent.ts" })).toThrow(
+      /RIVET_AGENT is pi/,
+    );
+  });
+
+  it("refuses a scripted agent in production", () => {
+    expect(() =>
+      parse({
+        RIVET_AGENT: "scripted",
+        RIVET_AGENT_SCRIPT: "./src/demo-agent.ts",
+        NODE_ENV: "production",
+      }),
+    ).toThrow(/rather than what a model decided/);
   });
 });
 
