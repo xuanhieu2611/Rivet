@@ -2,6 +2,7 @@ import type { JobStatus as DrizzleJobStatus } from "@rivet/database";
 import { z } from "zod";
 
 import type { FailureCategory } from "./job-event";
+import { reviewModeSchema } from "./review-report";
 
 /**
  * The job lifecycle, mirroring the `job_status` Postgres enum.
@@ -64,6 +65,27 @@ export const createJobSchema = z.object({
     .url({ protocol: /^https$/, error: "Must be an https:// repository URL" })
     .max(2048, "Repository URL is too long"),
   baseBranch: z.string().trim().min(1).max(255).default("main"),
+  /**
+   * Whether this run gets an independent review session.
+   *
+   * A property of the job rather than a deployment switch, so a job that
+   * recorded `independent` is reviewed whichever worker picks it up. `none`
+   * runs the M7 workflow and says so on the timeline.
+   */
+  reviewMode: reviewModeSchema.default("independent"),
+  /**
+   * How many revisions this job may spend before a blocking verdict fails it.
+   *
+   * Bounded rather than open-ended because the loop multiplies cost, and zero
+   * is legal: it means one review whose `revise` verdict has no budget behind
+   * it.
+   */
+  maxReviewLoops: z
+    .number()
+    .int("Maximum review loops must be a whole number")
+    .min(0, "Maximum review loops must be 0 or more")
+    .max(5, "Maximum review loops must be 5 or fewer")
+    .default(2),
 });
 
 /** What a client sends - `baseBranch` may be omitted. */

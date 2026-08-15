@@ -101,6 +101,8 @@ async function main(): Promise<void> {
         "change in your final message.",
       repoUrl: FIXTURE_REPOSITORY,
       baseBranch: FIXTURE_BRANCH,
+      reviewMode: "independent",
+      maxReviewLoops: 2,
     });
 
     console.log(`Created job ${job.id}`);

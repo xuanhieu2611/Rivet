@@ -249,12 +249,16 @@ describe("Docker sandbox adapter", () => {
       description: "A terminal job must lose its leaked container.",
       repoUrl: "https://github.com/rivet/example",
       baseBranch: "main",
+      reviewMode: "independent",
+      maxReviewLoops: 2,
     });
     const live = await createJob({
       title: "Live sandbox reaper fixture",
       description: "A leased job must keep its container.",
       repoUrl: "https://github.com/rivet/example",
       baseBranch: "main",
+      reviewMode: "independent",
+      maxReviewLoops: 2,
     });
 
     await transitionJob({

@@ -125,6 +125,8 @@ async function createFixtureJob(variant: FixtureVariant, branch = "main") {
     description: "Run the Milestone 2 pipeline against a hermetic repository.",
     repoUrl: fixture.url(variant),
     baseBranch: branch,
+    reviewMode: "independent",
+    maxReviewLoops: 2,
   });
 }
 

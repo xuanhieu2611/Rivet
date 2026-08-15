@@ -242,6 +242,8 @@ export async function createTestJob(
     description: "Created by the integration suite.",
     repoUrl: "https://github.com/rivet/example",
     baseBranch: "main",
+    reviewMode: "independent",
+    maxReviewLoops: 2,
   });
 
   const patch = {

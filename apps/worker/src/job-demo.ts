@@ -52,6 +52,8 @@ async function main(): Promise<void> {
       description: task.description,
       repoUrl: FIXTURE_REPOSITORY,
       baseBranch: FIXTURE_BRANCH,
+      reviewMode: "independent",
+      maxReviewLoops: 2,
     });
 
     const enqueued = await requestJobRun(job.id, job.dispatchGeneration, queue);

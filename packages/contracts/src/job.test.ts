@@ -61,6 +61,32 @@ describe("createJobSchema", () => {
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.path).toEqual(["repoUrl"]);
   });
+
+  it("defaults review to one independent reviewer and two loops", () => {
+    const result = createJobSchema.parse(validInput);
+    expect(result.reviewMode).toBe("independent");
+    expect(result.maxReviewLoops).toBe(2);
+  });
+
+  it("accepts an explicit review mode and loop bound", () => {
+    const result = createJobSchema.parse({
+      ...validInput,
+      reviewMode: "none",
+      maxReviewLoops: 0,
+    });
+    expect(result.reviewMode).toBe("none");
+    expect(result.maxReviewLoops).toBe(0);
+  });
+
+  it("rejects an unknown review mode", () => {
+    expect(createJobSchema.safeParse({ ...validInput, reviewMode: "off" }).success).toBe(false);
+  });
+
+  it("rejects a review loop bound outside 0 through 5", () => {
+    for (const maxReviewLoops of [-1, 6, 1.5, "2"]) {
+      expect(createJobSchema.safeParse({ ...validInput, maxReviewLoops }).success).toBe(false);
+    }
+  });
 });
 
 describe("jobStatusSchema", () => {

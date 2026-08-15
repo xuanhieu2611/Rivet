@@ -111,6 +111,8 @@ export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
   checkpoint_corrupt: "Checkpoint corrupt",
   checkpoint_restore_failed: "Checkpoint restore failed",
   checkpoint_too_large: "Checkpoint too large",
+  review_not_produced: "Review not produced",
+  reviewer_rejection: "Rejected by review",
   unknown: "Unknown",
 };
 
@@ -179,4 +181,14 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "checkpoint.restored": "bg-emerald-500",
   "checkpoint.rejected": "bg-red-500",
   "run.resumed": "bg-amber-500",
+  // Neutral for the same reason `validation.recorded` is neutral: `approve` and
+  // `revise` are the same event type and the verdict is in the payload.
+  "review.recorded": "bg-violet-500",
+  // The row that makes a looping timeline readable. Amber because it is the
+  // marker that explains why a second `testing` block follows a first one.
+  "review.revision_requested": "bg-amber-500",
+  "review.limit_reached": "bg-red-500",
+  // A run that asked for no review is not a run whose reviewer said nothing,
+  // and the timeline should be quiet about the difference rather than loud.
+  "review.skipped": "bg-muted-foreground/40",
 };

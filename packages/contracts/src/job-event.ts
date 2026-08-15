@@ -10,6 +10,12 @@ import {
 } from "./checkpoint";
 import { jobStatusSchema, type JobStatus } from "./job";
 import { artifactTypeSchema, type ArtifactType } from "./job-artifact";
+import {
+  reviewDecisionSchema,
+  reviewModeSchema,
+  type ReviewDecision,
+  type ReviewMode,
+} from "./review-report";
 import type { CheckKind, CheckStatus } from "./validation-check";
 
 /**
@@ -113,6 +119,12 @@ export const JOB_EVENT_TYPES = [
    * happened. Distinct from `job.completed`, which the processor writes about
    * the *job* reaching a terminal status - a run can be summarized and then fail
    * to complete, and reading one off the other would make each of them less true.
+   *
+   * As of M8 it also carries `reviewDecision` and `reviewLoops`, because the
+   * closing line of a run should say whether a second agent looked at it. On a
+   * job that skipped review `reviewDecision` is absent rather than null: "no
+   * reviewer looked at this" and "a reviewer had nothing to say" are different
+   * facts.
    */
   "run.summarized",
 
@@ -122,6 +134,28 @@ export const JOB_EVENT_TYPES = [
   "checkpoint.restored",
   "checkpoint.rejected",
   "run.resumed",
+
+  // --- independent review (M8) ------------------------------------------
+  /** A verdict was persisted, on every review including the one that ends the job. */
+  "review.recorded",
+  /** The verdict was `revise` and there was loop budget left, so the loop goes around again. */
+  "review.revision_requested",
+  /**
+   * The last loop ended with blocking findings.
+   *
+   * Written immediately before the job fails `reviewer_rejection`, so the
+   * timeline states that the bound was the reason rather than leaving a reader
+   * to infer it from a failure category.
+   */
+  "review.limit_reached",
+  /**
+   * The job asked for `reviewMode: "none"`.
+   *
+   * A statement about the job's mode, never about the worker's configuration: a
+   * pipeline built without an agent leaves `reviewing` a sleep and writes no
+   * review event at all. The two absences are different facts.
+   */
+  "review.skipped",
 ] as const;
 
 export const jobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
@@ -222,6 +256,23 @@ export const FAILURE_CATEGORIES = [
   "checkpoint_restore_failed",
   /** The complete checkpoint exceeds the configured storage bound. */
   "checkpoint_too_large",
+
+  // --- independent review (M8) ------------------------------------------
+  /**
+   * The reviewer session ended without submitting a valid structured verdict.
+   *
+   * Terminal, mirroring `plan_not_produced`. Treating a missing verdict as an
+   * approval would be the one bug in this milestone nobody would ever notice.
+   */
+  "review_not_produced",
+  /**
+   * The last review loop still found something blocking. Terminal.
+   *
+   * Completing the job anyway would make review decorative, and the report that
+   * rejected it stays readable on the failed job so the rejection is always
+   * attributable to named findings.
+   */
+  "reviewer_rejection",
 
   "unknown",
 ] as const;
@@ -339,8 +390,8 @@ export type JobEventData = {
   // --- coding agent (M4) -----------------------------------------------
   /** The harness's session id, on every `agent.*` row, so one job's sessions stay separable. */
   sessionId?: string;
-  /** The explicit session role, so planner and implementer runs stay distinguishable. */
-  agentRole?: "planner" | "implementer";
+  /** The explicit session role, so planner, implementer and reviewer runs stay distinguishable. */
+  agentRole?: "planner" | "implementer" | "reviewer";
   /** The model id as configured, e.g. `deepseek/deepseek-v4-flash`. */
   model?: string;
   provider?: string;
@@ -451,6 +502,29 @@ export type JobEventData = {
   patchCompressedBytes?: number;
   /** The delivery generation associated with this event. */
   dispatchGeneration?: number;
+
+  // --- independent review (M8) ------------------------------------------
+  /** The verdict, on `review.recorded` and on `run.summarized`. */
+  reviewDecision?: ReviewDecision;
+  /**
+   * Revisions already spent when this verdict was produced, zero-based.
+   *
+   * The first reviewer session on any job records `reviewLoop: 0`. It is
+   * exactly `jobs.review_loops` as read at the top of the phase, which is what
+   * makes it survive a crash: a replacement worker reads the same counter.
+   */
+  reviewLoop?: number;
+  /** `jobs.review_loops` after the increment, and the loop count on `run.summarized`. */
+  reviewLoops?: number;
+  /** The job's own bound, `jobs.max_review_loops`. */
+  maxReviewLoops?: number;
+  /** How many findings the verdict considered blocking. Zero exactly when the decision is `approve`. */
+  blockingCount?: number;
+  nonBlockingCount?: number;
+  /** The reviewer's self-reported confidence, 0 through 1. */
+  confidence?: number;
+  /** The job's review mode, on `review.skipped`. */
+  reviewMode?: ReviewMode;
 };
 
 /** One row of the job timeline. */
@@ -499,7 +573,7 @@ const jobEventDataSchema = z
     commitSha: z.string().optional(),
     baseline: z.enum(["passed", "failed", "skipped"]).optional(),
     sessionId: z.string().optional(),
-    agentRole: z.enum(["planner", "implementer"]).optional(),
+    agentRole: z.enum(["planner", "implementer", "reviewer"]).optional(),
     model: z.string().optional(),
     provider: z.string().optional(),
     toolNames: z.array(z.string()).optional(),
@@ -555,6 +629,14 @@ const jobEventDataSchema = z
     patchByteSize: z.number().int().nonnegative().optional(),
     patchCompressedBytes: z.number().int().nonnegative().optional(),
     dispatchGeneration: z.number().int().nonnegative().optional(),
+    reviewDecision: reviewDecisionSchema.optional(),
+    reviewLoop: z.number().int().nonnegative().optional(),
+    reviewLoops: z.number().int().nonnegative().optional(),
+    maxReviewLoops: z.number().int().nonnegative().optional(),
+    blockingCount: z.number().int().nonnegative().optional(),
+    nonBlockingCount: z.number().int().nonnegative().optional(),
+    confidence: z.number().min(0).max(1).optional(),
+    reviewMode: reviewModeSchema.optional(),
   })
   .passthrough();
 
@@ -671,6 +753,14 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.dispatchGeneration === undefined
       ? {}
       : { dispatchGeneration: value.dispatchGeneration }),
+    ...(value.reviewDecision === undefined ? {} : { reviewDecision: value.reviewDecision }),
+    ...(value.reviewLoop === undefined ? {} : { reviewLoop: value.reviewLoop }),
+    ...(value.reviewLoops === undefined ? {} : { reviewLoops: value.reviewLoops }),
+    ...(value.maxReviewLoops === undefined ? {} : { maxReviewLoops: value.maxReviewLoops }),
+    ...(value.blockingCount === undefined ? {} : { blockingCount: value.blockingCount }),
+    ...(value.nonBlockingCount === undefined ? {} : { nonBlockingCount: value.nonBlockingCount }),
+    ...(value.confidence === undefined ? {} : { confidence: value.confidence }),
+    ...(value.reviewMode === undefined ? {} : { reviewMode: value.reviewMode }),
   };
   const knownKeys = new Set(Object.keys(known));
   const extras = Object.fromEntries(

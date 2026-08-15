@@ -140,6 +140,8 @@ async function createTestJob() {
     description: "Created by the real-Postgres streaming suite.",
     repoUrl: "https://github.com/rivet/example",
     baseBranch: "main",
+    reviewMode: "independent",
+    maxReviewLoops: 2,
   });
 }
 

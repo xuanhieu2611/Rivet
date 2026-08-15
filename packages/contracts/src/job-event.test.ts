@@ -256,3 +256,91 @@ describe("planning and recovery events", () => {
     expect(parseFailureCategory("checkpoint_too_large")).toBe("checkpoint_too_large");
   });
 });
+
+describe("review events", () => {
+  it("round-trips every field the four review events carry", () => {
+    const recorded: JobEvent = {
+      ...EVENT,
+      type: "review.recorded",
+      message: "The reviewer asked for a revision.",
+      data: {
+        artifactId: 91,
+        artifactType: "review_report",
+        agentRole: "reviewer",
+        reviewDecision: "revise",
+        reviewLoop: 0,
+        blockingCount: 2,
+        nonBlockingCount: 1,
+        confidence: 0.65,
+      },
+    };
+    const revision: JobEvent = {
+      ...EVENT,
+      type: "review.revision_requested",
+      message: "Going around again.",
+      data: { reviewLoop: 0, reviewLoops: 1, maxReviewLoops: 2, blockingCount: 2 },
+    };
+    const limit: JobEvent = {
+      ...EVENT,
+      type: "review.limit_reached",
+      message: "The review loop budget is spent.",
+      data: {
+        reviewLoops: 1,
+        maxReviewLoops: 1,
+        blockingCount: 2,
+        failureCategory: "reviewer_rejection",
+      },
+    };
+    const skipped: JobEvent = {
+      ...EVENT,
+      type: "review.skipped",
+      message: "This job asked for no review.",
+      data: { reviewMode: "none" },
+    };
+    const summarized: JobEvent = {
+      ...EVENT,
+      type: "run.summarized",
+      message: "Approved after one revision.",
+      data: { reviewDecision: "approve", reviewLoops: 1 },
+    };
+
+    for (const event of [recorded, revision, limit, skipped, summarized]) {
+      expect(parseSerializedJobEvent(serializeJobEvent(event))).toEqual(event);
+    }
+  });
+
+  it("keeps a skipped review distinct from an absent decision", () => {
+    // `reviewDecision` is absent rather than null on a job that skipped review:
+    // "no reviewer looked at this" and "a reviewer had nothing to say" are
+    // different facts, and the timeline renders them differently.
+    const skipped = parseSerializedJobEvent(
+      serializeJobEvent({
+        ...EVENT,
+        type: "run.summarized",
+        message: "No reviewer looked at this run.",
+        data: { reviewLoops: 0 },
+      }),
+    );
+
+    expect(skipped.data).not.toHaveProperty("reviewDecision");
+  });
+
+  it("rejects review fields of the wrong shape", () => {
+    const withData = (data: Record<string, unknown>) => ({
+      ...serializeJobEvent(EVENT),
+      data,
+    });
+
+    expect(() => parseSerializedJobEvent(withData({ reviewDecision: "reject" }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ reviewMode: "off" }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ reviewLoop: -1 }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ maxReviewLoops: 1.5 }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ confidence: 1.4 }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ blockingCount: -1 }))).toThrow();
+  });
+
+  it("recognises both review failure categories", () => {
+    expect(parseFailureCategory("review_not_produced")).toBe("review_not_produced");
+    expect(parseFailureCategory("reviewer_rejection")).toBe("reviewer_rejection");
+  });
+});
