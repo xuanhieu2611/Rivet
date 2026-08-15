@@ -15,6 +15,7 @@ import { closeDb } from "@rivet/database";
 import { closeJobQueue, closeRedis, getBullJobQueue, type BullJobQueue } from "@rivet/queue";
 
 import { DEFAULT_MODEL_PROVIDER, DEFAULT_MODEL, loadRootEnv } from "./config";
+import { selectDemoTask } from "./demo-tasks";
 
 const FIXTURE_REPOSITORY = "https://github.com/xuanhieu2611/rivet-fixture-node";
 const FIXTURE_BRANCH = "main";
@@ -45,13 +46,10 @@ async function main(): Promise<void> {
 
   try {
     queue = getBullJobQueue();
+    const task = selectDemoTask(process.env.RIVET_DEMO_TASK);
     const job = await createJob({
-      title: "Fix the bulk discount boundary",
-      description:
-        "The fixture says that 10 items or more qualify for the bulk discount, but the " +
-        "implementation uses a strict greater-than comparison. Fix the bug without weakening " +
-        "the tests, then run the repository test suite before you finish and summarize the " +
-        "change in your final message.",
+      title: task.title,
+      description: task.description,
       repoUrl: FIXTURE_REPOSITORY,
       baseBranch: FIXTURE_BRANCH,
     });
@@ -61,7 +59,7 @@ async function main(): Promise<void> {
       throw new Error("The job was created, but Redis did not accept its queue message.");
     }
 
-    console.log(`Created job ${job.id}`);
+    console.log(`Created job ${job.id} for task ${task.id}`);
     console.log(`Watching ${FIXTURE_REPOSITORY} on ${FIXTURE_BRANCH} ...`);
     await watchJob(job.id, worker);
 

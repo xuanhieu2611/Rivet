@@ -133,6 +133,13 @@ The command starts a worker child, creates a job against `rivet-fixture-node`, w
 event log, and prints the resulting diff and implementation summary. It needs the local database,
 Redis, Docker, and a model provider, and is not part of CI.
 
+Which task the job asks for is `RIVET_DEMO_TASK`, and the tasks are written down in
+`apps/worker/src/demo-tasks.ts`. The default, `bulk-discount-boundary`, is the one-line bug M5 and
+M7 document. `multi-line-order` is Milestone 8's: it asks for the same fix plus a new function whose
+named edge cases no test in the fixture covers, so deterministic validation comes back green while
+the correct review verdict is still `revise`. See
+[`docs/plans/milestone-8-acceptance.md`](docs/plans/milestone-8-acceptance.md).
+
 To watch a job survive its worker being killed, run the recovery demo:
 
 ```bash
