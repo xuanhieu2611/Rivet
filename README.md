@@ -51,8 +51,10 @@ patch captured in one container restores byte for byte in another. `pnpm demo:ag
 Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with a real session, and
 `pnpm demo:recovery` kills a worker mid-job and checks every fact the recovery claim rests on.
 
-See [docs/architecture.md](docs/architecture.md) for how the pieces fit together and
-[docs/plans/milestone-7.md](docs/plans/milestone-7.md) for the committed M7 record.
+See [docs/architecture.md](docs/architecture.md) for how the pieces fit together,
+[docs/plans/milestone-7.md](docs/plans/milestone-7.md) for the committed M7 record, and
+[docs/milestone-7-guide.md](docs/milestone-7-guide.md) for an educational walkthrough and testing
+guide.
 
 ## Prerequisites
 
