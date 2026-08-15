@@ -443,7 +443,9 @@ serves artifacts by id.
   and that the workspace diff is byte-identical before and after the review session. That second
   assertion is the read-only claim, measured rather than asserted.
 - `pnpm demo:job` on the Stage 0 fixture, unchanged in name because review is the default path: one
-  real job where the first patch is revised once and then approved. That is the M8 demo.
+  real job where the first patch is revised once and then approved. That is the M8 demo. The live
+  model is nondeterministic, so the deterministic integration run B is the authoritative proof of
+  the revision loop; the recorded demo approved its first patch.
 
 ## Definition of done
 

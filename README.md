@@ -62,8 +62,8 @@ real Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together,
 [docs/plans/milestone-8.md](docs/plans/milestone-8.md) for the committed M8 plan,
 [docs/plans/milestone-8-acceptance.md](docs/plans/milestone-8-acceptance.md) for its acceptance
-contract, and [docs/milestone-7-guide.md](docs/milestone-7-guide.md) for an educational walkthrough
-and testing guide.
+contract, [docs/milestone-8-guide.md](docs/milestone-8-guide.md) for an educational walkthrough, and
+[docs/milestone-7-guide.md](docs/milestone-7-guide.md) for the preceding validation guide.
 
 ## Prerequisites
 

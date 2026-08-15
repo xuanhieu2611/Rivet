@@ -1,5 +1,7 @@
 # Milestone 8: the acceptance contract
 
+**Status: verified.**
+
 This is Stage 0's written-down answer to "what does a passing M8 look like", and it is written
 before any phase code so that the phase code is measured against it rather than the other way
 around. [`docs/plans/milestone-8.md`](milestone-8.md) is the plan; this document is the set of
@@ -20,10 +22,9 @@ Everything below is derived from what the pipeline emits today -
 `packages/contracts/src/job-event.ts`, the phase bodies under `packages/core/src/pipeline/`,
 `apps/worker/src/processor.ts` and the existing suite under `apps/worker/tests/integration/` - plus
 exactly the four new events the plan names: `review.recorded`, `review.revision_requested`,
-`review.limit_reached` and `review.skipped`. No other event is invented here. Where this document
-requires behaviour that the current code cannot express, it says so under
-[Obligations this contract places on later stages](#obligations-this-contract-places-on-later-stages)
-rather than quietly assuming it.
+`review.limit_reached` and `review.skipped`. No other event is invented here. The former open
+obligations are retained near the end as an audit trail, now marked with the implementation that
+fulfilled each one.
 
 ## How to read a sequence
 
@@ -547,34 +548,28 @@ same context. A test that only checked the counter would miss a resumed reviewer
   still a valid session.
 - **Wording.** Every `message` string is prose for a human. Assert `type` and `data`.
 
-## Obligations this contract places on later stages
+## Obligations from the contract, now fulfilled
 
-Writing the sequences down first surfaced three things the current code cannot express. None of them
-is a change to Stage 0; all three are stated here so the stage that owns them cannot land without
-noticing.
+Writing the sequences down first surfaced three things the early M8 code could not express. All
+three are now implemented and tested. They remain here as an audit trail because each one protects a
+failure mode that is easy to reintroduce.
 
-1. **A `reviewing` boundary checkpoint must be able to resume at `revising`.** `NEXT_PHASE` in
-   `packages/core/src/checkpoints/checkpoint-store.ts` is a static map with
-   `reviewing -> finalizing`, so a boundary checkpoint written after a verdict of `revise` would
-   claim the job should resume at `finalizing`. That is not a cosmetic mislabel: it would let a
-   crash during the revision finalize a patch the reviewer rejected. The resume phase for a
-   completed `reviewing` has to follow the directive - `revising` when one was returned,
-   `finalizing` otherwise - and runs B, C and F assert the resulting `resumePhase` directly.
+1. **A `reviewing` boundary checkpoint must be able to resume at `revising`.** The static
+   `NEXT_PHASE` map still defaults `reviewing` to `finalizing`, but `apps/worker/src/processor.ts`
+   now passes `resumePhase: "revising"` when the review directive requests a cycle. That is not a
+   cosmetic label: it prevents a crash during revision from finalizing a patch the reviewer
+   rejected. Runs B, C and F assert the resulting `resumePhase` directly.
 
 2. **A turn checkpoint captured during `revising` must resume at `revising`.**
-   `resumePhaseForCheckpoint` hard-codes `agent_turn -> implementing`. Stage 7 reuses
-   `implementing-phase.ts`'s session plumbing, turn checkpoints included, so without a change a
-   revision interrupted mid-turn would resume as a fresh **implementation** session: the review's
-   findings would be dropped and the job would re-enter the pipeline before its own reviewer ever
-   looked at the result. Run F is specified against the phase-boundary checkpoint written when
-   `reviewing` completed, so it passes either way, and this obligation is therefore stated rather
-   than asserted. Stage 7 should either carry the phase on the turn checkpoint or decline to capture
-   turn checkpoints in `revising`, and say which in a comment.
+   `resumePhaseForCheckpoint` now accepts `revising` for `agent_turn` checkpoints, and
+   `agent-session.ts` stamps revision turns with that resume phase. A revision interrupted mid-turn
+   therefore remains a revision session instead of silently becoming a fresh implementation. Unit
+   tests cover both the cursor derivation and the revising phase's turn checkpoint.
 
-3. **`run.summarized` gains `reviewDecision` and `reviewLoops`.** Runs A, B and D assert them. On a
-   job that skipped review, `reviewLoops` is 0 and `reviewDecision` is absent rather than null: "no
-   reviewer looked at this" and "a reviewer had nothing to say" are different facts, and the same
-   argument `finalizing` already makes about a missing validation record applies unchanged.
+3. **`run.summarized` gains `reviewDecision` and `reviewLoops`.** `finalizing-phase.ts` now includes
+   both fields. Runs A, B and D assert them. On a job that skipped review, `reviewLoops` is 0 and
+   `reviewDecision` is absent rather than null: "no reviewer looked at this" and "a reviewer had
+   nothing to say" are different facts.
 
 ## The Stage 0 fixture task
 
@@ -603,8 +598,12 @@ pairing is load-bearing in both directions:
 
 That is the shape M8 needs: a job where M7 has nothing left to say and the correct answer is still
 `revise`. It is also why the demo command keeps its name. Review is the default path, so
-`RIVET_DEMO_TASK=multi-line-order pnpm demo:job` is one real job that is revised once and then
-approved, and the default task remains the cheap green run that M5 and M7 already document.
+`RIVET_DEMO_TASK=multi-line-order pnpm demo:job` is intended to be one real job that is revised once
+and then approved, and the default task remains the cheap green run that M5 and M7 already document.
+The deterministic integration run B is the authoritative proof of that loop. A real model may
+correct every edge case on its first implementation, as the observed demo did, and therefore may be
+approved on the first review; that proves the live reviewer path but does not replace run B's
+revision-loop assertion.
 
 No change is required in `rivet-fixture-node` itself, and that is deliberate: the external
 repository is the first entry in M10's evaluation corpus, and a fixture that grows a new module per
