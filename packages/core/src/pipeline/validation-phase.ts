@@ -194,10 +194,12 @@ export interface DiffStat {
   filesChanged: number;
   insertions: number;
   deletions: number;
+  /** New-side Git paths, in numstat order, for deterministic targeted selection. */
+  paths: string[];
 }
 
 /**
- * Reads `git diff --cached --numstat` into three numbers.
+ * Reads `git diff --cached --numstat` into totals and changed paths.
  *
  * Tolerant of every line that is not a numstat row - git prints warnings to
  * stdout under some configurations, and a `warning: LF will be replaced` line
@@ -206,10 +208,12 @@ export interface DiffStat {
  * and anything else is ignored rather than guessed at.
  *
  * Renames arrive as `1\t1\tsrc/{old.js => new.js}` and are deliberately counted
- * as the one file git says they are.
+ * as the one file git says they are. Their path is the new side, because that
+ * is the file present in the staged tracked-file list and therefore the only
+ * side a targeted check can run.
  */
 export function parseNumstat(text: string): DiffStat {
-  const stat: DiffStat = { filesChanged: 0, insertions: 0, deletions: 0 };
+  const stat: DiffStat = { filesChanged: 0, insertions: 0, deletions: 0, paths: [] };
 
   for (const line of text.split("\n")) {
     const fields = line.split("\t");
@@ -218,14 +222,23 @@ export function parseNumstat(text: string): DiffStat {
     const added = countField(fields[0]);
     const removed = countField(fields[1]);
     if (added === undefined || removed === undefined) continue;
-    if (fields.slice(2).join("\t").trim().length === 0) continue;
+    const path = fields.slice(2).join("\t").trim();
+    if (path.length === 0) continue;
 
     stat.filesChanged += 1;
     if (added !== null) stat.insertions += added;
     if (removed !== null) stat.deletions += removed;
+    stat.paths.push(renameDestination(path));
   }
 
   return stat;
+}
+
+/** Resolves both Git's brace-compressed and whole-path rename presentations. */
+function renameDestination(path: string): string {
+  const expanded = path.replace(/\{[^{}]* => ([^{}]*)\}/g, "$1");
+  const arrow = expanded.lastIndexOf(" => ");
+  return arrow < 0 ? expanded : expanded.slice(arrow + 4);
 }
 
 /** A count, `null` for the `-` a binary file gets, `undefined` for not a row at all. */
@@ -317,7 +330,12 @@ async function recordDiff(ctx: PhaseContext, diff: CapturedDiff): Promise<void> 
   await ctx.artifact({
     type: "diff",
     content: diff.text,
-    metadata: { ...diff.stat, ...(diff.clipped ? { sandboxClipped: true } : {}) },
+    metadata: {
+      filesChanged: diff.stat.filesChanged,
+      insertions: diff.stat.insertions,
+      deletions: diff.stat.deletions,
+      ...(diff.clipped ? { sandboxClipped: true } : {}),
+    },
     message: diff.clipped
       ? `Recorded the working tree diff (${summary}). The sandbox's output cap clipped it, so ` +
         `the stored size understates the real one.`
@@ -330,7 +348,11 @@ async function recordDiff(ctx: PhaseContext, diff: CapturedDiff): Promise<void> 
     // row's metadata and on the event, and the per-file breakdown is the thing
     // neither of those can hold.
     content: diff.numstat,
-    metadata: { ...diff.stat },
+    metadata: {
+      filesChanged: diff.stat.filesChanged,
+      insertions: diff.stat.insertions,
+      deletions: diff.stat.deletions,
+    },
     message: `Recorded the diff stats: ${summary}.`,
   });
 }

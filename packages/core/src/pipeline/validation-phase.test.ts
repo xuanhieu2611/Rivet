@@ -222,6 +222,7 @@ describe("parseNumstat", () => {
       filesChanged: 2,
       insertions: 11,
       deletions: 2,
+      paths: ["src/a.js", "src/b.js"],
     });
   });
 
@@ -234,14 +235,25 @@ describe("parseNumstat", () => {
       filesChanged: 1,
       insertions: 0,
       deletions: 0,
+      paths: ["assets/logo.png"],
     });
   });
 
-  it("counts a rename as the one file git says it is", () => {
+  it("counts a brace-compressed rename and returns its new path", () => {
     expect(parseNumstat("1\t1\tsrc/{old.js => new.js}\n")).toEqual({
       filesChanged: 1,
       insertions: 1,
       deletions: 1,
+      paths: ["src/new.js"],
+    });
+  });
+
+  it("returns the new path for a whole-path rename", () => {
+    expect(parseNumstat("0\t0\tsrc/old.js => test/new.js\n")).toEqual({
+      filesChanged: 1,
+      insertions: 0,
+      deletions: 0,
+      paths: ["test/new.js"],
     });
   });
 
@@ -250,19 +262,35 @@ describe("parseNumstat", () => {
       filesChanged: 1,
       insertions: 0,
       deletions: 0,
+      paths: ["scripts/run.sh"],
     });
   });
 
   it("is empty for an empty diff", () => {
-    expect(parseNumstat("")).toEqual({ filesChanged: 0, insertions: 0, deletions: 0 });
-    expect(parseNumstat("\n\n")).toEqual({ filesChanged: 0, insertions: 0, deletions: 0 });
+    expect(parseNumstat("")).toEqual({
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      paths: [],
+    });
+    expect(parseNumstat("\n\n")).toEqual({
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      paths: [],
+    });
   });
 
   it("ignores anything that is not a numstat row", () => {
     // git prints warnings to stdout under some configurations, and one of them
     // counted as a changed file would quietly inflate every stat recorded here.
     const text = "warning: LF will be replaced by CRLF\n1\t0\tsrc/a.js\nnot a row at all\n";
-    expect(parseNumstat(text)).toEqual({ filesChanged: 1, insertions: 1, deletions: 0 });
+    expect(parseNumstat(text)).toEqual({
+      filesChanged: 1,
+      insertions: 1,
+      deletions: 0,
+      paths: ["src/a.js"],
+    });
   });
 });
 
