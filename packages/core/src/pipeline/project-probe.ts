@@ -1,7 +1,13 @@
 import { commandKilledError } from "../sandbox/errors";
+import { ValidationConfigInvalidError } from "../jobs/failure";
 import { splitLines } from "./command-output";
 import type { PhaseContext, RecordedCommand } from "./phase-context";
 import { detectPackageManager, type ProjectPlan, readScript } from "./project";
+import {
+  resolveValidationConfig,
+  type ResolvedValidation,
+  skippedValidation,
+} from "./validation-config";
 
 /**
  * Working out what the repository's test suite is, from inside the sandbox.
@@ -29,6 +35,9 @@ import { detectPackageManager, type ProjectPlan, readScript } from "./project";
  */
 const MANIFEST_MAX_BYTES = 1_048_576;
 
+/** A repository config is small, but receives the manifest cap so truncation is unambiguous. */
+const REPO_CONFIG_MAX_BYTES = MANIFEST_MAX_BYTES;
+
 export interface ProjectProbe {
   /** The project as detected, or null when there is no script to run. */
   plan: ProjectPlan | null;
@@ -49,6 +58,8 @@ export interface ProjectProbeOptions {
   /** The `package.json` script the caller intends to run. */
   script: string;
 }
+
+export type ValidationProbeOptions = Omit<ProjectProbeOptions, "script">;
 
 /**
  * Reads the repository root and its manifest, and says what can be run.
@@ -110,6 +121,77 @@ export async function probeProject(
 }
 
 /**
+ * Reads the inputs to the pure validation resolver from inside the sandbox.
+ *
+ * Like `probeProject`, killed commands escape and ordinary repository problems
+ * become skip reasons. The deliberate exception is a present `rivet.json`:
+ * unreadable, truncated, malformed, or schema-invalid configuration is
+ * terminal because silently ignoring it could run checks the repository
+ * explicitly replaced.
+ */
+export async function probeValidation(
+  ctx: PhaseContext,
+  options: ValidationProbeOptions,
+): Promise<ResolvedValidation> {
+  const listing = await ctx.exec({
+    argv: ["ls", "-1", "-a", options.repoDir],
+    cwd: options.repoDir,
+    timeoutMs: options.commandTimeoutMs,
+  });
+  guard(ctx, listing);
+
+  const entries = listing.exitCode === 0 ? splitLines(listing.stdout) : [];
+  const plan = listing.exitCode === 0 ? detectPackageManager(entries) : null;
+  if (!plan) return skippedValidation("the repository root could not be read");
+
+  const manifest = await ctx.exec({
+    argv: ["cat", "package.json"],
+    cwd: options.repoDir,
+    timeoutMs: options.commandTimeoutMs,
+    maxOutputBytes: MANIFEST_MAX_BYTES,
+  });
+  guard(ctx, manifest);
+  if (manifest.exitCode !== 0 || manifest.truncated) {
+    return skippedValidation("package.json could not be read");
+  }
+
+  const parsedManifest = parseJson(manifest.stdout);
+  if (!parsedManifest.ok) {
+    return skippedValidation("package.json is not readable as JSON");
+  }
+
+  let repoConfig: unknown = null;
+  if (entries.includes("rivet.json")) {
+    const config = await ctx.exec({
+      argv: ["cat", "rivet.json"],
+      cwd: options.repoDir,
+      timeoutMs: options.commandTimeoutMs,
+      maxOutputBytes: REPO_CONFIG_MAX_BYTES,
+    });
+    guard(ctx, config);
+
+    if (config.exitCode !== 0 || config.truncated) {
+      throw new ValidationConfigInvalidError(
+        "rivet.json is present but could not be read completely",
+      );
+    }
+    const parsedConfig = parseJson(config.stdout);
+    if (!parsedConfig.ok) {
+      throw new ValidationConfigInvalidError("rivet.json is not readable as JSON");
+    }
+    // `null` means "file absent" at the pure resolver boundary. The probe
+    // knows the file is present, so JSON `null` must not be mistaken for that
+    // sentinel and silently ignored.
+    if (parsedConfig.value === null) {
+      throw new ValidationConfigInvalidError("Invalid rivet.json validation configuration");
+    }
+    repoConfig = parsedConfig.value;
+  }
+
+  return resolveValidationConfig({ plan, manifest: parsedManifest.value, repoConfig });
+}
+
+/**
  * `undefined` for unparseable, `null` for absent, the script otherwise.
  *
  * Three answers rather than two because they are three different facts, and the
@@ -122,6 +204,14 @@ function parseManifest(text: string, script: string): string | null | undefined 
     return readScript(JSON.parse(text), script);
   } catch {
     return undefined;
+  }
+}
+
+function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) as unknown };
+  } catch {
+    return { ok: false };
   }
 }
 
