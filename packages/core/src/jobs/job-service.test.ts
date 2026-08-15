@@ -53,6 +53,11 @@ const row: Job = {
   failureCategory: null,
   sandboxId: null,
   envFingerprint: null,
+  reviewMode: "independent",
+  maxReviewLoops: 2,
+  reviewLoops: 0,
+  reviewDecision: null,
+  reviewBlockingCount: null,
 };
 
 describe("isJobId", () => {
@@ -141,5 +146,24 @@ describe("row mapping", () => {
     expect(toJobDetail({ ...row, failureCategory: "from_the_future" }).failureCategory).toBe(
       "unknown",
     );
+  });
+
+  it("carries the review columns onto the detail payload", () => {
+    const detail = toJobDetail(row);
+    expect(detail.reviewMode).toBe("independent");
+    expect(detail.maxReviewLoops).toBe(2);
+    expect(detail.reviewLoops).toBe(0);
+    expect(detail.reviewDecision).toBeNull();
+    expect(detail.reviewBlockingCount).toBeNull();
+  });
+
+  it("coerces review columns a newer build could have written", () => {
+    // Both are plain text columns, so neither value is guaranteed to be in this
+    // build's vocabulary. An unreadable mode still means the job is reviewed;
+    // an unreadable verdict is not allowed to masquerade as an approval.
+    expect(toJobDetail({ ...row, reviewMode: "none" }).reviewMode).toBe("none");
+    expect(toJobDetail({ ...row, reviewMode: "committee" }).reviewMode).toBe("independent");
+    expect(toJobDetail({ ...row, reviewDecision: "revise" }).reviewDecision).toBe("revise");
+    expect(toJobDetail({ ...row, reviewDecision: "shipit" }).reviewDecision).toBeNull();
   });
 });

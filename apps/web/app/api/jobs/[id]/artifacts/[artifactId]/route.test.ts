@@ -41,6 +41,11 @@ const JOB: JobDetail = {
   failureCategory: null,
   cancelRequestedAt: null,
   leaseExpiresAt: null,
+  reviewMode: "independent",
+  maxReviewLoops: 2,
+  reviewLoops: 0,
+  reviewDecision: null,
+  reviewBlockingCount: null,
 };
 
 const ARTIFACT: JobArtifact = {

@@ -43,6 +43,13 @@
       "when": 1786734538766,
       "tag": "0005_condemned_peter_quill",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786816631541,
+      "tag": "0006_sharp_romulus",
+      "breakpoints": true
     }
   ]
 }

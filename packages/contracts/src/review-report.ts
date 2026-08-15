@@ -22,6 +22,33 @@ export const reviewDecisionSchema = z.enum(REVIEW_DECISIONS);
 export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
 
 /**
+ * Coerces the `jobs.review_mode` text column into the closed vocabulary.
+ *
+ * Same reasoning as `parseFailureCategory`: the column is plain text, so a value
+ * written by a newer build could be outside the enum. The column is defaulted
+ * and never null, and `independent` is that default, so an unreadable value
+ * degrades into "this job is reviewed" rather than into "this job is not".
+ */
+export function parseReviewMode(value: string | null | undefined): ReviewMode {
+  const parsed = reviewModeSchema.safeParse(value);
+  return parsed.success ? parsed.data : "independent";
+}
+
+/**
+ * Coerces the nullable `jobs.review_decision` text column.
+ *
+ * Null means no reviewer has answered yet, which is a different fact from a
+ * verdict this build cannot read; both come back as `null` because there is no
+ * honest third value, and the durable `review_report` artifact is what a reader
+ * consults when the column disagrees with it.
+ */
+export function parseReviewDecision(value: string | null | undefined): ReviewDecision | null {
+  if (value === null || value === undefined) return null;
+  const parsed = reviewDecisionSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * PRD §6.8's "what the reviewer should look for" list, turned into a closed
  * vocabulary.
  *

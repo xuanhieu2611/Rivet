@@ -2,7 +2,7 @@ import type { JobStatus as DrizzleJobStatus } from "@rivet/database";
 import { z } from "zod";
 
 import type { FailureCategory } from "./job-event";
-import { reviewModeSchema } from "./review-report";
+import { type ReviewDecision, type ReviewMode, reviewModeSchema } from "./review-report";
 
 /**
  * The job lifecycle, mirroring the `job_status` Postgres enum.
@@ -162,6 +162,17 @@ export interface JobDetail extends JobSummary {
   cancelRequestedAt: Date | null;
   /** When the current worker's ownership lapses. Null when nothing holds it. */
   leaseExpiresAt: Date | null;
+
+  /** Whether this job gets an independent review session at all. */
+  reviewMode: ReviewMode;
+  /** Revisions this job may spend before a blocking verdict fails it. */
+  maxReviewLoops: number;
+  /** Revisions already spent. Survives a reclaim, like every other budget. */
+  reviewLoops: number;
+  /** The last verdict, null until a reviewer has answered. */
+  reviewDecision: ReviewDecision | null;
+  /** Blocking findings in that last verdict, null until one exists. */
+  reviewBlockingCount: number | null;
 }
 
 /**

@@ -77,6 +77,32 @@ export const jobs = pgTable(
     totalToolCalls: integer("total_tool_calls").notNull().default(0),
     totalTurns: integer("total_turns").notNull().default(0),
 
+    // --- independent review (M8) -----------------------------------------
+    /**
+     * Whether this job gets an independent review session at all.
+     *
+     * A property of the job rather than of the worker, so a job that recorded
+     * `independent` is reviewed whichever worker picks it up - the same property
+     * `max_cost_usd` has. Text rather than a pgEnum for the same reason
+     * `failure_category` is: Zod in `@rivet/contracts` is the validation.
+     */
+    reviewMode: text("review_mode").notNull().default("independent"),
+    /**
+     * How many revisions this job may spend before a blocking verdict fails it.
+     *
+     * The review loop is a budget, and budgets are the job's rather than the
+     * attempt's, so both the bound and the counter below live on the row: a
+     * worker killed during the second revision must not come back and get two
+     * more loops.
+     */
+    maxReviewLoops: integer("max_review_loops").notNull().default(2),
+    /** Revisions this job has already spent. Never reset by a reclaim. */
+    reviewLoops: integer("review_loops").notNull().default(0),
+    /** The last verdict, so counting outcomes needs no event-log replay. */
+    reviewDecision: text("review_decision"),
+    /** Blocking findings in that last verdict. Null until one exists. */
+    reviewBlockingCount: integer("review_blocking_count"),
+
     // --- dispatch and deadline (M6) -------------------------------------
     /** Monotonically identifies a durable delivery generation for this job. */
     dispatchGeneration: integer("dispatch_generation").notNull().default(0),

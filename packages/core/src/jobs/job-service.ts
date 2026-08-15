@@ -3,6 +3,8 @@ import {
   type JobDetail,
   type JobSummary,
   parseFailureCategory,
+  parseReviewDecision,
+  parseReviewMode,
 } from "@rivet/contracts";
 import { db, type Database, type Job, jobs } from "@rivet/database";
 import { desc, eq } from "drizzle-orm";
@@ -94,6 +96,13 @@ export function toJobDetail(row: Job): JobDetail {
     failureCategory: parseFailureCategory(row.failureCategory),
     cancelRequestedAt: row.cancelRequestedAt,
     leaseExpiresAt: row.leaseExpiresAt,
+    // `review_mode` and `review_decision` are plain text columns for the same
+    // reason `failure_category` is, so they get the same coercion.
+    reviewMode: parseReviewMode(row.reviewMode),
+    maxReviewLoops: row.maxReviewLoops,
+    reviewLoops: row.reviewLoops,
+    reviewDecision: parseReviewDecision(row.reviewDecision),
+    reviewBlockingCount: row.reviewBlockingCount,
   };
 }
 
@@ -105,7 +114,9 @@ export function toJobDetail(row: Job): JobDetail {
  * deliberately NOT part of this: it cannot join the transaction, and pretending
  * otherwise would hide the dual-write gap that `requestJobRun` documents.
  *
- * The column defaults supply status, priority and every budget value.
+ * The column defaults supply status, priority and every budget value except the
+ * review loop bound, which `createJobSchema` defaults on the way in so a caller
+ * can set it per run.
  */
 export async function createJob(input: CreateJob, database: Database = db): Promise<JobDetail> {
   return database.transaction(async (tx) => {
@@ -116,6 +127,8 @@ export async function createJob(input: CreateJob, database: Database = db): Prom
         description: input.description,
         repoUrl: input.repoUrl,
         baseBranch: input.baseBranch,
+        reviewMode: input.reviewMode,
+        maxReviewLoops: input.maxReviewLoops,
       })
       .returning();
 
