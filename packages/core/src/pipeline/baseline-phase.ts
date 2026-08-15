@@ -1,110 +1,204 @@
+import { serializeBaselineReport, type CheckRun } from "@rivet/contracts";
+
 import { commandKilledError } from "../sandbox/errors";
-import { problem } from "./command-output";
 import type { PhaseContext } from "./phase-context";
 import type { PipelineOptions } from "./phases";
-import { probeProject } from "./project-probe";
-import { REPO_DIRNAME } from "./project";
+import { probeValidation } from "./project-probe";
+import { COREPACK_ENV, REPO_DIRNAME } from "./project";
+import { runCheck } from "./check-runner";
+import type { ResolvedCheckConfig } from "./validation-config";
 
-/**
- * Phase two: run the repository's own tests before Rivet has changed anything.
- *
- * "Before" is load-bearing and used not to be true. Until Milestone 5 this body
- * was wired to `testing`, which runs *after* `implementing`, so the phase whose
- * entire premise is "was this repository already broken" was measuring a tree
- * the coding session had just edited. It now runs at `analyzing`, ahead of every
- * phase that can change a file, and `testing` re-runs the same suite and
- * compares the two.
- *
- * The one place in this milestone where the obvious behaviour is the wrong one.
- * **A non-zero exit here does not fail the job.** PRD §11 C asks for exactly
- * this: establish whether the repository is already healthy *before* modifying
- * it, so that a pre-existing failure is never attributed to the agent. A red
- * baseline is a recorded property of the repository that Milestone 5 compares
- * its own run against; treating it as a job failure would make Rivet unable to
- * work on precisely the repositories it is most useful for.
- *
- * What *does* fail the job is the command being killed - a timeout or an OOM -
- * because those are facts about the sandbox rather than about the repository.
- * That asymmetry is the whole design of this file, and it is why the sandbox
- * port reports a non-zero exit as a result and a kill as a flag: the exit code
- * means whatever the phase running the command says it means, and here it means
- * almost nothing.
- *
- * Deliberately not here: typecheck and lint runs, and per-repository validation
- * configuration. That is Milestone 7, and adding it now would mean guessing at a
- * config format before there is a consumer for it.
- */
-
-/**
- * The script this milestone knows to look for. Per-repo config is Milestone 7.
- *
- * Exported because `testing` has to re-run exactly this one for its comparison
- * to mean anything, and two phases naming the same string separately is how they
- * stop naming the same string.
- */
+/** Kept until the legacy single-suite validation phase no longer imports it. */
 export const BASELINE_SCRIPT = "test";
 
+const BASELINE_CHECKS = ["test", "typecheck", "lint"] as const;
+
+/**
+ * Phase two: establish every deterministic repository check before any edit.
+ *
+ * A non-zero exit is a property of the repository, not a failed job. Commands
+ * that were killed still escape through `runCheck`, because a timeout or OOM is
+ * a sandbox failure rather than a red baseline. Every runnable check is attempted
+ * in the fixed test, typecheck, lint order so one red check cannot hide another.
+ *
+ * The legacy `baseline.recorded` row remains the durable compatibility boundary
+ * for M5 and M6 readers. It describes only the test check and keeps its original
+ * data shape. The complete check set and parsed failure names live in the
+ * canonical `baseline_report` artifact.
+ */
 export function baselinePhase(options: PipelineOptions): (ctx: PhaseContext) => Promise<void> {
   const repoDir = `${options.workdir}/${REPO_DIRNAME}`;
 
   return async function baseline(ctx: PhaseContext): Promise<void> {
-    const probe = await probeProject(ctx, {
+    const resolved = await probeValidation(ctx, {
       repoDir,
       commandTimeoutMs: options.commandTimeoutMs,
-      script: BASELINE_SCRIPT,
     });
-    if (!probe.plan) {
-      await skip(ctx, `No baseline was established: ${probe.reason}.`);
-      return;
-    }
+    const reporterDirectoryReady =
+      "skipped" in resolved.test || resolved.test.reporter === undefined
+        ? false
+        : await prepareReporterDirectory(ctx, options);
+    const checks: CheckRun[] = [];
 
-    const plan = probe.plan;
-    const command = plan.runScript(BASELINE_SCRIPT);
-    const result = await ctx.exec({
-      argv: command,
-      cwd: repoDir,
-      // Its own budget rather than the ordinary per-command one. A test suite
-      // that takes four minutes is a slow suite, not a hung sandbox, and
-      // reporting it as `command_timed_out` would be Rivet calling a normal
-      // repository broken.
-      timeoutMs: options.baselineTimeoutMs,
-      ...(plan.env ? { env: plan.env } : {}),
-    });
-
-    // Order matters here for the same reason it does in `provisioning`: a
-    // cancelled job kills the container mid-command, and every command in a
-    // killed container comes back looking like a failing test suite.
-    ctx.signal.throwIfAborted();
-    const killed = commandKilledError(result);
-    if (killed) throw killed;
-
-    const passed = result.exitCode === 0;
-    await ctx.event({
-      type: "baseline.recorded",
-      message: passed
-        ? `Baseline is green: \`${command.join(" ")}\` passed.`
-        : `Baseline is red: \`${command.join(" ")}\` ${problem(result)}. Recorded, not failed - ` +
-          `the repository was already like this.`,
-      data: {
-        baseline: passed ? "passed" : "failed",
-        argv: result.argv,
-        exitCode: result.exitCode,
-        durationMs: result.durationMs,
-        commandId: result.commandId,
-      },
-    });
-
-    if (!passed) {
-      ctx.log.info(
-        { exitCode: result.exitCode, argv: command },
-        "baseline suite is failing before any change; recorded as a property of the repository",
+    for (const kind of BASELINE_CHECKS) {
+      const check = await executeBaselineCheck(
+        ctx,
+        options,
+        repoDir,
+        kind,
+        resolved[kind],
+        reporterDirectoryReady,
       );
+      checks.push(check);
+      await recordCheck(ctx, check);
     }
+
+    const test = checks[0];
+    if (test?.kind !== "test") {
+      throw new Error("Baseline check order did not produce the required test result.");
+    }
+
+    await recordLegacyBaseline(ctx, test);
+    await ctx.artifact({
+      type: "baseline_report",
+      content: serializeBaselineReport({ checks }),
+      requireComplete: true,
+      message: "Baseline report artifact recorded.",
+    });
   };
 }
 
-/** Records that there is no baseline, and why. Never a job failure. */
-async function skip(ctx: PhaseContext, message: string): Promise<void> {
-  await ctx.event({ type: "baseline.recorded", message, data: { baseline: "skipped" } });
-  ctx.log.info({ reason: message }, "no baseline established");
+async function executeBaselineCheck(
+  ctx: PhaseContext,
+  options: PipelineOptions,
+  repoDir: string,
+  kind: (typeof BASELINE_CHECKS)[number],
+  config: ResolvedCheckConfig,
+  reporterDirectoryReady: boolean,
+): Promise<CheckRun> {
+  if ("skipped" in config) {
+    return {
+      kind,
+      status: "skipped",
+      // A skip means the inference path found no runnable command. rivet.json
+      // has no explicit disabled form, so package_json is the truthful source.
+      source: "package_json",
+      reason: config.reason,
+    };
+  }
+
+  return runCheck(ctx, {
+    kind,
+    source: config.source,
+    argv: config.argv,
+    cwd: repoDir,
+    timeoutMs:
+      config.timeoutMs ?? (kind === "test" ? options.baselineTimeoutMs : options.checkTimeoutMs),
+    ...(config.argv[0] === "corepack" ? { env: COREPACK_ENV } : {}),
+    ...(kind === "test" && config.reporter && reporterDirectoryReady
+      ? {
+          reporter: {
+            ...config.reporter,
+            outputPath: `${options.workdir}/validation/baseline-${kind}.json`,
+            readMaxBytes: options.validationReportMaxBytes,
+          },
+        }
+      : {}),
+  });
+}
+
+/**
+ * Creates Rivet's reporter directory without letting instrumentation decide the
+ * check result. An unavailable directory disables parsing for this phase; the
+ * repository command still runs unchanged. Cancellation remains authoritative.
+ */
+async function prepareReporterDirectory(
+  ctx: PhaseContext,
+  options: PipelineOptions,
+): Promise<boolean> {
+  const directory = `${options.workdir}/validation`;
+  ctx.signal.throwIfAborted();
+  const result = await ctx.exec({
+    argv: ["mkdir", "-p", directory],
+    cwd: options.workdir,
+    timeoutMs: options.commandTimeoutMs,
+  });
+  ctx.signal.throwIfAborted();
+  const killed = commandKilledError(result);
+  if (killed) throw killed;
+
+  if (result.exitCode === 0) return true;
+  ctx.log.warn(
+    { directory, exitCode: result.exitCode },
+    "reporter directory could not be prepared; running baseline without reporter output",
+  );
+  return false;
+}
+
+async function recordCheck(ctx: PhaseContext, check: CheckRun): Promise<void> {
+  await ctx.event({
+    type: "baseline.check_recorded",
+    message: describeCheck(check),
+    data: {
+      check: check.kind,
+      checkStatus: check.status,
+      ...(check.argv === undefined ? {} : { argv: check.argv }),
+      ...(check.exitCode === undefined ? {} : { exitCode: check.exitCode }),
+      ...(check.durationMs === undefined ? {} : { durationMs: check.durationMs }),
+      ...(check.commandId === undefined ? {} : { commandId: check.commandId }),
+      ...(check.tests === undefined
+        ? {}
+        : { testsTotal: check.tests.total, testsFailed: check.tests.failed }),
+    },
+  });
+}
+
+function describeCheck(check: CheckRun): string {
+  if (check.status === "skipped") {
+    return `Baseline ${check.kind} skipped: ${check.reason}.`;
+  }
+  return `Baseline ${check.kind} ${check.status}: \`${check.argv?.join(" ")}\` exited ${check.exitCode}.`;
+}
+
+/** Writes the unchanged M5 event shape from the test check only. */
+async function recordLegacyBaseline(ctx: PhaseContext, test: CheckRun): Promise<void> {
+  if (test.status === "skipped") {
+    const message = `No baseline was established: ${test.reason}.`;
+    await ctx.event({ type: "baseline.recorded", message, data: { baseline: "skipped" } });
+    ctx.log.info({ reason: message }, "no baseline established");
+    return;
+  }
+
+  const command = test.argv;
+  const { exitCode, durationMs, commandId } = test;
+  if (
+    command === undefined ||
+    exitCode === undefined ||
+    durationMs === undefined ||
+    commandId === undefined
+  ) {
+    throw new Error("A completed baseline test check is missing command details.");
+  }
+  await ctx.event({
+    type: "baseline.recorded",
+    message:
+      test.status === "passed"
+        ? `Baseline is green: \`${command.join(" ")}\` passed.`
+        : `Baseline is red: \`${command.join(" ")}\` exit ${test.exitCode}. Recorded, not failed - ` +
+          `the repository was already like this.`,
+    data: {
+      baseline: test.status,
+      argv: command,
+      exitCode,
+      durationMs,
+      commandId,
+    },
+  });
+
+  if (test.status === "failed") {
+    ctx.log.info(
+      { exitCode: test.exitCode, argv: command },
+      "baseline suite is failing before any change; recorded as a property of the repository",
+    );
+  }
 }
