@@ -1,7 +1,13 @@
-import type { AgentToolbox, CodingAgentSpec, PlannerAgentToolbox } from "@rivet/core";
+import { parseReviewReport } from "@rivet/contracts";
+import type {
+  AgentToolbox,
+  CodingAgentSpec,
+  PlannerAgentToolbox,
+  ReviewerAgentToolbox,
+} from "@rivet/core";
 import { describe, expect, it } from "vitest";
 
-import { FakeCodingAgent } from "./fake-agent";
+import { approvingReview, FakeCodingAgent, revisingReview } from "./fake-agent";
 
 /**
  * The fake, tested as carefully as the thing it stands in for.
@@ -41,6 +47,25 @@ const PLANNER_TOOLBOX: PlannerAgentToolbox = {
   searchText: () => Promise.resolve("src/index.ts:1:source"),
   submitPlan: () => Promise.resolve(),
 };
+
+const REVIEWER_SPEC: CodingAgentSpec = { ...SPEC, role: "reviewer" };
+
+/** A reviewer toolbox that keeps every verdict the fake submits, in order. */
+function reviewerToolbox(submitted: unknown[]): ReviewerAgentToolbox {
+  return {
+    role: "reviewer",
+    listFiles: () => Promise.resolve("src/index.ts"),
+    readFile: () => Promise.resolve({ content: "source", truncated: false }),
+    searchText: () => Promise.resolve("src/index.ts:1:source"),
+    submitReview: (value) => {
+      // Validated here, as the real phase validates it, so a fake that scripts
+      // an unusable verdict fails in this suite rather than in an integration
+      // one that was testing something else.
+      submitted.push(parseReviewReport(value));
+      return Promise.resolve();
+    },
+  };
+}
 
 async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
   const seen: unknown[] = [];
@@ -145,6 +170,91 @@ describe("FakeCodingAgent", () => {
 
     expect(agent.sessions[0]?.stopCount).toBe(2);
     expect(agent.sessions[0]?.stopped).toBe(true);
+  });
+
+  it("approves by default for a reviewer without a provider", async () => {
+    const submitted: unknown[] = [];
+    const agent = new FakeCodingAgent();
+    const session = await agent.start(
+      REVIEWER_SPEC,
+      reviewerToolbox(submitted),
+      new AbortController().signal,
+    );
+
+    await collect(session.run(new AbortController().signal));
+
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]).toMatchObject({ decision: "approve", blockingIssues: [] });
+  });
+
+  it("scripts a verdict per review session and repeats the last one", async () => {
+    // "Revise once, then approve" and "revise every time" are the two scripts
+    // the loop and its bound are tested with, and this is the rule that gives
+    // both of them: entries are consumed in order and the last one repeats.
+    const submitted: unknown[] = [];
+    const agent = new FakeCodingAgent({
+      reviewerScript: [{ events: [], review: revisingReview() }, { events: [] }],
+    });
+
+    for (let loop = 0; loop < 3; loop += 1) {
+      const session = await agent.start(
+        REVIEWER_SPEC,
+        reviewerToolbox(submitted),
+        new AbortController().signal,
+      );
+      await collect(session.run(new AbortController().signal));
+    }
+
+    expect(submitted.map((report) => (report as { decision: string }).decision)).toEqual([
+      "revise",
+      "approve",
+      "approve",
+    ]);
+  });
+
+  it("uses one scripted reviewer session for every loop when given an object", async () => {
+    const submitted: unknown[] = [];
+    const agent = new FakeCodingAgent({ reviewerScript: { events: [], review: revisingReview() } });
+
+    for (let loop = 0; loop < 3; loop += 1) {
+      const session = await agent.start(
+        REVIEWER_SPEC,
+        reviewerToolbox(submitted),
+        new AbortController().signal,
+      );
+      await collect(session.run(new AbortController().signal));
+    }
+
+    expect(submitted).toHaveLength(3);
+    for (const report of submitted) expect(report).toMatchObject({ decision: "revise" });
+  });
+
+  it("ends without submitting a review when the script says null", async () => {
+    // The `review_not_produced` path, and the reason `null` is a third state
+    // rather than an absent one: a missing verdict must never be read as an
+    // approval.
+    const submitted: unknown[] = [];
+    const agent = new FakeCodingAgent({ reviewerScript: { events: [], review: null } });
+    const session = await agent.start(
+      REVIEWER_SPEC,
+      reviewerToolbox(submitted),
+      new AbortController().signal,
+    );
+
+    await collect(session.run(new AbortController().signal));
+
+    expect(submitted).toEqual([]);
+  });
+
+  it("builds verdicts the report schema accepts in both directions", () => {
+    expect(parseReviewReport(approvingReview())).toMatchObject({ decision: "approve" });
+    expect(parseReviewReport(revisingReview()).blockingIssues).toHaveLength(1);
+  });
+
+  it("refuses a reviewer session handed another role's toolbox", async () => {
+    await expect(
+      new FakeCodingAgent().start(REVIEWER_SPEC, TOOLBOX, new AbortController().signal),
+    ).rejects.toThrow("The reviewer session received the implementer toolbox.");
   });
 
   it("fails to start when told to", async () => {

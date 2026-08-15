@@ -17,9 +17,11 @@
 export { EventBuffer, type EventBufferOptions } from "./event-buffer";
 export { accumulate, emptyUsage, PiEventMapper, type SessionProgress } from "./event-mapper";
 export {
+  approvingReview,
   FakeCodingAgent,
   type FakeCodingAgentOptions,
   FakeCodingAgentSession,
+  revisingReview,
   type ScriptedSession,
 } from "./fake-agent";
 export { AgentPathError, resolveInside } from "./paths";
@@ -29,12 +31,15 @@ export {
   PiCodingAgent,
   type PiCodingAgentOptions,
   RIVET_PLANNER_TOOL_NAMES,
+  RIVET_REVIEWER_TOOL_NAMES,
   RIVET_TOOL_NAMES,
+  toolNamesForRole,
 } from "./pi-agent";
 export {
-  createPlannerReadOperations,
+  createReadOnlyFileOperations,
   createToolOperations,
-  type PlannerReadLayerOptions,
+  type ReadOnlyAgentToolbox,
+  type ReadOnlyFileLayerOptions,
   type ToolLayerOptions,
   type ToolOperations,
   withToolCall,

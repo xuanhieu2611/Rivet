@@ -9,6 +9,7 @@ import type {
 import {
   type ImplementerAgentToolbox,
   type PlannerAgentToolbox,
+  type ReviewerAgentToolbox,
   commandKilledError,
   type RecordedCommand,
   SandboxFileError,
@@ -84,8 +85,20 @@ export interface ToolOperations {
   bash: BashOperations;
 }
 
-export interface PlannerReadLayerOptions {
-  toolbox: PlannerAgentToolbox;
+/**
+ * The two roles that read the repository and cannot change it.
+ *
+ * One type rather than two identical ones because the read path is genuinely
+ * the same path: a planner reading a file before it writes a plan and a
+ * reviewer reading a file before it writes a verdict differ in what they submit
+ * at the end, not in how a file arrives. What must not be widened is the union
+ * itself - an implementer toolbox has a shell, and this is the type that says
+ * the operations below never see one.
+ */
+export type ReadOnlyAgentToolbox = PlannerAgentToolbox | ReviewerAgentToolbox;
+
+export interface ReadOnlyFileLayerOptions {
+  toolbox: ReadOnlyAgentToolbox;
   repoDir: string;
   signal: AbortSignal;
   onFatal: (error: unknown) => void;
@@ -299,8 +312,8 @@ export function createToolOperations(options: ToolLayerOptions): ToolOperations 
   }
 }
 
-/** Read-only file operations used by the planner role. */
-export function createPlannerReadOperations(options: PlannerReadLayerOptions): ReadOperations {
+/** Read-only file operations used by the planner and reviewer roles. */
+export function createReadOnlyFileOperations(options: ReadOnlyFileLayerOptions): ReadOperations {
   const readFile = async (path: string): Promise<Buffer> => {
     const absolute = resolveInside(options.repoDir, path);
     try {

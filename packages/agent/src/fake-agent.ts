@@ -1,4 +1,4 @@
-import type { ImplementationPlan } from "@rivet/contracts";
+import type { ImplementationPlan, ReviewIssue, ReviewReport } from "@rivet/contracts";
 import type {
   AgentToolbox,
   CodingAgent,
@@ -29,6 +29,16 @@ export interface ScriptedSession {
   events: CodingAgentEvent[];
   /** A valid plan submitted automatically when this is used for a planner. */
   plan?: ImplementationPlan | null;
+  /**
+   * The verdict submitted automatically when this is used for a reviewer.
+   *
+   * Three states rather than two, and the third is the one worth having.
+   * Omitted means a default approval. A report means that verdict. **`null`
+   * means the session ends without calling `submit_review` at all**, which is
+   * the `review_not_produced` path - a session that talked and submitted
+   * nothing, which must never be read as an approval.
+   */
+  review?: ReviewReport | null;
   /** Thrown instead of finishing, for the provider-failure paths. */
   throws?: Error;
   /** Awaited before each event, so a test can interleave a cancel. */
@@ -56,6 +66,26 @@ export interface FakeCodingAgentOptions {
   script?: ScriptedSession[];
   /** The planning session, or a deterministic valid plan when omitted. */
   plannerScript?: ScriptedSession;
+  /**
+   * The review sessions, in the order they are started - one per loop.
+   *
+   * A single object is used for every review session. An array is consumed in
+   * order and **its last entry repeats** once the array is exhausted, which is
+   * what makes the three scripts the review loop needs one line each:
+   *
+   * ```ts
+   * reviewerScript: { review: approvingReview() }                   // approve on the first loop
+   * reviewerScript: [{ review: revisingReview() }, { review: approvingReview() }]  // revise once, then approve
+   * reviewerScript: { review: revisingReview() }                    // revise every time, to the bound
+   * reviewerScript: { review: null }                                // end without submitting a review
+   * ```
+   *
+   * Repeating rather than falling back to the default approval, because the
+   * bound is enforced by Rivet rather than by the reviewer changing its mind:
+   * a script that runs out and quietly starts approving would make an exhausted
+   * loop untestable by making it impossible.
+   */
+  reviewerScript?: ScriptedSession | ScriptedSession[];
   /** Every `start()` fails with this. */
   startFails?: Error;
 }
@@ -68,6 +98,46 @@ const DEFAULT_PLAN: ImplementationPlan = {
   validationPlan: ["Run the targeted test suite"],
   riskAreas: ["Existing behavior outside the requested path"],
 };
+
+const DEFAULT_BLOCKING_ISSUE: ReviewIssue = {
+  title: "The change does not cover the case the issue names",
+  detail:
+    "The issue names a boundary the patch does not handle, and the tests do not exercise it. " +
+    "Handle it and cover it.",
+  paths: [],
+  category: "incomplete",
+};
+
+/**
+ * A valid approval, for the scripts that want the loop to end.
+ *
+ * Built here rather than written out in every test because the cross-field rule
+ * is real: an approval carrying a blocking issue is refused by the schema, so a
+ * test that hand-rolls one gets a validation failure instead of the path it
+ * meant to exercise.
+ */
+export function approvingReview(overrides: Partial<ReviewReport> = {}): ReviewReport {
+  return {
+    decision: "approve",
+    blockingIssues: [],
+    nonBlockingIssues: [],
+    confidence: 0.9,
+    summary: "The change matches the issue and the validation report supports it.",
+    ...overrides,
+  };
+}
+
+/** A valid revision request, with the one blocking issue the schema insists on. */
+export function revisingReview(overrides: Partial<ReviewReport> = {}): ReviewReport {
+  return {
+    decision: "revise",
+    blockingIssues: [DEFAULT_BLOCKING_ISSUE],
+    nonBlockingIssues: [],
+    confidence: 0.8,
+    summary: "The change is close, and one blocking finding has to be addressed first.",
+    ...overrides,
+  };
+}
 
 export class FakeCodingAgent implements CodingAgent {
   /** Every spec passed to `start`, in order. */
@@ -96,6 +166,7 @@ export class FakeCodingAgent implements CodingAgent {
     }
 
     const implementationIndex = this.starts.filter((start) => start.role === "implementer").length;
+    const reviewIndex = this.starts.filter((start) => start.role === "reviewer").length;
     this.starts.push(spec);
 
     const scriptedPlanner = this.options.script?.[0];
@@ -105,10 +176,21 @@ export class FakeCodingAgent implements CodingAgent {
           (scriptedPlanner?.plan !== undefined
             ? scriptedPlanner
             : { events: [], plan: DEFAULT_PLAN }))
-        : (this.options.script?.[implementationIndex] ?? { events: [] });
+        : spec.role === "reviewer"
+          ? this.reviewerScript(reviewIndex)
+          : (this.options.script?.[implementationIndex] ?? { events: [] });
     const session = new FakeCodingAgentSession(`fake-session-${this.nextId++}`, script, tools);
     this.sessions.push(session);
     return Promise.resolve(session);
+  }
+
+  /** The script for review session `index`, with the last entry repeating. */
+  private reviewerScript(index: number): ScriptedSession {
+    const scripted = this.options.reviewerScript;
+    if (scripted === undefined) return { events: [] };
+    if (!Array.isArray(scripted)) return scripted;
+    if (scripted.length === 0) return { events: [] };
+    return scripted[Math.min(index, scripted.length - 1)] ?? { events: [] };
   }
 }
 
@@ -132,6 +214,9 @@ export class FakeCodingAgentSession implements CodingAgentSession {
     if (this.tools.role === "planner" && this.script.plan !== null) {
       const plan = this.script.plan ?? DEFAULT_PLAN;
       await this.tools.submitPlan(plan, signal);
+    }
+    if (this.tools.role === "reviewer" && this.script.review !== null) {
+      await this.tools.submitReview(this.script.review ?? approvingReview(), signal);
     }
     if (this.tools.role === "implementer" && this.script.useTools) {
       await this.script.useTools(this.tools, signal);

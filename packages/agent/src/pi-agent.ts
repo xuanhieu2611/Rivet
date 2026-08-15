@@ -4,22 +4,29 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import type * as Pi from "@earendil-works/pi-coding-agent";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { REVIEW_ISSUE_CATEGORIES, REVIEW_REPORT_LIMITS } from "@rivet/contracts";
 import {
   AgentFailedError,
   type AgentToolbox,
   AgentUnavailableError,
   type CodingAgent,
   type CodingAgentEvent,
+  type CodingAgentRole,
   type CodingAgentSession,
   type CodingAgentSpec,
   type CodingAgentStopReason,
-  type ImplementerAgentToolbox,
   type PlannerAgentToolbox,
+  type ReviewerAgentToolbox,
 } from "@rivet/core";
 
 import { EventBuffer } from "./event-buffer";
 import { emptyUsage, PiEventMapper } from "./event-mapper";
-import { createPlannerReadOperations, createToolOperations, withToolCall } from "./tools";
+import {
+  createReadOnlyFileOperations,
+  createToolOperations,
+  type ReadOnlyAgentToolbox,
+  withToolCall,
+} from "./tools";
 
 /**
  * The Pi adapter: the only file in Rivet that knows Pi exists.
@@ -53,6 +60,21 @@ export const RIVET_PLANNER_TOOL_NAMES = [
   "read",
   "search_text",
   "submit_plan",
+] as const;
+/**
+ * The reviewer's four read-only tools, sorted for the same assertion.
+ *
+ * The planner's set with `submit_plan` swapped for `submit_review`, and the
+ * absence of `bash`, `write` and `edit` is the whole of the read-only claim. A
+ * reviewer holding a shell could edit the diff it is judging, and validation
+ * has already run, so that edit would reach `finalizing` having been validated
+ * by nothing.
+ */
+export const RIVET_REVIEWER_TOOL_NAMES = [
+  "list_files",
+  "read",
+  "search_text",
+  "submit_review",
 ] as const;
 
 /** The slice of a pino logger this adapter uses. Structured first, message second. */
@@ -109,15 +131,38 @@ function loadPi(): Promise<typeof Pi> {
   return piModule;
 }
 
-function toolNamesForRole(role: CodingAgentSpec["role"]): readonly string[] {
-  return role === "planner" ? RIVET_PLANNER_TOOL_NAMES : RIVET_TOOL_NAMES;
+/**
+ * The tools a role is allowed to hold, as a total switch.
+ *
+ * Exhaustive rather than a ternary, and the `never` is the point: a fourth role
+ * added to `CODING_AGENT_ROLES` has to be given a tool set here or `pnpm
+ * typecheck` fails. The alternative - a default arm - is how a new role
+ * silently inherits another role's capabilities, which for the one default a
+ * ternary can have is either "everyone gets a shell" or "everyone is a
+ * planner". Neither is a thing to discover from a job.
+ */
+export function toolNamesForRole(role: CodingAgentRole): readonly string[] {
+  switch (role) {
+    case "planner":
+      return RIVET_PLANNER_TOOL_NAMES;
+    case "reviewer":
+      return RIVET_REVIEWER_TOOL_NAMES;
+    case "implementer":
+      return RIVET_TOOL_NAMES;
+    default: {
+      const unreachable: never = role;
+      throw new AgentFailedError(
+        `The role ${String(unreachable)} has no declared tool set, so no session may be started for it.`,
+      );
+    }
+  }
 }
 
-function createListFilesTool(pi: typeof Pi, toolbox: PlannerAgentToolbox, signal: AbortSignal) {
+function createListFilesTool(pi: typeof Pi, toolbox: ReadOnlyAgentToolbox, signal: AbortSignal) {
   return pi.defineTool({
     name: "list_files",
     label: "List files",
-    description: "List tracked repository files for planning. This is read-only.",
+    description: "List tracked repository files. This is read-only.",
     promptSnippet: "List tracked repository files",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, toolSignal) {
@@ -130,7 +175,7 @@ function createListFilesTool(pi: typeof Pi, toolbox: PlannerAgentToolbox, signal
   });
 }
 
-function createSearchTextTool(pi: typeof Pi, toolbox: PlannerAgentToolbox, signal: AbortSignal) {
+function createSearchTextTool(pi: typeof Pi, toolbox: ReadOnlyAgentToolbox, signal: AbortSignal) {
   return pi.defineTool({
     name: "search_text",
     label: "Search text",
@@ -178,6 +223,96 @@ function createSubmitPlanTool(pi: typeof Pi, toolbox: PlannerAgentToolbox, signa
       await toolbox.submitPlan(params, toolSignal ?? signal);
       return {
         content: [{ type: "text", text: "Implementation plan accepted." }],
+        details: params,
+        terminate: true,
+      };
+    },
+  });
+}
+
+/**
+ * The reviewer's one worker-side capability.
+ *
+ * Modelled on `createSubmitPlanTool` and different from it in one way that
+ * matters: a rejected review is handed back to the model as a tool error rather
+ * than allowed to escape. The report has a cross-field rule the schema enforces
+ * - `revise` needs at least one blocking issue, `approve` needs none - and a
+ * model that contradicts itself should get a correction it can act on next
+ * turn, not a job that fails after the session has ended.
+ *
+ * The bounds come from `@rivet/contracts` rather than being restated here, so
+ * the shape the model is shown and the shape the phase will accept cannot drift
+ * apart. The parameter schema is still only a hint: the authority is the phase's
+ * `submitReview`, because the harness's own validation is not what Rivet
+ * persists against.
+ */
+function createSubmitReviewTool(pi: typeof Pi, toolbox: ReviewerAgentToolbox, signal: AbortSignal) {
+  const issue = Type.Object({
+    title: Type.String({
+      minLength: 1,
+      maxLength: REVIEW_REPORT_LIMITS.titleMaxChars,
+      description: "A one-line statement of the finding",
+    }),
+    detail: Type.String({
+      minLength: 1,
+      maxLength: REVIEW_REPORT_LIMITS.detailMaxChars,
+      description: "What is wrong, with the evidence for it",
+    }),
+    paths: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        maxItems: REVIEW_REPORT_LIMITS.maxPathsPerIssue,
+        description: "Repository-relative paths this finding is about. May be omitted.",
+      }),
+    ),
+    category: Type.Union(REVIEW_ISSUE_CATEGORIES.map((category) => Type.Literal(category))),
+  });
+
+  const issues = (description: string) =>
+    Type.Array(issue, { maxItems: REVIEW_REPORT_LIMITS.maxIssuesPerList, description });
+
+  return pi.defineTool({
+    name: "submit_review",
+    label: "Submit review verdict",
+    description:
+      "Submit the complete structured review verdict. This must be the reviewer's final action, " +
+      "and it is the only thing that records a verdict: an assistant message containing JSON is " +
+      "not a review and will be discarded.",
+    promptSnippet: "Submit the structured review verdict",
+    promptGuidelines: [
+      "Use submit_review only after reading enough of the diff and the files it touches.",
+      "Decide revise only with at least one blocking issue, and approve only with none.",
+      "Do not replace submit_review with an assistant message containing JSON.",
+    ],
+    parameters: Type.Object({
+      decision: Type.Union([Type.Literal("approve"), Type.Literal("revise")]),
+      blockingIssues: issues("Findings that must be fixed before this change can be accepted"),
+      nonBlockingIssues: issues("Findings worth stating that do not block acceptance"),
+      confidence: Type.Number({
+        minimum: 0,
+        maximum: 1,
+        description: "How confident this verdict is, from 0 through 1",
+      }),
+      summary: Type.String({ minLength: 1, maxLength: REVIEW_REPORT_LIMITS.summaryMaxChars }),
+    }),
+    async execute(_toolCallId, params, toolSignal) {
+      try {
+        await toolbox.submitReview(params, toolSignal ?? signal);
+      } catch (error) {
+        // Thrown, because that is how this harness turns a tool failure into a
+        // tool result the model reads: `agent-loop` catches it, marks the
+        // result `isError`, and the session continues with the message below
+        // in its transcript.
+        throw new Error(
+          `The review was rejected and nothing was recorded: ${
+            error instanceof Error ? error.message : String(error)
+          }. Fix the report and call submit_review again. A decision of "revise" requires at ` +
+            `least one blocking issue, and a decision of "approve" requires none.`,
+          { cause: error },
+        );
+      }
+
+      return {
+        content: [{ type: "text", text: "Review verdict accepted." }],
         details: params,
         terminate: true,
       };
@@ -239,10 +374,16 @@ export class PiCodingAgent implements CodingAgent {
       );
     }
 
-    if (spec.role === "implementer") {
-      const implementerTools = tools as ImplementerAgentToolbox;
+    // Branching on `tools.role` rather than on `spec.role`, which is what makes
+    // this a narrowing rather than a cast. The two are already known to agree -
+    // the check above refuses a session whose spec and toolbox disagree - and
+    // the difference is that the compiler now knows which member of the
+    // `AgentToolbox` union each branch holds. A cast would have handed a
+    // reviewer toolbox to the planner branch and built a `submit_plan` tool
+    // over a method that does not exist.
+    if (tools.role === "implementer") {
       const operations = createToolOperations({
-        toolbox: implementerTools,
+        toolbox: tools,
         repoDir: spec.workdir,
         outputMaxBytes: this.options.outputMaxBytes,
         commandTimeoutMs: spec.commandTimeoutMs,
@@ -280,9 +421,9 @@ export class PiCodingAgent implements CodingAgent {
         pi.defineTool(bash),
       );
     } else {
-      const plannerTools = tools as PlannerAgentToolbox;
-      const readOperations = createPlannerReadOperations({
-        toolbox: plannerTools,
+      const readOnlyTools: ReadOnlyAgentToolbox = tools;
+      const readOperations = createReadOnlyFileOperations({
+        toolbox: readOnlyTools,
         repoDir: spec.workdir,
         signal,
         onFatal: (error) => {
@@ -292,9 +433,11 @@ export class PiCodingAgent implements CodingAgent {
 
       customTools.push(
         pi.defineTool(pi.createReadToolDefinition(spec.workdir, { operations: readOperations })),
-        createListFilesTool(pi, plannerTools, signal),
-        createSearchTextTool(pi, plannerTools, signal),
-        createSubmitPlanTool(pi, plannerTools, signal),
+        createListFilesTool(pi, readOnlyTools, signal),
+        createSearchTextTool(pi, readOnlyTools, signal),
+        readOnlyTools.role === "reviewer"
+          ? createSubmitReviewTool(pi, readOnlyTools, signal)
+          : createSubmitPlanTool(pi, readOnlyTools, signal),
       );
     }
 

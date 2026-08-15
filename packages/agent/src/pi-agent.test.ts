@@ -1,7 +1,13 @@
 import { AgentFailedError, AgentUnavailableError } from "@rivet/core";
 import { describe, expect, it } from "vitest";
 
-import { classifyHarnessError, RIVET_PLANNER_TOOL_NAMES, RIVET_TOOL_NAMES } from "./pi-agent";
+import {
+  classifyHarnessError,
+  RIVET_PLANNER_TOOL_NAMES,
+  RIVET_REVIEWER_TOOL_NAMES,
+  RIVET_TOOL_NAMES,
+  toolNamesForRole,
+} from "./pi-agent";
 
 /**
  * The parts of the adapter that can be tested with no key and no SDK.
@@ -73,5 +79,48 @@ describe("RIVET_PLANNER_TOOL_NAMES", () => {
       "submit_plan",
     ]);
     expect([...RIVET_PLANNER_TOOL_NAMES]).toEqual([...RIVET_PLANNER_TOOL_NAMES].sort());
+  });
+});
+
+describe("RIVET_REVIEWER_TOOL_NAMES", () => {
+  it("is exactly the reviewer's four read-only tools, sorted", () => {
+    expect([...RIVET_REVIEWER_TOOL_NAMES]).toEqual([
+      "list_files",
+      "read",
+      "search_text",
+      "submit_review",
+    ]);
+    expect([...RIVET_REVIEWER_TOOL_NAMES]).toEqual([...RIVET_REVIEWER_TOOL_NAMES].sort());
+  });
+
+  it("gives the reviewer no way to change the diff it is judging", () => {
+    // The read-only claim, as a test rather than as a sentence. `start()`
+    // refuses a session whose active tools are not exactly this list, so a
+    // harness upgrade that reintroduced a default shell fails one job loudly
+    // instead of handing a reviewer the ability to edit what it is reviewing.
+    for (const forbidden of ["bash", "write", "edit"]) {
+      expect(RIVET_REVIEWER_TOOL_NAMES).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("toolNamesForRole", () => {
+  it("gives each role its own capability set", () => {
+    expect(toolNamesForRole("reviewer")).toEqual([
+      "list_files",
+      "read",
+      "search_text",
+      "submit_review",
+    ]);
+    expect(toolNamesForRole("planner")).toBe(RIVET_PLANNER_TOOL_NAMES);
+    expect(toolNamesForRole("implementer")).toBe(RIVET_TOOL_NAMES);
+  });
+
+  it("never hands one role another role's tools", () => {
+    // The failure this exists to prevent is silent: a ternary defaulting to the
+    // planner would give a reviewer `submit_plan` and no way to record a
+    // verdict, and one defaulting to the implementer would give it a shell.
+    expect(toolNamesForRole("reviewer")).not.toEqual([...RIVET_PLANNER_TOOL_NAMES]);
+    expect(toolNamesForRole("reviewer")).not.toEqual([...RIVET_TOOL_NAMES]);
   });
 });
