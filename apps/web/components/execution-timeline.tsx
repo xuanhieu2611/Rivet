@@ -5,6 +5,7 @@ import { commandAnchorId } from "@/components/job-live/command-anchor";
 import { JOB_EVENT_TONE, statusLabel } from "@/lib/job-status";
 import { formatAgentCost, formatBytes, formatTimeOfDay, formatTokenCount } from "@/lib/format";
 import { describeRecoveryEvent, isRecoveryEvent } from "@/lib/recovery-events";
+import { describeReviewEvent, isReviewEvent } from "@/lib/review-events";
 import { cn } from "@/lib/utils";
 import {
   CHECK_KIND_LABELS,
@@ -241,6 +242,12 @@ function EventContent({ event }: { event: JobEvent }): ReactNode {
     case "job.reclaimed":
       return <RecoveryEventContent event={event} />;
 
+    case "review.recorded":
+    case "review.revision_requested":
+    case "review.limit_reached":
+    case "review.skipped":
+      return <ReviewEventContent event={event} />;
+
     default:
       return <p className="text-sm leading-snug">{event.message}</p>;
   }
@@ -281,6 +288,34 @@ function RecoveryEventContent({ event }: { event: JobEvent }) {
         <pre className="text-destructive max-h-40 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-words">
           {event.data.stderr}
         </pre>
+      ) : null}
+    </div>
+  );
+}
+
+const REVIEW_EMPHASIS_CLASS = {
+  neutral: "text-foreground",
+  positive: "text-emerald-700 dark:text-emerald-300",
+  negative: "text-destructive",
+} as const;
+
+function ReviewEventContent({ event }: { event: JobEvent }) {
+  const presentation = describeReviewEvent(event);
+  if (!presentation) return <p className="text-sm leading-snug">{event.message}</p>;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className={cn("text-sm font-medium", REVIEW_EMPHASIS_CLASS[presentation.emphasis])}>
+          {presentation.label}
+        </span>
+        <p className="text-sm leading-snug">{event.message}</p>
+      </div>
+      <p className="text-muted-foreground text-xs leading-snug">{presentation.explanation}</p>
+      {presentation.facts.length > 0 ? (
+        <p className="text-muted-foreground text-xs break-words">
+          {presentation.facts.join(" · ")}
+        </p>
       ) : null}
     </div>
   );
@@ -416,7 +451,8 @@ function describeEventData(event: JobEvent): string | null {
     event.type === "artifact.recorded" ||
     event.type === "baseline.check_recorded" ||
     event.type === "validation.check_recorded" ||
-    event.type === "validation.recorded"
+    event.type === "validation.recorded" ||
+    isReviewEvent(event)
   ) {
     return null;
   }
@@ -493,6 +529,10 @@ function formatDuration(milliseconds: number): string {
 }
 
 function timelineTone(event: JobEvent): string {
+  if (event.type === "review.recorded") {
+    if (event.data?.reviewDecision === "approve") return "bg-emerald-500";
+    if (event.data?.reviewDecision === "revise") return "bg-amber-500";
+  }
   if (event.type === "validation.check_recorded") {
     const outcome = event.data?.checkOutcome;
     return outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome].tone : JOB_EVENT_TONE[event.type];

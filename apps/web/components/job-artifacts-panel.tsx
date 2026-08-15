@@ -36,8 +36,8 @@ export function JobArtifactsPanel({ artifacts, summary, diff }: JobArtifactsPane
       <CardHeader>
         <CardTitle>Artifacts</CardTitle>
         <CardDescription>
-          Durable outputs from validation and finalization. Content is read after the run rather
-          than streamed with the timeline.
+          Durable outputs from validation, review and finalization. Content is read after the run
+          rather than streamed with the timeline.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
