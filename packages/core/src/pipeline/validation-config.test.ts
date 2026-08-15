@@ -111,6 +111,34 @@ describe("resolveValidationConfig", () => {
     });
   });
 
+  it("infers a reporter once for package test and its targeted derivative", () => {
+    const resolved = resolveValidationConfig({
+      plan: plan(),
+      manifest: {
+        scripts: { test: "node ./node_modules/.bin/vitest run" },
+        devDependencies: { vitest: "4.1.10" },
+      },
+      repoConfig: null,
+    });
+
+    expect(resolved.test).toMatchObject({ reporter: { framework: "vitest" } });
+    expect(resolved.targeted).toMatchObject({ reporter: { framework: "vitest" } });
+  });
+
+  it("keeps an explicit reporter ahead of detected dependencies", () => {
+    const resolved = resolveValidationConfig({
+      plan: plan(),
+      manifest: { scripts: { test: "jest" }, devDependencies: { jest: "30" } },
+      repoConfig: {
+        validation: {
+          test: { argv: ["vitest", "run"], reporter: { framework: "vitest" } },
+        },
+      },
+    });
+
+    expect(resolved.test).toMatchObject({ reporter: { framework: "vitest" } });
+  });
+
   it("lets an explicit targeted template win and preserves appendPaths", () => {
     const resolved = resolveValidationConfig({
       plan: plan(),

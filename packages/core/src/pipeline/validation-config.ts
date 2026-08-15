@@ -7,6 +7,7 @@ import {
 import { ValidationConfigInvalidError } from "../jobs/failure";
 import type { ProjectPlan } from "./project";
 import { readScript } from "./project";
+import { detectTestFramework } from "./test-report";
 
 export type ValidationConfigSource = "rivet_json" | "package_json";
 
@@ -161,15 +162,10 @@ function copyReporter(reporter: {
   };
 }
 
-/**
- * Stage 3 replaces this deliberately narrow hook with `detectTestFramework`.
- * Keeping the call in the resolver now makes this the sole place that will
- * decide reporter inference, while Stage 2 remains independent of report
- * parsing and preserves every explicit declaration.
- */
 function reporterFromDetection(
-  _manifest: unknown,
-  _scriptText: string,
+  manifest: unknown,
+  scriptText: string,
 ): { reporter: ResolvedReporter } | Record<string, never> {
-  return {};
+  const framework = detectTestFramework(manifest, scriptText);
+  return framework === null ? {} : { reporter: { framework } };
 }

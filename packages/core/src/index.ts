@@ -52,6 +52,7 @@ export * from "./pipeline/resume-plan";
 export * from "./pipeline/run-pipeline";
 export * from "./pipeline/validation-phase";
 export * from "./pipeline/validation-config";
+export * from "./pipeline/test-report";
 export * from "./sandbox/command-log";
 export * from "./sandbox/errors";
 export * from "./sandbox/sandbox-holder";

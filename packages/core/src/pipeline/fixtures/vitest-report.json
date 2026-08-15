@@ -1,0 +1,38 @@
+{
+  "numTotalTestSuites": 2,
+  "numPassedTestSuites": 0,
+  "numFailedTestSuites": 2,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 3,
+  "numPassedTests": 1,
+  "numFailedTests": 1,
+  "numPendingTests": 1,
+  "numTodoTests": 0,
+  "success": false,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["calculator"],
+          "fullName": "calculator adds two values",
+          "status": "failed",
+          "title": "adds two values"
+        },
+        {
+          "ancestorTitles": ["calculator"],
+          "fullName": "calculator subtracts two values",
+          "status": "skipped",
+          "title": "subtracts two values"
+        },
+        {
+          "ancestorTitles": ["calculator"],
+          "fullName": "calculator multiplies two values",
+          "status": "passed",
+          "title": "multiplies two values"
+        }
+      ],
+      "status": "failed",
+      "name": "/Users/hieule/hieu/code/Rivet/packages/core/src/pipeline/stage3-capture.test.ts"
+    }
+  ]
+}
