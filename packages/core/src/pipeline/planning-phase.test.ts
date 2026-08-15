@@ -172,6 +172,7 @@ function harness(planner: ScriptedPlanner) {
       return Promise.resolve(42);
     },
     readBaseline: () => Promise.resolve("failed"),
+    readBaselineReport: () => Promise.resolve(null),
     readSummary: () => Promise.resolve(null),
     readValidation: () => Promise.resolve(null),
     recordProvisioning: () => Promise.resolve(),

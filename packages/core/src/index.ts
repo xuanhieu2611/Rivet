@@ -23,6 +23,7 @@ export * from "./artifacts/artifact-store";
 export * from "./checkpoints/checkpoint-store";
 export * from "./checkpoints/workspace-snapshot";
 export * from "./events/baseline-log";
+export * from "./events/baseline-report";
 export * from "./events/event-service";
 export * from "./events/session-log";
 export * from "./events/validation-log";

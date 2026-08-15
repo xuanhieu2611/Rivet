@@ -141,6 +141,7 @@ function harness(options: HarnessOptions = {}) {
       return Promise.resolve(artifacts.length);
     },
     readBaseline: () => Promise.resolve(null),
+    readBaselineReport: () => Promise.resolve(null),
     readSummary: () => Promise.resolve(null),
     readValidation: () => Promise.resolve(null),
     recordProvisioning: () => Promise.resolve(),

@@ -1,4 +1,8 @@
-import type { JobDetail } from "@rivet/contracts";
+import {
+  parseSerializedValidationReport,
+  type BaselineReport,
+  type JobDetail,
+} from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { BaselineOutcome } from "../events/baseline-log";
@@ -9,7 +13,7 @@ import {
   ValidationFailedError,
 } from "../jobs/failure";
 import { CommandTimedOutError, OutOfMemoryError } from "../sandbox/errors";
-import type { ExecResult, Sandbox, SandboxProvider } from "../sandbox/sandbox";
+import type { ExecResult, FileRead, Sandbox, SandboxProvider } from "../sandbox/sandbox";
 import { SandboxHolder } from "../sandbox/sandbox-holder";
 import type {
   PhaseArtifactInput,
@@ -62,7 +66,7 @@ const REPO_DIR = "/home/node/workspace/repo";
 const DEFAULT_LISTING = ".\n..\n.git\npackage.json\npackage-lock.json\nsrc\n";
 const DEFAULT_MANIFEST = JSON.stringify({
   name: "widgets",
-  scripts: { build: "tsc", test: "node --test" },
+  scripts: { build: "tsc", test: "node --test", typecheck: "tsc --noEmit", lint: "eslint ." },
 });
 
 const DEFAULT_DIFF = [
@@ -81,17 +85,28 @@ const DEFAULT_NUMSTAT = "1\t1\tsrc/discount.js\n";
 type Responder = (argv: string[]) => Partial<ExecResult> | undefined;
 
 /** `baseline` defaults to `failed`, which is the fixture repository's own path. */
-function harness(options: { respond?: Responder; baseline?: BaselineOutcome | null } = {}) {
+function harness(
+  options: {
+    respond?: Responder;
+    baseline?: BaselineOutcome | null;
+    baselineReport?: BaselineReport | null;
+    read?: (path: string) => Promise<FileRead>;
+  } = {},
+) {
   const holder = new SandboxHolder();
   const controller = new AbortController();
   const executed: PhaseExecInput[] = [];
   const events: PhaseEventInput[] = [];
   const artifacts: PhaseArtifactInput[] = [];
+  const reads: string[] = [];
 
   const sandbox: Sandbox = {
     id: "c0ffee0c0ffee0c0ffee",
     exec: () => Promise.reject(new Error("the phase must go through ctx.exec")),
-    getFile: () => Promise.reject(new Error("the validation phase reads no files")),
+    getFile: (path) => {
+      reads.push(path);
+      return options.read?.(path) ?? Promise.reject(new Error("unexpected reporter read"));
+    },
     putFile: () => Promise.reject(new Error("the validation phase writes no files")),
     destroy: () => Promise.resolve(),
   };
@@ -143,6 +158,12 @@ function harness(options: { respond?: Responder; baseline?: BaselineOutcome | nu
 
     readBaseline: () =>
       Promise.resolve(options.baseline === undefined ? "failed" : options.baseline),
+    readBaselineReport: () =>
+      Promise.resolve(
+        options.baselineReport === undefined
+          ? baselineReport(options.baseline === undefined ? "failed" : options.baseline)
+          : options.baselineReport,
+      ),
 
     // Both are `finalizing`'s to read. This phase writes the validation record
     // rather than reading one back.
@@ -162,6 +183,7 @@ function harness(options: { respond?: Responder; baseline?: BaselineOutcome | nu
     executed,
     events,
     artifacts,
+    reads,
     /** The one `validation.recorded` every completing path is supposed to write. */
     recorded: () => events.find((event) => event.type === "validation.recorded"),
     artifactOf: (type: string) => artifacts.find((artifact) => artifact.type === type),
@@ -174,7 +196,24 @@ function defaultResponse(argv: string[]): Partial<ExecResult> | undefined {
   if (isGit(argv, "add")) return {};
   if (isGit(argv, "diff") && argv.includes("--numstat")) return { stdout: DEFAULT_NUMSTAT };
   if (isGit(argv, "diff")) return { stdout: DEFAULT_DIFF };
+  if (isGit(argv, "ls-files")) return { stdout: "src/discount.js\n" };
   return undefined;
+}
+
+function baselineReport(test: BaselineOutcome | null): BaselineReport | null {
+  if (test === null) return null;
+  return {
+    checks: [
+      {
+        kind: "test",
+        status: test,
+        source: "package_json",
+        ...(test === "skipped" ? { reason: "there is no `test` script in package.json" } : {}),
+      },
+      { kind: "typecheck", status: "passed", source: "package_json" },
+      { kind: "lint", status: "passed", source: "package_json" },
+    ],
+  };
 }
 
 function isGit(argv: string[], verb: string): boolean {
@@ -183,7 +222,7 @@ function isGit(argv: string[], verb: string): boolean {
 
 /** The suite's second run, which is the only thing most of these tests vary. */
 function suiteExits(exitCode: number, stdout = ""): Responder {
-  return (argv) => (argv.includes("run") ? { exitCode, stdout } : undefined);
+  return (argv) => (argv.at(-1) === "test" ? { exitCode, stdout } : undefined);
 }
 
 describe("validationOutcome", () => {
@@ -307,8 +346,11 @@ describe("validationPhase", () => {
     expect(argvs).toContain("git add -A");
     expect(argvs).toContain("git diff --cached");
     expect(argvs).toContain("git diff --cached --numstat");
-    // Every one of them inside the clone, never the sandbox's workdir.
-    for (const input of test.executed) expect(input.cwd).toBe(REPO_DIR);
+    // Repository operations stay inside the clone. Only Rivet's reporter
+    // directory is prepared from the sandbox workdir.
+    for (const input of test.executed.filter((input) => input.argv[0] !== "mkdir")) {
+      expect(input.cwd).toBe(REPO_DIR);
+    }
   });
 
   it("reads the diff with its own cap, above the artifact bound", async () => {
@@ -379,7 +421,7 @@ describe("validationPhase", () => {
 
     await test.run();
 
-    const suite = test.executed.at(-1);
+    const suite = test.executed.find((input) => input.argv.at(-1) === "test");
     expect(suite?.argv).toEqual(["npm", "run", "test"]);
     // The baseline's budget rather than the ordinary one, because it is the
     // same suite: a run that was allowed to be slow before must be allowed to
@@ -514,4 +556,224 @@ describe("validationPhase", () => {
     expect(test.artifactOf("diff")?.metadata).toMatchObject({ sandboxClipped: true });
     expect(test.artifactOf("diff")?.message).toContain("understates");
   });
+
+  it("selects targeted tests once from numstat and the staged tracked-file list", async () => {
+    const test = harness({
+      respond: (argv) =>
+        isGit(argv, "ls-files") ? { stdout: "src/discount.js\nsrc/discount.test.js\n" } : undefined,
+    });
+
+    await test.run();
+
+    expect(test.executed.filter((input) => isGit(input.argv, "ls-files"))).toHaveLength(1);
+    const checks = test.executed
+      .filter((input) => input.argv[0] === "npm" && input.argv[1] === "run")
+      .map((input) => input.argv);
+    expect(checks).toEqual([
+      ["npm", "run", "test", "src/discount.test.js"],
+      ["npm", "run", "test"],
+      ["npm", "run", "typecheck"],
+      ["npm", "run", "lint"],
+    ]);
+    expect(
+      test.events.find(
+        (event) =>
+          event.type === "validation.check_recorded" && event.data?.check === "targeted_test",
+      )?.data,
+    ).toMatchObject({ targetedPaths: ["src/discount.test.js"] });
+  });
+
+  it("records a skipped targeted check without suppressing the full checks", async () => {
+    const test = harness();
+
+    await test.run();
+
+    const report = parseSerializedValidationReport(test.artifactOf("validation_report")?.content);
+    expect(report.checks.map(({ kind, status }) => ({ kind, status }))).toEqual([
+      { kind: "targeted_test", status: "skipped" },
+      { kind: "test", status: "passed" },
+      { kind: "typecheck", status: "passed" },
+      { kind: "lint", status: "passed" },
+    ]);
+    expect(test.artifactOf("validation_report")?.requireComplete).toBe(true);
+  });
+
+  it("does not prepare a reporter directory for an unrecognized runner", async () => {
+    const test = harness();
+
+    await test.run();
+
+    expect(test.executed.some((input) => input.argv[0] === "mkdir")).toBe(false);
+  });
+
+  it("does not prepare a reporter directory when only a skipped targeted check has one", async () => {
+    const test = harness({
+      respond: (argv) => {
+        if (argv[0] === "ls") {
+          return { stdout: `${DEFAULT_LISTING}rivet.json\n` };
+        }
+        if (argv[0] === "cat" && argv[1] === "rivet.json") {
+          return {
+            stdout: JSON.stringify({
+              validation: {
+                targeted: {
+                  argv: ["node", "targeted.js"],
+                  appendPaths: true,
+                  reporter: { framework: "vitest" },
+                },
+              },
+            }),
+          };
+        }
+        return undefined;
+      },
+    });
+
+    await test.run();
+
+    expect(test.executed.some((input) => input.argv[0] === "mkdir")).toBe(false);
+    expect(
+      test.events.find(
+        (event) =>
+          event.type === "validation.check_recorded" && event.data?.check === "targeted_test",
+      )?.data,
+    ).toMatchObject({ checkStatus: "skipped" });
+  });
+
+  it("prepares this attempt's reporter directory and attributes parsed full-test failures", async () => {
+    const before: BaselineReport = {
+      checks: [
+        {
+          kind: "test",
+          status: "failed",
+          source: "package_json",
+          tests: testReport(["src/discount.test.js::discount rejects A"]),
+        },
+        { kind: "typecheck", status: "passed", source: "package_json" },
+        { kind: "lint", status: "passed", source: "package_json" },
+      ],
+    };
+    const afterJson = vitestReport("discount rejects B");
+    const test = harness({
+      baselineReport: before,
+      respond: (argv) => {
+        if (isGit(argv, "ls-files")) {
+          return { stdout: "src/discount.js\nsrc/discount.test.js\n" };
+        }
+        if (argv[0] === "cat") {
+          return {
+            stdout: JSON.stringify({
+              scripts: { test: "vitest run", typecheck: "tsc --noEmit", lint: "eslint ." },
+              devDependencies: { vitest: "4.1.0" },
+            }),
+          };
+        }
+        if (argv[0] === "npm" && argv[2] === "test") return { exitCode: 1 };
+        return undefined;
+      },
+      read: () => Promise.resolve({ content: afterJson, truncated: false }),
+    });
+
+    const error = await test.run().catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(ValidationFailedError);
+    expect((error as Error).message).toContain("test unresolved");
+    expect(test.executed.some((input) => input.argv.join(" ").includes("mkdir -p"))).toBe(true);
+    expect(test.reads).toEqual([
+      "/home/node/workspace/validation/after-targeted_test.json",
+      "/home/node/workspace/validation/after-test.json",
+    ]);
+    const report = parseSerializedValidationReport(test.artifactOf("validation_report")?.content);
+    expect(report.checks.find((check) => check.kind === "test")?.attribution).toEqual({
+      newFailures: ["src/discount.test.js::discount rejects B"],
+      preExistingFailures: [],
+      fixedFailures: ["src/discount.test.js::discount rejects A"],
+    });
+    expect(test.recorded()?.data).toMatchObject({
+      validation: "unresolved",
+      newFailures: 1,
+      preExistingFailures: 0,
+      fixedFailures: 1,
+      targetedPaths: ["src/discount.test.js"],
+    });
+  });
+
+  it("falls back to the legacy test baseline when the report is unavailable", async () => {
+    const test = harness({ baseline: "failed", baselineReport: null });
+
+    await test.run();
+
+    const report = parseSerializedValidationReport(test.artifactOf("validation_report")?.content);
+    expect(report.checks.find((check) => check.kind === "test")).toMatchObject({
+      baseline: "failed",
+      outcome: "fixed",
+    });
+    expect(report.checks.find((check) => check.kind === "typecheck")?.baseline).toBeNull();
+    expect(report.checks.find((check) => check.kind === "lint")?.baseline).toBeNull();
+  });
+
+  it("does not fail on targeted failure or pre-existing typecheck and lint failures", async () => {
+    const before: BaselineReport = {
+      checks: [
+        { kind: "test", status: "passed", source: "package_json" },
+        { kind: "typecheck", status: "failed", source: "package_json" },
+        { kind: "lint", status: "failed", source: "package_json" },
+      ],
+    };
+    const test = harness({
+      baselineReport: before,
+      respond: (argv) => {
+        if (isGit(argv, "ls-files")) {
+          return { stdout: "src/discount.js\nsrc/discount.test.js\n" };
+        }
+        if (argv.includes("src/discount.test.js")) return { exitCode: 1 };
+        if (argv.at(-1) === "typecheck" || argv.at(-1) === "lint") return { exitCode: 1 };
+        return undefined;
+      },
+    });
+
+    await expect(test.run()).resolves.toBeUndefined();
+    const report = parseSerializedValidationReport(test.artifactOf("validation_report")?.content);
+    expect(report.checks.find((check) => check.kind === "targeted_test")?.status).toBe("failed");
+    expect(report.checks.find((check) => check.kind === "typecheck")?.outcome).toBe("unresolved");
+    expect(report.checks.find((check) => check.kind === "lint")?.outcome).toBe("unresolved");
+  });
+
+  it.each(["typecheck", "lint"] as const)("fails when %s regresses and names it", async (kind) => {
+    const test = harness({
+      baseline: "passed",
+      respond: (argv) => (argv.at(-1) === kind ? { exitCode: 1 } : undefined),
+    });
+
+    const error = await test.run().catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ValidationFailedError);
+    expect((error as Error).message).toContain(`${kind} regressed`);
+  });
 });
+
+function testReport(failures: string[]) {
+  return {
+    framework: "vitest" as const,
+    total: failures.length,
+    passed: 0,
+    failed: failures.length,
+    skipped: 0,
+    failures,
+    parsed: true,
+  };
+}
+
+function vitestReport(fullName: string): string {
+  return JSON.stringify({
+    numTotalTests: 1,
+    numPassedTests: 0,
+    numFailedTests: 1,
+    numPendingTests: 0,
+    testResults: [
+      {
+        name: "/home/node/workspace/repo/src/discount.test.js",
+        assertionResults: [{ status: "failed", fullName }],
+      },
+    ],
+  });
+}

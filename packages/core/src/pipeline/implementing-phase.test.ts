@@ -248,6 +248,7 @@ function harness(
       options.baseline instanceof Error
         ? Promise.reject(options.baseline)
         : Promise.resolve(options.baseline ?? null),
+    readBaselineReport: () => Promise.resolve(null),
     ...(options.implementationPlan === undefined
       ? {}
       : { readImplementationPlan: () => Promise.resolve(options.implementationPlan ?? null) }),

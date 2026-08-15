@@ -169,6 +169,7 @@ function harness(options: HarnessOptions = {}) {
 
     // Nothing has established one this early; provisioning runs before `analyzing`.
     readBaseline: () => Promise.resolve(null),
+    readBaselineReport: () => Promise.resolve(null),
     readSummary: () => Promise.resolve(null),
     readValidation: () => Promise.resolve(null),
 

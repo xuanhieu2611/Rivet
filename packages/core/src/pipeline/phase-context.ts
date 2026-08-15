@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   ArtifactType,
+  BaselineReport,
   CheckpointKind,
   ImplementationPlan,
   JobDetail,
@@ -26,6 +27,7 @@ import {
   WorkspaceSnapshotError,
 } from "../checkpoints/workspace-snapshot";
 import { type BaselineOutcome, readBaseline } from "../events/baseline-log";
+import { readBaselineReport } from "../events/baseline-report";
 import { appendEvent } from "../events/event-service";
 import { readSummary } from "../events/session-log";
 import { readValidation, type ValidationRecord } from "../events/validation-log";
@@ -107,6 +109,9 @@ export interface PhaseContext {
    * compare against - go back to the event log for it. See `events/baseline-log.ts`.
    */
   readBaseline(): Promise<BaselineOutcome | null>;
+
+  /** The latest complete multi-check baseline, or null for legacy/unreadable jobs. */
+  readBaselineReport(): Promise<BaselineReport | null>;
 
   /**
    * The latest valid structured implementation plan, or null when none exists.
@@ -479,6 +484,10 @@ export function createPhaseContextFactory(
 
     readBaseline() {
       return readBaseline(job.id, database);
+    },
+
+    readBaselineReport() {
+      return readBaselineReport(job.id, database);
     },
 
     async readImplementationPlan() {

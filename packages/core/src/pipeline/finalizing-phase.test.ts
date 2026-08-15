@@ -40,6 +40,7 @@ function harness(options: { summary?: string | null; validation?: ValidationReco
     // here to keep true.
     exec: () => Promise.reject(new Error("the finalizing phase runs no commands")),
     readBaseline: () => Promise.reject(new Error("the baseline is validation's to compare")),
+    readBaselineReport: () => Promise.reject(new Error("the report is validation's to compare")),
     recordProvisioning: () => Promise.reject(new Error("the finalizing phase writes no columns")),
     recordAgentUsage: () => Promise.reject(new Error("the finalizing phase spends nothing")),
     readLatestCheckpoint: () => Promise.resolve(null),

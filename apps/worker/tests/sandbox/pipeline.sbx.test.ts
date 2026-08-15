@@ -255,9 +255,17 @@ describe("real sandbox pipeline", () => {
 
     const events = await listEvents(job.id, { limit: 500 });
     expect(events.find((event) => event.type === "validation.recorded")?.data).toMatchObject({
-      validation: "verified",
+      // This fixture has a passing test script but no typecheck or lint scripts.
+      // The full test check is verified while the multi-check aggregate honestly
+      // remains unverified.
+      validation: "unverified",
       filesChanged: 1,
     });
+    expect(
+      events.find(
+        (event) => event.type === "validation.check_recorded" && event.data?.check === "test",
+      )?.data,
+    ).toMatchObject({ checkOutcome: "verified" });
     expect(events.some((event) => event.type === "run.summarized")).toBe(true);
   });
 });
