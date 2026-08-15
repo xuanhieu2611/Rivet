@@ -117,6 +117,8 @@ export interface SandboxConfig {
   installTimeoutMs: number;
   /** The repository's own suite, which is allowed to be slow without being wrong. */
   baselineTimeoutMs: number;
+  /** The per-command budget for lint and typecheck checks. */
+  checkTimeoutMs: number;
   /** Cap on each of stdout and stderr, per command, before truncation. */
   maxOutputBytes: number;
   /**
@@ -130,6 +132,10 @@ export interface SandboxConfig {
    * truncated.
    */
   diffMaxBytes: number;
+  /** Cap on one complete JSON reporter file read from the sandbox. */
+  validationReportMaxBytes: number;
+  /** Maximum number of files passed to one targeted test invocation. */
+  targetedMaxFiles: number;
   /**
    * How old a container must be before the reaper will consider it abandoned.
    *
@@ -293,11 +299,19 @@ const schema = z.object({
   SANDBOX_CLONE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(180_000),
   SANDBOX_INSTALL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(300_000),
   SANDBOX_BASELINE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(300_000),
+  SANDBOX_CHECK_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(180_000),
   SANDBOX_MAX_OUTPUT_BYTES: z.coerce.number().int().min(1_024).max(4_194_304).default(65_536),
   // 1MB, four times the artifact bound, so that a diff big enough to be
   // truncated is truncated by the artifact writer - which records how big it
   // really was - rather than by the container's transcript cap, which does not.
   RIVET_DIFF_MAX_BYTES: z.coerce.number().int().min(1_024).max(16_777_216).default(1_048_576),
+  RIVET_VALIDATION_REPORT_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_024)
+    .max(16_777_216)
+    .default(4_194_304),
+  RIVET_TARGETED_MAX_FILES: z.coerce.number().int().min(1).max(200).default(25),
   SANDBOX_REAP_GRACE_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(120_000),
 
   // --- coding agent (M4) -----------------------------------------------
@@ -384,8 +398,11 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
       cloneTimeoutMs: parsed.data.SANDBOX_CLONE_TIMEOUT_MS,
       installTimeoutMs: parsed.data.SANDBOX_INSTALL_TIMEOUT_MS,
       baselineTimeoutMs: parsed.data.SANDBOX_BASELINE_TIMEOUT_MS,
+      checkTimeoutMs: parsed.data.SANDBOX_CHECK_TIMEOUT_MS,
       maxOutputBytes: parsed.data.SANDBOX_MAX_OUTPUT_BYTES,
       diffMaxBytes: parsed.data.RIVET_DIFF_MAX_BYTES,
+      validationReportMaxBytes: parsed.data.RIVET_VALIDATION_REPORT_MAX_BYTES,
+      targetedMaxFiles: parsed.data.RIVET_TARGETED_MAX_FILES,
       reapGraceMs: parsed.data.SANDBOX_REAP_GRACE_MS,
     },
     agent: {
@@ -403,10 +420,37 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
   };
 
   assertLeaseInvariant(config.heartbeatSeconds, config.leaseSeconds);
+  assertArtifactReadLimits(
+    config.artifactMaxBytes,
+    config.sandbox.diffMaxBytes,
+    config.sandbox.validationReportMaxBytes,
+  );
   assertRealSandboxInProduction(config.sandbox.mode, env.NODE_ENV);
   assertRealAgentInProduction(config.agent.mode, env.NODE_ENV);
   assertModelKeyPresent(config.agent, parsed.data.OPENROUTER_API_KEY);
   return config;
+}
+
+/** Ensures complete sandbox reads reach the artifact writer before truncation. */
+export function assertArtifactReadLimits(
+  artifactMaxBytes: number,
+  diffMaxBytes: number,
+  validationReportMaxBytes: number,
+): void {
+  const problems: string[] = [];
+  if (diffMaxBytes <= artifactMaxBytes) {
+    problems.push(
+      `RIVET_DIFF_MAX_BYTES (${diffMaxBytes}) must be greater than ` +
+        `RIVET_ARTIFACT_MAX_BYTES (${artifactMaxBytes}).`,
+    );
+  }
+  if (validationReportMaxBytes <= artifactMaxBytes) {
+    problems.push(
+      `RIVET_VALIDATION_REPORT_MAX_BYTES (${validationReportMaxBytes}) must be greater than ` +
+        `RIVET_ARTIFACT_MAX_BYTES (${artifactMaxBytes}).`,
+    );
+  }
+  if (problems.length > 0) throw new WorkerConfigError(problems);
 }
 
 /**

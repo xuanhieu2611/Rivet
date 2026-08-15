@@ -199,7 +199,10 @@ function harness(planner: ScriptedPlanner) {
     cloneTimeoutMs: 1_000,
     installTimeoutMs: 1_000,
     baselineTimeoutMs: 1_000,
+    checkTimeoutMs: 1_000,
     diffMaxBytes: 1_024,
+    validationReportMaxBytes: 2_048,
+    targetedMaxFiles: 25,
   };
   const agent: AgentOptions = {
     coding: planner,

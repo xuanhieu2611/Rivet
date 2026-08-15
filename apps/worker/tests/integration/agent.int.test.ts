@@ -71,7 +71,10 @@ const PIPELINE_OPTIONS: Omit<PipelineOptions, "sandbox" | "agent"> = {
   cloneTimeoutMs: 500,
   installTimeoutMs: 500,
   baselineTimeoutMs: 500,
+  checkTimeoutMs: 500,
   diffMaxBytes: 65_536,
+  validationReportMaxBytes: 262_144,
+  targetedMaxFiles: 25,
 };
 
 const AGENT_OPTIONS: Omit<AgentOptions, "coding"> = {

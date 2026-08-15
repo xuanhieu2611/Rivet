@@ -97,6 +97,12 @@ export interface PipelineOptions {
    * would be Rivet calling a perfectly normal project broken.
    */
   baselineTimeoutMs: number;
+  /** Lint and typecheck budget, distinct from the test-suite budget. */
+  checkTimeoutMs: number;
+  /** Complete reporter file read cap. Must exceed the artifact storage cap. */
+  validationReportMaxBytes: number;
+  /** Maximum number of conventionally selected targeted test files. */
+  targetedMaxFiles: number;
   /**
    * Cap on how much diff text may cross the sandbox boundary at once.
    *

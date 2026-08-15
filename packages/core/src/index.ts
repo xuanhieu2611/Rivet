@@ -40,6 +40,7 @@ export * from "./jobs/transitions";
 export * from "./pipeline/baseline-phase";
 export * from "./pipeline/agent-session";
 export * from "./pipeline/command-output";
+export * from "./pipeline/check-runner";
 export * from "./pipeline/finalizing-phase";
 export * from "./pipeline/implementing-phase";
 export * from "./pipeline/phase-context";

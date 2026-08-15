@@ -65,7 +65,10 @@ function startRealWorker(
     cloneTimeoutMs: 30_000,
     installTimeoutMs: 30_000,
     baselineTimeoutMs: 30_000,
+    checkTimeoutMs: 30_000,
     diffMaxBytes: 262_144,
+    validationReportMaxBytes: 1_048_576,
+    targetedMaxFiles: 25,
     maxOutputBytes: 16_384,
     // The provider below reaps immediately; this suite builds its own.
     reapGraceMs: 0,
@@ -85,7 +88,10 @@ function startRealWorker(
     cloneTimeoutMs: sandboxConfig.cloneTimeoutMs,
     installTimeoutMs: sandboxConfig.installTimeoutMs,
     baselineTimeoutMs: sandboxConfig.baselineTimeoutMs,
+    checkTimeoutMs: sandboxConfig.checkTimeoutMs,
     diffMaxBytes: sandboxConfig.diffMaxBytes,
+    validationReportMaxBytes: sandboxConfig.validationReportMaxBytes,
+    targetedMaxFiles: sandboxConfig.targetedMaxFiles,
     ...(options.agent ? { agent: options.agent } : {}),
   });
   const testWorker = startTestWorker({

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  assertArtifactReadLimits,
   assertLeaseInvariant,
   DEFAULT_MODEL,
   DEFAULT_MODEL_PROVIDER,
@@ -52,10 +53,13 @@ describe("parseWorkerConfig", () => {
         cloneTimeoutMs: 180_000,
         installTimeoutMs: 300_000,
         baselineTimeoutMs: 300_000,
+        checkTimeoutMs: 180_000,
         maxOutputBytes: 65_536,
         // Above `artifactMaxBytes` on purpose: a diff clipped by the container's
         // transcript cap would record its clipped length as its true size.
         diffMaxBytes: 1_048_576,
+        validationReportMaxBytes: 4_194_304,
+        targetedMaxFiles: 25,
         reapGraceMs: 120_000,
       },
       agent: {
@@ -99,8 +103,8 @@ describe("parseWorkerConfig", () => {
     expect(config.sandbox.pidsLimit).toBe(64);
   });
 
-  it("gives the clone, the install and the baseline budgets of their own", () => {
-    // Three different kinds of slow. A cold install and a four-minute test
+  it("gives clone, install, test, and other checks their own budgets", () => {
+    // Different kinds of slow. A cold install and a four-minute test
     // suite are both normal; reporting either as `command_timed_out` would
     // blame the sandbox for a property of the repository.
     const config = parseWorkerConfig({
@@ -108,12 +112,45 @@ describe("parseWorkerConfig", () => {
       SANDBOX_CLONE_TIMEOUT_MS: "2000",
       SANDBOX_INSTALL_TIMEOUT_MS: "3000",
       SANDBOX_BASELINE_TIMEOUT_MS: "4000",
+      SANDBOX_CHECK_TIMEOUT_MS: "5000",
     });
 
     expect(config.sandbox.commandTimeoutMs).toBe(1_000);
     expect(config.sandbox.cloneTimeoutMs).toBe(2_000);
     expect(config.sandbox.installTimeoutMs).toBe(3_000);
     expect(config.sandbox.baselineTimeoutMs).toBe(4_000);
+    expect(config.sandbox.checkTimeoutMs).toBe(5_000);
+  });
+
+  it("reads the validation report and targeted selection limits", () => {
+    const config = parseWorkerConfig({
+      RIVET_VALIDATION_REPORT_MAX_BYTES: "2097152",
+      RIVET_TARGETED_MAX_FILES: "40",
+    });
+
+    expect(config.sandbox.validationReportMaxBytes).toBe(2_097_152);
+    expect(config.sandbox.targetedMaxFiles).toBe(40);
+  });
+
+  it("bounds every new validation setting", () => {
+    expect(() => parseWorkerConfig({ SANDBOX_CHECK_TIMEOUT_MS: "999" })).toThrow(WorkerConfigError);
+    expect(() => parseWorkerConfig({ RIVET_VALIDATION_REPORT_MAX_BYTES: "16777217" })).toThrow(
+      WorkerConfigError,
+    );
+    expect(() => parseWorkerConfig({ RIVET_TARGETED_MAX_FILES: "0" })).toThrow(WorkerConfigError);
+    expect(() => parseWorkerConfig({ RIVET_TARGETED_MAX_FILES: "201" })).toThrow(WorkerConfigError);
+  });
+
+  it("requires complete diff and reporter reads to exceed the artifact cap", () => {
+    expect(() => parseWorkerConfig({ RIVET_ARTIFACT_MAX_BYTES: "1048576" })).toThrow(
+      /RIVET_DIFF_MAX_BYTES/,
+    );
+    expect(() =>
+      parseWorkerConfig({
+        RIVET_ARTIFACT_MAX_BYTES: "4194304",
+        RIVET_DIFF_MAX_BYTES: "8388608",
+      }),
+    ).toThrow(/RIVET_VALIDATION_REPORT_MAX_BYTES/);
   });
 
   it("refuses a workdir that is not absolute", () => {
@@ -355,5 +392,21 @@ describe("assertLeaseInvariant", () => {
 
   it("rejects anything that leaves fewer than three heartbeats of slack", () => {
     expect(() => assertLeaseInvariant(11, 30)).toThrow(WorkerConfigError);
+  });
+});
+
+describe("assertArtifactReadLimits", () => {
+  it("accepts both complete-read caps above the artifact cap", () => {
+    expect(() => assertArtifactReadLimits(1_024, 2_048, 4_096)).not.toThrow();
+  });
+
+  it("reports both invalid relationships together", () => {
+    try {
+      assertArtifactReadLimits(4_096, 4_096, 2_048);
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkerConfigError);
+      expect((error as WorkerConfigError).problems).toHaveLength(2);
+    }
   });
 });

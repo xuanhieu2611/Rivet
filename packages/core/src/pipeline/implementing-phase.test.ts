@@ -60,7 +60,10 @@ const OPTIONS_BASE = {
   cloneTimeoutMs: 180_000,
   installTimeoutMs: 300_000,
   baselineTimeoutMs: 300_000,
+  checkTimeoutMs: 180_000,
   diffMaxBytes: 1_048_576,
+  validationReportMaxBytes: 4_194_304,
+  targetedMaxFiles: 25,
 };
 
 const AGENT_BASE = {

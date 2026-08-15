@@ -41,7 +41,10 @@ const PIPELINE_OPTIONS: Omit<PipelineOptions, "sandbox"> = {
   cloneTimeoutMs: 50,
   installTimeoutMs: 50,
   baselineTimeoutMs: 50,
+  checkTimeoutMs: 50,
   diffMaxBytes: 65_536,
+  validationReportMaxBytes: 262_144,
+  targetedMaxFiles: 25,
 };
 
 const COMMIT = "9f2b0c1a4d5e6f708192a3b4c5d6e7f809112233";

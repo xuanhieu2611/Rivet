@@ -158,7 +158,10 @@ const { phases, phaseFactory, sandbox } = ((): {
     cloneTimeoutMs: config.sandbox.cloneTimeoutMs,
     installTimeoutMs: config.sandbox.installTimeoutMs,
     baselineTimeoutMs: config.sandbox.baselineTimeoutMs,
+    checkTimeoutMs: config.sandbox.checkTimeoutMs,
     diffMaxBytes: config.sandbox.diffMaxBytes,
+    validationReportMaxBytes: config.sandbox.validationReportMaxBytes,
+    targetedMaxFiles: config.sandbox.targetedMaxFiles,
   };
 
   return {
