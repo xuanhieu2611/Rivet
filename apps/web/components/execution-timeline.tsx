@@ -1,4 +1,4 @@
-import type { JobEvent, ValidationOutcome } from "@rivet/contracts";
+import type { JobEvent } from "@rivet/contracts";
 import type { ReactNode } from "react";
 
 import { commandAnchorId } from "@/components/job-live/command-anchor";
@@ -6,6 +6,11 @@ import { JOB_EVENT_TONE, statusLabel } from "@/lib/job-status";
 import { formatAgentCost, formatBytes, formatTimeOfDay, formatTokenCount } from "@/lib/format";
 import { describeRecoveryEvent, isRecoveryEvent } from "@/lib/recovery-events";
 import { cn } from "@/lib/utils";
+import {
+  CHECK_KIND_LABELS,
+  CHECK_STATUS_LABELS,
+  VALIDATION_OUTCOME_PRESENTATION,
+} from "@/lib/validation-presentation";
 
 interface AgentToolTimelineItem {
   kind: "agent-tool";
@@ -14,37 +19,6 @@ interface AgentToolTimelineItem {
 }
 
 type TimelineItem = { kind: "event"; event: JobEvent } | AgentToolTimelineItem;
-
-const VALIDATION_PRESENTATION: Record<
-  ValidationOutcome,
-  { label: string; className: string; tone: string }
-> = {
-  verified: {
-    label: "Verified",
-    className: "text-emerald-700 dark:text-emerald-300",
-    tone: "bg-emerald-500",
-  },
-  fixed: {
-    label: "Fixed",
-    className: "text-emerald-700 dark:text-emerald-300",
-    tone: "bg-emerald-500",
-  },
-  regressed: {
-    label: "Regressed",
-    className: "text-red-700 dark:text-red-300",
-    tone: "bg-red-500",
-  },
-  unresolved: {
-    label: "Unresolved",
-    className: "text-red-700 dark:text-red-300",
-    tone: "bg-red-500",
-  },
-  unverified: {
-    label: "Unverified",
-    className: "text-amber-700 dark:text-amber-300",
-    tone: "bg-amber-500",
-  },
-};
 
 /**
  * The job's own history, straight out of `job_events`.
@@ -252,6 +226,10 @@ function EventContent({ event }: { event: JobEvent }): ReactNode {
     case "artifact.recorded":
       return <ArtifactEventContent event={event} />;
 
+    case "baseline.check_recorded":
+    case "validation.check_recorded":
+      return <CheckEventContent event={event} />;
+
     case "validation.recorded":
       return <ValidationEventContent event={event} />;
 
@@ -337,7 +315,7 @@ function ArtifactEventContent({ event }: { event: JobEvent }) {
 
 function ValidationEventContent({ event }: { event: JobEvent }) {
   const outcome = event.data?.validation;
-  const presentation = outcome ? VALIDATION_PRESENTATION[outcome] : null;
+  const presentation = outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome] : null;
   const filesChanged = event.data?.filesChanged;
   const insertions = event.data?.insertions;
   const deletions = event.data?.deletions;
@@ -348,7 +326,7 @@ function ValidationEventContent({ event }: { event: JobEvent }) {
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {presentation ? (
-          <span className={`text-sm font-medium ${presentation.className}`}>
+          <span className={`text-sm font-medium ${presentation.textClassName}`}>
             {presentation.label}
           </span>
         ) : null}
@@ -361,6 +339,22 @@ function ValidationEventContent({ event }: { event: JobEvent }) {
         </p>
       ) : null}
     </div>
+  );
+}
+
+function CheckEventContent({ event }: { event: JobEvent }) {
+  const check = event.data?.check;
+  const checkLabel = check ? CHECK_KIND_LABELS[check] : "Validation check";
+  const outcome = event.data?.checkOutcome;
+  const status = event.data?.checkStatus;
+  const presentation = outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome] : null;
+  const resultLabel = presentation?.label ?? (status ? CHECK_STATUS_LABELS[status] : "Recorded");
+
+  return (
+    <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm leading-snug">
+      <span className="font-medium">{checkLabel}</span>
+      <span className={presentation?.textClassName}>{resultLabel}</span>
+    </p>
   );
 }
 
@@ -420,6 +414,8 @@ function describeEventData(event: JobEvent): string | null {
     event.type === "agent.tool_started" ||
     event.type === "plan.deferred" ||
     event.type === "artifact.recorded" ||
+    event.type === "baseline.check_recorded" ||
+    event.type === "validation.check_recorded" ||
     event.type === "validation.recorded"
   ) {
     return null;
@@ -497,7 +493,11 @@ function formatDuration(milliseconds: number): string {
 }
 
 function timelineTone(event: JobEvent): string {
+  if (event.type === "validation.check_recorded") {
+    const outcome = event.data?.checkOutcome;
+    return outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome].tone : JOB_EVENT_TONE[event.type];
+  }
   if (event.type !== "validation.recorded") return JOB_EVENT_TONE[event.type];
   const outcome = event.data?.validation;
-  return outcome ? VALIDATION_PRESENTATION[outcome].tone : JOB_EVENT_TONE[event.type];
+  return outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome].tone : JOB_EVENT_TONE[event.type];
 }

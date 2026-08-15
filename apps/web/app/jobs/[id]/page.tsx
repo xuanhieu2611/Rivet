@@ -14,6 +14,7 @@ import { LiveCommandLog } from "@/components/job-live/live-command-log";
 import { LiveExecutionTimeline } from "@/components/job-live/live-execution-timeline";
 import { ImplementationPlanPanel } from "@/components/implementation-plan-panel";
 import { JobArtifactsPanel } from "@/components/job-artifacts-panel";
+import { ValidationPanel } from "@/components/validation-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/format";
 import { FAILURE_CATEGORY_LABELS } from "@/lib/job-status";
@@ -45,7 +46,9 @@ export default async function JobDetailPage({ params }: PageProps) {
     listArtifacts(job.id),
   ]);
 
-  const latestArtifact = (type: "diff" | "implementation_summary" | "implementation_plan") => {
+  const latestArtifact = (
+    type: "diff" | "implementation_summary" | "implementation_plan" | "validation_report",
+  ) => {
     for (let index = artifactSummaries.length - 1; index >= 0; index -= 1) {
       const artifact = artifactSummaries[index];
       if (artifact?.type === type) return artifact;
@@ -56,10 +59,12 @@ export default async function JobDetailPage({ params }: PageProps) {
   const latestDiff = latestArtifact("diff");
   const latestSummary = latestArtifact("implementation_summary");
   const latestPlan = latestArtifact("implementation_plan");
-  const [diff, summary, plan] = await Promise.all([
+  const latestValidation = latestArtifact("validation_report");
+  const [diff, summary, plan, validation] = await Promise.all([
     latestDiff ? getArtifact(job.id, latestDiff.id) : Promise.resolve(null),
     latestSummary ? getArtifact(job.id, latestSummary.id) : Promise.resolve(null),
     latestPlan ? getArtifact(job.id, latestPlan.id) : Promise.resolve(null),
+    latestValidation ? getArtifact(job.id, latestValidation.id) : Promise.resolve(null),
   ]);
   const finished = isTerminal(job.status);
 
@@ -112,6 +117,8 @@ export default async function JobDetailPage({ params }: PageProps) {
             </Card>
 
             <ImplementationPlanPanel artifact={plan} />
+
+            <ValidationPanel artifact={validation} />
 
             <Card>
               <CardHeader>
