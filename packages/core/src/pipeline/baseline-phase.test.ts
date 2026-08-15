@@ -144,6 +144,7 @@ function harness(options: HarnessOptions = {}) {
     readBaselineReport: () => Promise.resolve(null),
     readSummary: () => Promise.resolve(null),
     readValidation: () => Promise.resolve(null),
+    readValidationReport: () => Promise.resolve(null),
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: () => Promise.resolve(),
     readLatestCheckpoint: () => Promise.resolve(null),

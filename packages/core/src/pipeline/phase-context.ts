@@ -9,6 +9,7 @@ import type {
   JobEventData,
   JobEventType,
   JobStatus,
+  ValidationReport,
 } from "@rivet/contracts";
 import { db, type Database } from "@rivet/database";
 
@@ -30,7 +31,11 @@ import { type BaselineOutcome, readBaseline } from "../events/baseline-log";
 import { readBaselineReport } from "../events/baseline-report";
 import { appendEvent } from "../events/event-service";
 import { readSummary } from "../events/session-log";
-import { readValidation, type ValidationRecord } from "../events/validation-log";
+import {
+  readValidation,
+  readValidationReport,
+  type ValidationRecord,
+} from "../events/validation-log";
 import { type AgentUsagePatch, recordAgentUsage as persistAgentUsage } from "../jobs/agent-usage";
 import {
   CheckpointCorruptError,
@@ -140,6 +145,9 @@ export interface PhaseContext {
    * comparison happened at all.
    */
   readValidation(): Promise<ValidationRecord | null>;
+
+  /** The latest complete multi-check validation report, or null for legacy/unreadable jobs. */
+  readValidationReport(): Promise<ValidationReport | null>;
 
   /** Records what the run is executing in. Throws `LeaseLostError` if the lease is gone. */
   recordProvisioning(patch: ProvisioningPatch): Promise<void>;
@@ -501,6 +509,10 @@ export function createPhaseContextFactory(
 
     readValidation() {
       return readValidation(job.id, database);
+    },
+
+    readValidationReport() {
+      return readValidationReport(job.id, database);
     },
 
     async recordProvisioning(patch) {

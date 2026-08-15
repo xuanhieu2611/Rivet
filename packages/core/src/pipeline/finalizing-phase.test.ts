@@ -1,4 +1,4 @@
-import type { JobDetail } from "@rivet/contracts";
+import type { JobDetail, ValidationReport } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { ValidationRecord } from "../events/validation-log";
@@ -22,7 +22,13 @@ const JOB = { id: "11111111-2222-3333-4444-555555555555" } as unknown as JobDeta
 
 const STAT = { filesChanged: 1, insertions: 1, deletions: 1 };
 
-function harness(options: { summary?: string | null; validation?: ValidationRecord | null } = {}) {
+function harness(
+  options: {
+    summary?: string | null;
+    validation?: ValidationRecord | null;
+    report?: ValidationReport | null;
+  } = {},
+) {
   const controller = new AbortController();
   const events: PhaseEventInput[] = [];
   const artifacts: PhaseArtifactInput[] = [];
@@ -53,6 +59,7 @@ function harness(options: { summary?: string | null; validation?: ValidationReco
       Promise.resolve(
         options.validation === undefined ? { outcome: "fixed", stat: STAT } : options.validation,
       ),
+    readValidationReport: () => Promise.resolve(options.report ?? null),
 
     event: (input) => {
       events.push(input);
@@ -146,6 +153,104 @@ describe("finalizingPhase", () => {
     }
   });
 
+  it("prefers failure attribution and per-check verdicts from the structured report", async () => {
+    const test = harness({
+      report: validationReport({
+        outcome: "regressed",
+        attribution: {
+          newFailures: ["test/a.test.ts::A", "test/c.test.ts::C"],
+          preExistingFailures: ["test/b.test.ts::B", "test/d.test.ts::D", "test/e.test.ts::E"],
+          fixedFailures: [],
+        },
+        typecheck: "verified",
+        lint: "verified",
+      }),
+    });
+
+    await test.run();
+
+    expect(test.events[0]?.message).toContain(
+      "Regressed: 2 tests newly failing (3 were already failing), typecheck verified, lint verified (1 file changed, +1/-1).",
+    );
+  });
+
+  it("states zero new failures, singular pre-existing failures, and fixed failures", async () => {
+    const test = harness({
+      report: validationReport({
+        outcome: "unresolved",
+        attribution: {
+          newFailures: [],
+          preExistingFailures: ["test/b.test.ts::B"],
+          fixedFailures: ["test/a.test.ts::A"],
+        },
+        typecheck: "fixed",
+        lint: "unverified",
+      }),
+    });
+
+    await test.run();
+
+    expect(test.events[0]?.message).toContain(
+      "Unresolved: 0 tests newly failing (1 was already failing, 1 was fixed), typecheck fixed, lint unverified (1 file changed, +1/-1).",
+    );
+  });
+
+  it("uses check outcomes when test attribution was unavailable", async () => {
+    const test = harness({
+      report: validationReport({
+        outcome: "verified",
+        typecheck: "verified",
+        lint: "fixed",
+      }),
+    });
+
+    await test.run();
+
+    expect(test.events[0]?.message).toContain(
+      "Verified: tests verified, typecheck verified, lint fixed (1 file changed, +1/-1).",
+    );
+  });
+
+  it("keeps a structured-report closing line clean when diff totals are unavailable", async () => {
+    const test = harness({
+      validation: { outcome: "verified" },
+      report: validationReport({
+        outcome: "verified",
+        typecheck: "verified",
+        lint: "fixed",
+      }),
+    });
+
+    await test.run();
+
+    expect(test.events[0]?.message).toBe(
+      "Verified: tests verified, typecheck verified, lint fixed. The session's own account of the change is recorded.",
+    );
+  });
+
+  it.each(["verified", "fixed", "regressed", "unresolved", "unverified"] as const)(
+    "states %s typecheck and lint verdicts",
+    async (outcome) => {
+      const test = harness({
+        report: validationReport({ outcome, typecheck: outcome, lint: outcome }),
+      });
+
+      await test.run();
+
+      expect(test.events[0]?.message).toContain(`typecheck ${outcome}, lint ${outcome}`);
+    },
+  );
+
+  it("keeps the M5 closing sentence for an old job with no valid report", async () => {
+    const test = harness({ report: null, validation: { outcome: "fixed", stat: STAT } });
+
+    await test.run();
+
+    expect(test.events[0]?.message).toBe(
+      "Run finished fixed: the suite was failing before the change and passes after it (1 file changed, +1/-1). The session's own account of the change is recorded.",
+    );
+  });
+
   it("stops on an aborted signal rather than writing to a job that ended", async () => {
     const test = harness();
     test.controller.abort(new JobCancelledError("cancelled while finalizing"));
@@ -155,3 +260,38 @@ describe("finalizingPhase", () => {
     expect(test.events).toEqual([]);
   });
 });
+
+function validationReport(input: {
+  outcome: ValidationReport["outcome"];
+  attribution?: NonNullable<ValidationReport["checks"][number]["attribution"]>;
+  typecheck: ValidationReport["outcome"];
+  lint: ValidationReport["outcome"];
+}): ValidationReport {
+  return {
+    outcome: input.outcome,
+    checks: [
+      {
+        kind: "test",
+        status: input.outcome === "verified" ? "passed" : "failed",
+        source: "package_json",
+        baseline: input.outcome === "verified" ? "passed" : "failed",
+        outcome: input.outcome === "regressed" ? "unresolved" : input.outcome,
+        ...(input.attribution ? { attribution: input.attribution } : {}),
+      },
+      {
+        kind: "typecheck",
+        status: "passed",
+        source: "package_json",
+        baseline: "passed",
+        outcome: input.typecheck,
+      },
+      {
+        kind: "lint",
+        status: "passed",
+        source: "package_json",
+        baseline: "passed",
+        outcome: input.lint,
+      },
+    ],
+  };
+}

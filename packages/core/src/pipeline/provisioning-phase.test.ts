@@ -172,6 +172,7 @@ function harness(options: HarnessOptions = {}) {
     readBaselineReport: () => Promise.resolve(null),
     readSummary: () => Promise.resolve(null),
     readValidation: () => Promise.resolve(null),
+    readValidationReport: () => Promise.resolve(null),
 
     recordProvisioning: (patch) => {
       patches.push(patch);

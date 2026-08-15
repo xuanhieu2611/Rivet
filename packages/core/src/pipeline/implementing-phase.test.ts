@@ -262,6 +262,7 @@ function harness(
         ? Promise.reject(options.summary)
         : Promise.resolve(options.summary ?? null),
     readValidation: () => Promise.reject(new Error("nothing has been validated yet")),
+    readValidationReport: () => Promise.reject(new Error("nothing has been validated yet")),
 
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: (patch) => {

@@ -1,6 +1,12 @@
-import { type JobEventType, VALIDATION_OUTCOMES, type ValidationOutcome } from "@rivet/contracts";
-import { db, type Executor, jobEvents } from "@rivet/database";
-import { and, asc, eq } from "drizzle-orm";
+import {
+  type JobEventType,
+  parseSerializedValidationReport,
+  VALIDATION_OUTCOMES,
+  type ValidationOutcome,
+  type ValidationReport,
+} from "@rivet/contracts";
+import { db, type Executor, jobArtifacts, jobEvents } from "@rivet/database";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 /**
  * Reading the validation result back out of the event log.
@@ -83,6 +89,45 @@ export async function readValidation(
     .orderBy(asc(jobEvents.id));
 
   return validationFrom(rows.map((row) => ({ type: row.type, data: row.data ?? null })));
+}
+
+export interface ValidationReportArtifactLike {
+  content: string;
+  truncated: boolean;
+}
+
+/**
+ * Parses the newest validation report artifact, or null when it cannot be trusted.
+ *
+ * Only the newest row is eligible. A malformed report from a newer attempt must
+ * not silently substitute an older attempt's result; finalizing falls back to
+ * the unchanged `validation.recorded` reader instead.
+ */
+export function validationReportFrom(
+  rowsNewestFirst: readonly ValidationReportArtifactLike[],
+): ValidationReport | null {
+  const row = rowsNewestFirst[0];
+  if (!row || row.truncated) return null;
+  try {
+    return parseSerializedValidationReport(row.content);
+  } catch {
+    return null;
+  }
+}
+
+/** The latest complete structured validation report, against the database. */
+export async function readValidationReport(
+  jobId: string,
+  executor: Executor = db,
+): Promise<ValidationReport | null> {
+  const [row] = await executor
+    .select({ content: jobArtifacts.content, truncated: jobArtifacts.truncated })
+    .from(jobArtifacts)
+    .where(and(eq(jobArtifacts.jobId, jobId), eq(jobArtifacts.type, "validation_report")))
+    .orderBy(desc(jobArtifacts.id))
+    .limit(1);
+
+  return validationReportFrom(row ? [row] : []);
 }
 
 function totalsFrom(data: Record<string, unknown> | null | undefined): DiffTotals | undefined {

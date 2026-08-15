@@ -169,6 +169,7 @@ function harness(
     // rather than reading one back.
     readSummary: () => Promise.reject(new Error("the summary is finalizing's to persist")),
     readValidation: () => Promise.reject(new Error("this phase writes the validation record")),
+    readValidationReport: () => Promise.reject(new Error("this phase writes the report")),
 
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: () => Promise.resolve(),

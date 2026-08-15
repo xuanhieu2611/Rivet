@@ -175,6 +175,7 @@ function harness(planner: ScriptedPlanner) {
     readBaselineReport: () => Promise.resolve(null),
     readSummary: () => Promise.resolve(null),
     readValidation: () => Promise.resolve(null),
+    readValidationReport: () => Promise.resolve(null),
     recordProvisioning: () => Promise.resolve(),
     recordAgentUsage: (usage) => {
       usages.push(usage);

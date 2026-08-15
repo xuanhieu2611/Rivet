@@ -1,6 +1,7 @@
+import { serializeValidationReport } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
-import { type ValidationEventLike, validationFrom } from "./validation-log";
+import { type ValidationEventLike, validationFrom, validationReportFrom } from "./validation-log";
 
 /**
  * The read side of the validation record, against a synthetic event list.
@@ -72,5 +73,56 @@ describe("validationFrom", () => {
         recorded({ validation: "green" }),
       ]),
     ).toEqual({ outcome: "fixed" });
+  });
+});
+
+const REPORT = serializeValidationReport({
+  outcome: "verified",
+  checks: [
+    {
+      kind: "test",
+      status: "passed",
+      source: "package_json",
+      baseline: "passed",
+      outcome: "verified",
+    },
+  ],
+});
+
+describe("validationReportFrom", () => {
+  it("reads a complete canonical validation report", () => {
+    expect(validationReportFrom([{ content: REPORT, truncated: false }])).toEqual({
+      outcome: "verified",
+      checks: [
+        {
+          kind: "test",
+          status: "passed",
+          source: "package_json",
+          baseline: "passed",
+          outcome: "verified",
+        },
+      ],
+    });
+  });
+
+  it.each([
+    ["missing", []],
+    ["truncated", [{ content: REPORT, truncated: true }]],
+    ["malformed", [{ content: "{", truncated: false }]],
+    [
+      "schema-invalid",
+      [{ content: '{"outcome":"verified","checks":[],"extra":true}', truncated: false }],
+    ],
+  ] as const)("returns null for a %s latest artifact", (_name, rows) => {
+    expect(validationReportFrom(rows)).toBeNull();
+  });
+
+  it("does not silently substitute an older report for a malformed latest attempt", () => {
+    expect(
+      validationReportFrom([
+        { content: "{", truncated: false },
+        { content: REPORT, truncated: false },
+      ]),
+    ).toBeNull();
   });
 });

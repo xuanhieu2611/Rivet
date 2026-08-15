@@ -1,4 +1,4 @@
-import type { ValidationOutcome } from "@rivet/contracts";
+import type { CheckComparison, ValidationOutcome, ValidationReport } from "@rivet/contracts";
 
 import type { ValidationRecord } from "../events/validation-log";
 import type { PhaseContext } from "./phase-context";
@@ -74,9 +74,10 @@ export function finalizingPhase(): (ctx: PhaseContext) => Promise<void> {
     });
 
     const validation = await ctx.readValidation();
+    const report = await ctx.readValidationReport();
     await ctx.event({
       type: "run.summarized",
-      message: describeRun(validation, summary !== null),
+      message: describeRun(validation, summary !== null, report),
       data: {
         ...(validation ? { validation: validation.outcome } : {}),
         ...(validation?.stat ?? {}),
@@ -86,6 +87,7 @@ export function finalizingPhase(): (ctx: PhaseContext) => Promise<void> {
     ctx.log.info(
       {
         validation: validation?.outcome ?? null,
+        validationReport: report?.outcome ?? null,
         ...(validation?.stat ?? {}),
         hasSummary: summary !== null,
       },
@@ -101,10 +103,18 @@ export function finalizingPhase(): (ctx: PhaseContext) => Promise<void> {
  * achieved, how much it touched to achieve it, and whether the model explained
  * itself.
  */
-function describeRun(validation: ValidationRecord | null, hasSummary: boolean): string {
+function describeRun(
+  validation: ValidationRecord | null,
+  hasSummary: boolean,
+  report: ValidationReport | null,
+): string {
   const said = hasSummary
     ? "The session's own account of the change is recorded."
     : "The session ended without describing what it changed.";
+
+  if (report) {
+    return `${describeReport(report, validation)} ${said}`;
+  }
 
   if (!validation) {
     // Not `unverified`, and the wording keeps them apart: that outcome means the
@@ -116,6 +126,42 @@ function describeRun(validation: ValidationRecord | null, hasSummary: boolean): 
   }
 
   return `Run finished ${validation.outcome}: ${OUTCOME_SENTENCES[validation.outcome]}${describeStat(validation)}. ${said}`;
+}
+
+function describeReport(report: ValidationReport, validation: ValidationRecord | null): string {
+  const verdicts: string[] = [];
+  const test = report.checks.find((check) => check.kind === "test");
+  if (test) verdicts.push(describeTest(test));
+
+  for (const kind of ["typecheck", "lint"] as const) {
+    const check = report.checks.find((candidate) => candidate.kind === kind);
+    if (check) verdicts.push(`${kind} ${check.outcome}`);
+  }
+
+  const outcome = `${report.outcome[0]?.toUpperCase() ?? ""}${report.outcome.slice(1)}`;
+  const stat = validation ? describeStat(validation) : "";
+  return verdicts.length > 0 ? `${outcome}: ${verdicts.join(", ")}${stat}.` : `${outcome}${stat}.`;
+}
+
+function describeTest(check: CheckComparison): string {
+  if (!check.attribution) return `tests ${check.outcome}`;
+
+  const attribution = check.attribution;
+  const details = [
+    attribution.preExistingFailures.length > 0
+      ? `${countWithVerb(attribution.preExistingFailures.length, "was", "were")} already failing`
+      : null,
+    attribution.fixedFailures.length > 0
+      ? `${countWithVerb(attribution.fixedFailures.length, "was", "were")} fixed`
+      : null,
+  ].filter((detail): detail is string => detail !== null);
+
+  const newlyFailing = `${plural(attribution.newFailures.length, "test")} newly failing`;
+  return details.length > 0 ? `${newlyFailing} (${details.join(", ")})` : newlyFailing;
+}
+
+function countWithVerb(count: number, singularVerb: string, pluralVerb: string): string {
+  return `${count} ${count === 1 ? singularVerb : pluralVerb}`;
 }
 
 const OUTCOME_SENTENCES: Record<ValidationOutcome, string> = {
