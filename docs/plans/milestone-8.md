@@ -1,5 +1,7 @@
 # Milestone 8: Independent Pi review session
 
+**Status: complete.**
+
 M8 is the first milestone where a job's outcome depends on a model's judgment rather than on an exit
 code. M7 made validation deterministic: a check either regressed or it did not, and no model is
 consulted. A green validation report says the patch did not break anything it can measure. It says

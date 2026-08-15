@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, at the end of Milestone 7, and names the
+This document describes Rivet **as it exists today**, at the end of Milestone 8, and names the
 places where the current shape is a deliberate shortcut rather than the intended end state. It is
 updated as each milestone lands rather than describing a system that does not exist yet.
 
@@ -38,8 +38,9 @@ patch, and a reclaimed job is restored into a **new** container at the original 
 from where it stopped. Milestone 7 generalized the one-suite baseline into deterministic test,
 typecheck and lint checks, added diff-derived targeted tests, parsed Vitest and Jest reports for
 named failure attribution, and persisted canonical baseline and validation reports that the job page
-renders. Review remains simulated until Milestone 8, and the branch, commit and pull request belong
-to Milestone 9.
+renders. Milestone 8 added an independent read-only reviewer, durable review reports and findings, a
+bounded revision and revalidation cycle, and recovery that preserves the review loop counter. The
+branch, commit and pull request belong to Milestone 9.
 
 ## What exists today
 
@@ -62,10 +63,10 @@ dispatch generation, and the sandbox's resolved commit and environment fingerpri
 the append-only history behind the execution timeline. `job_commands` is the append-only command
 ledger; transcripts live there rather than bloating every timeline read. `job_artifacts` is the
 append-only store of a run's durable output - the diff, its stats, the implementation plan, the
-implementation summary, and the baseline and validation reports - bounded and read one fetch away
-for the same reason. `job_checkpoints` is the durable workflow cursor: one row per safe boundary,
-carrying the phase to resume at and a complete compressed workspace patch. Columns that only later
-milestones can fill remain nullable.
+implementation summary, the baseline and validation reports, and the review report - bounded and
+read one fetch away for the same reason. `job_checkpoints` is the durable workflow cursor: one row
+per safe boundary, carrying the phase to resume at and a complete compressed workspace patch.
+Columns that only later milestones can fill remain nullable.
 
 ## The two deployables and the package they share
 
@@ -294,28 +295,33 @@ matters is a Postgres write guarded by the lease. A lost message, a duplicated m
 for a job that finished ten minutes ago are all harmless, because the claim is what grants the right
 to act and the claim is a compare-and-swap.
 
-The pipeline itself is seven phases - provision, analyze, plan, implement, test, review, finalize.
-Milestone 2 made provisioning and the baseline real sandbox work, Milestone 4 made implementing a
-real Pi session when an agent is supplied, and Milestone 5 moved the baseline onto `analyzing` so it
-measures the repository before the session edits it. Milestone 6 made planning a real phase: a
-second, read-only model session whose only capabilities are `list_files`, `read`, `search_text` and
-`submit_plan`, and whose validated `ImplementationPlan` is persisted as an artifact that every later
-implementation session - including one started by a replacement worker - reads back. A session that
-ends without submitting a plan fails with `plan_not_produced`; read-only is a capability boundary
-here rather than a sentence in a prompt. Analyzing and testing share one check runner, so command
-execution, killed-command classification, event recording and optional reporter parsing cannot drift
-between phases. Analyzing runs test, typecheck and lint before any edit and writes a canonical
-`baseline_report`. Testing stages the tree, records the diff and stats, derives targeted tests from
-the changed and tracked path sets, then runs targeted test, full test, typecheck and lint and writes
-a canonical `validation_report`. Finalizing reads that report back to write a report-aware closing
-line; reviewing is still simulated. The `RIVET_AGENT=off` integration configuration deliberately
-leaves implementing simulated, and leaves testing and finalizing simulated with it - validating a
-run that never had a session would be validating the absence of a phase, and every job would fail
-with `no_changes_produced` while nothing was wrong, and a phase whose two outputs are the session's
+The pipeline is seven template phases - provision, analyze, plan, implement, test, review,
+finalize - plus a directive-only `revising` phase. Milestone 2 made provisioning and the baseline
+real sandbox work, Milestone 4 made implementing a real Pi session when an agent is supplied, and
+Milestone 5 moved the baseline onto `analyzing` so it measures the repository before the session
+edits it. Milestone 6 made planning a real phase: a second, read-only model session whose only
+capabilities are `list_files`, `read`, `search_text` and `submit_plan`, and whose validated
+`ImplementationPlan` is persisted as an artifact that every later implementation session - including
+one started by a replacement worker - reads back. A session that ends without submitting a plan
+fails with `plan_not_produced`; read-only is a capability boundary here rather than a sentence in a
+prompt. Analyzing and testing share one check runner, so command execution, killed-command
+classification, event recording and optional reporter parsing cannot drift between phases. Analyzing
+runs test, typecheck and lint before any edit and writes a canonical `baseline_report`. Testing
+stages the tree, records the diff and stats, derives targeted tests from the changed and tracked
+path sets, then runs targeted test, full test, typecheck and lint and writes a canonical
+`validation_report`. Reviewing starts a separate session with only `list_files`, `read`,
+`search_text` and `submit_review`; it persists `review_report`, records the decision and either
+finalizes or inserts revising, testing and reviewing into the queue. Checkpoint restoration resumes
+a revision with its loop count intact. Finalizing reads the validation report back to write a
+report-aware `run.summarized` line with the review decision and loop count. The `RIVET_AGENT=off`
+integration configuration deliberately leaves model phases simulated - validating a run that never
+had a session would be validating the absence of a phase, and every job would fail with
+`no_changes_produced` while nothing was wrong, and a phase whose two outputs are the session's
 summary and the validation outcome has nothing to summarize when neither was produced - so lifecycle
-tests need no model key. That is the entire reason `runPipeline` takes its clock, its sleep, its
-callbacks and its fault injector as arguments rather than importing them: the same runner drives the
-demo at `speed: 1` and the unit tests at `speed: 0`.
+tests need no model key. `reviewMode: "none"` skips only the reviewer and records that choice. That
+is the entire reason `runPipeline` takes its clock, its sleep, its callbacks and its fault injector
+as arguments rather than importing them: the same runner drives the demo at `speed: 1` and the unit
+tests at `speed: 0`.
 
 ### The validation pipeline
 
@@ -790,24 +796,27 @@ pipeline runner at `speed: 0`, the config invariant, the in-memory queue and the
 `postgres:17` and `redis:8` service containers in CI, local services on a dev machine. It is a
 separate vitest config with no file pattern in common with the default suite, so `pnpm test` cannot
 pick it up by accident. It proves exclusive claims, fencing, retries, cancellation, timeouts, crash
-recovery, Postgres/Redis reconciliation, and the implementing phase with a scripted coding agent. It
-also owns the Milestone 6 crash case: a worker in a child process of its own, killed with `SIGKILL`
-once its progress is durable, and a second child that claims the new dispatch generation while the
-dead worker's message is still `active` in Redis and finishes the job from the cursor it left. That
-case needs a real process, because a thrown error is a graceful failure and `process.exit()` still
+recovery, Postgres/Redis reconciliation, the implementing and independent reviewing phases with a
+scripted coding agent, all review decisions, missing verdicts, and a crash during revising. It also
+owns the Milestone 6 crash case: a worker in a child process of its own, killed with `SIGKILL` once
+its progress is durable, and a second child that claims the new dispatch generation while the dead
+worker's message is still `active` in Redis and finishes the job from the cursor it left. Those
+cases need a real process, because a thrown error is a graceful failure and `process.exit()` still
 unwinds.
 
 `pnpm test:sandbox` is the third, non-overlapping suite. It uses the real Docker daemon plus local
 Postgres and Redis. It proves stream separation, non-zero exits, truncation, command timeouts,
 memory and PID limits, uid 1000, cleanup and reaping, drives a hermetic repository through the real
-worker to `completed`, and exercises the four sandbox-backed coding-agent tools without a model. Its
-git daemon serves temporary bare repositories only; no public network or package registry is
-involved. It also proves the half of recovery no unit test can: a workspace patch captured in one
-container - modifications, additions, deletions, renames, executable bits, binary files - applies in
-a different one, re-derives the same SHA-256, installs from the restored manifest rather than the
-base commit's, refuses a patch cut from another base, and cleans up its temporary index even when it
-rejects an oversized capture. The suite refuses a non-local Docker host unless the caller explicitly
-opts in, just as the integration suite refuses remote databases.
+worker to `completed`, and exercises the four sandbox-backed coding-agent tools without a model. It
+also runs an independent reviewer against the fixture, verifies the exact reviewer tool set, and
+compares the workspace diff byte for byte before and after review. Its git daemon serves temporary
+bare repositories only; no public network or package registry is involved. It also proves the half
+of recovery no unit test can: a workspace patch captured in one container - modifications,
+additions, deletions, renames, executable bits, binary files - applies in a different one,
+re-derives the same SHA-256, installs from the restored manifest rather than the base commit's,
+refuses a patch cut from another base, and cleans up its temporary index even when it rejects an
+oversized capture. The suite refuses a non-local Docker host unless the caller explicitly opts in,
+just as the integration suite refuses remote databases.
 
 `pnpm test:streaming` is the fourth suite, in `apps/web/tests/streaming`. It uses real Postgres but
 no Redis or Docker and calls the route handler directly with `Request` objects. It proves SSE
@@ -842,9 +851,10 @@ to point at, so the job stores a plain `repo_url`), no external-effect receipt t
 is a GitHub call whose fingerprint it could store), no object storage for artifacts or checkpoint
 payloads, no transactional outbox (see the dual-write section for why), and no deployment. The Pi
 implementation and planning sessions are real, analysis establishes a baseline and a killed job
-resumes from its checkpoint, but review is still simulated, and the bridge network is not the
-hardened isolation boundary a production worker needs - Rivet can restore repository state after a
-crash, but it cannot tell whether repository code called an external service before the worker died.
+resumes from its checkpoint, and review is an independent durable phase, but the bridge network is
+not the hardened isolation boundary a production worker needs - Rivet can restore repository state
+after a crash, but it cannot tell whether repository code called an external service before the
+worker died.
 
 The stream targets a long-lived Node.js host. Native EventSource reconnect makes interruptions safe,
 but a deployment platform that buffers or caps long responses can still terminate it. Before public

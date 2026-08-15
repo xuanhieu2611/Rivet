@@ -18,7 +18,11 @@ import type { PhaseArtifactInput, PhaseContext, PhaseEventInput } from "./phase-
  * is the whole reason this phase stopped being a sleep.
  */
 
-const JOB = { id: "11111111-2222-3333-4444-555555555555" } as unknown as JobDetail;
+const JOB = {
+  id: "11111111-2222-3333-4444-555555555555",
+  reviewLoops: 0,
+  reviewDecision: null,
+} as unknown as JobDetail;
 
 const STAT = { filesChanged: 1, insertions: 1, deletions: 1 };
 
@@ -112,7 +116,7 @@ describe("finalizingPhase", () => {
 
     expect(test.events).toHaveLength(1);
     expect(test.events[0]?.type).toBe("run.summarized");
-    expect(test.events[0]?.data).toEqual({ validation: "fixed", ...STAT });
+    expect(test.events[0]?.data).toEqual({ validation: "fixed", ...STAT, reviewLoops: 0 });
     expect(test.events[0]?.message).toMatch(/fixed/);
     expect(test.events[0]?.message).toMatch(/1 file changed, \+1\/-1/);
   });
@@ -140,9 +144,9 @@ describe("finalizingPhase", () => {
     await unverified.run();
 
     expect(absent.events[0]?.message).toMatch(/no validation recorded/);
-    expect(absent.events[0]?.data).toEqual({});
+    expect(absent.events[0]?.data).toEqual({ reviewLoops: 0 });
     expect(unverified.events[0]?.message).toMatch(/nothing to compare against/);
-    expect(unverified.events[0]?.data).toEqual({ validation: "unverified" });
+    expect(unverified.events[0]?.data).toEqual({ validation: "unverified", reviewLoops: 0 });
   });
 
   it("states every outcome in its own words", async () => {

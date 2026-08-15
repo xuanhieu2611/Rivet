@@ -21,6 +21,11 @@ targeted test run from the diff, re-runs every full check, and compares each one
 baseline. Vitest and Jest reports distinguish newly failing, pre-existing and fixed tests by name;
 the resulting baseline and validation reports are durable artifacts rendered on the job page.
 
+Milestone 8 adds an independent reviewer after validation. The reviewer has only `list_files`,
+`read`, `search_text` and `submit_review`, and its bounded structured report is durable. An approval
+finalizes the job; a revision request starts a bounded revising, revalidation and re-review cycle.
+`reviewMode: "none"` records the intentional skip and preserves the M7 workflow.
+
 Milestone 6's planning, persistence and recovery remain underneath it. A job killed mid-session is
 provisioned into a new container at the original commit, restored from a checksum-verified binary
 Git patch, and continued by a fresh session. Budgets and the wall-clock deadline remain cumulative
@@ -42,19 +47,23 @@ calls, usage, budget breaches, session endings, plans, checkpoints, reclaims, re
 runs. Shell calls also use the command ledger, so their bounded transcripts are visible through the
 same live SSE timeline and lazy command log as Rivet's own commands. Validation records per-check
 events, parsed failure attribution and canonical report artifacts before finalization persists the
-session's own summary. Review remains simulated until Milestone 8, and branch, commit, push and pull
-request remain Milestone 9 work.
+session's own summary. Review adds durable decision, finding, report and loop events, and the
+closing `run.summarized` event carries the review decision and loop count. Branch, commit, push and
+pull request remain Milestone 9 work.
 
 The integration suite uses a scripted agent with real Postgres, Redis, BullMQ and the production
-worker, including a worker killed with `SIGKILL` in a process of its own; the sandbox suite proves a
-patch captured in one container restores byte for byte in another. `pnpm demo:agent` runs one real
-Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with a real session, and
+worker, including a worker killed with `SIGKILL` in a process of its own; it covers approval,
+revision, rejection, skipped review, missing verdicts and review recovery. The sandbox suite proves
+both the reviewer tool boundary and a byte-identical workspace diff before and after review, as well
+as a patch captured in one container restoring byte for byte in another. `pnpm demo:agent` runs one
+real Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with a real session, and
 `pnpm demo:recovery` kills a worker mid-job and checks every fact the recovery claim rests on.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together,
-[docs/plans/milestone-7.md](docs/plans/milestone-7.md) for the committed M7 record, and
-[docs/milestone-7-guide.md](docs/milestone-7-guide.md) for an educational walkthrough and testing
-guide.
+[docs/plans/milestone-8.md](docs/plans/milestone-8.md) for the committed M8 plan,
+[docs/plans/milestone-8-acceptance.md](docs/plans/milestone-8-acceptance.md) for its acceptance
+contract, and [docs/milestone-7-guide.md](docs/milestone-7-guide.md) for an educational walkthrough
+and testing guide.
 
 ## Prerequisites
 
@@ -381,9 +390,9 @@ built before any agent behaviour.
       lossless workspace checkpoints, dispatch generations, deterministic sandbox rehydration, and a
       worker crash mid-run survived without rerunning acknowledged work; `pnpm demo:recovery` proves
       it end to end.
-- [ ] **M7 - Validation pipeline.** Baseline, targeted and full test runs plus lint and typecheck,
+- [x] **M7 - Validation pipeline.** Baseline, targeted and full test runs plus lint and typecheck,
       with results parsed and pre-existing failures told apart from new ones.
-- [ ] **M8 - Independent review session.** A separate read-only review pass over the diff, with
+- [x] **M8 - Independent review session.** A separate read-only review pass over the diff, with
       structured findings and a bounded revision loop.
 - [ ] **M9 - GitHub integration.** A GitHub App, repository and issue pickers, short-lived tokens,
       and branch/commit/push/pull-request creation.

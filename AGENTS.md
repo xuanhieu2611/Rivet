@@ -12,14 +12,15 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 7 is complete.** Jobs execute, survive their worker, and
-deterministically validate what the coding session changed. Creating one enqueues it, a worker
-claims it under a Postgres lease, provisions a sandbox, records per-check baselines, plans, runs a
-Pi coding session, heartbeats while it runs, compares targeted tests plus the full test, typecheck
-and lint checks, and lands it in a terminal status. Retries, cancellation, timeouts, crash recovery,
-agent budgets, usage persistence, provider failure classification and named test-failure attribution
-all work and are covered by the unit, integration, sandbox and streaming suites. Review remains
-simulated until Milestone 8, and the branch, commit and pull request belong to Milestone 9.
+**Current state: Milestone 8 is complete.** Jobs execute, survive their worker, deterministically
+validate what the coding session changed, and run an independent read-only review. Creating one
+enqueues it, a worker claims it under a Postgres lease, provisions a sandbox, records per-check
+baselines, plans, runs a Pi coding session, heartbeats while it runs, compares targeted tests plus
+the full test, typecheck and lint checks, reviews the result, and lands it in a terminal status.
+Retries, cancellation, timeouts, crash recovery, agent budgets, usage persistence, provider failure
+classification, named test-failure attribution and bounded review loops all work and are covered by
+the unit, integration, sandbox and streaming suites. Branch, commit and pull request belong to
+Milestone 9.
 
 M7 generalizes M5's baseline and validation into a shared check runner. `analyzing` resolves and
 runs test, typecheck and lint in that order, records one `baseline.check_recorded` event per check,
@@ -39,6 +40,14 @@ targeted test never fails a job on its own. The aggregate is the worst binding o
 failures treated as `unverified` for aggregation. `finalizing` reads the validation report back and
 writes the report-aware closing `run.summarized` line.
 
+M8 adds an independent reviewer with exactly `list_files`, `read`, `search_text` and
+`submit_review`. It reads the durable plan, summary, diff and validation report, persists a bounded
+`review_report`, and records `review.recorded`. An approval finalizes the job; a revision request
+records `review.revision_requested`, runs a directive-only `revising` session, and revalidates
+before reviewing again. Rivet owns the loop bound and fails with `reviewer_rejection` when it is
+exhausted. `reviewMode: "none"` records `review.skipped` and keeps the M7 path. Review decisions and
+loop counts are included in `run.summarized`.
+
 **M6 makes the attempt durable, and it is four things.** `planning` is a real read-only planner
 session whose only tools are `list_files`, `read`, `search_text` and `submit_plan`, and whose
 validated `ImplementationPlan` is persisted as an artifact every later implementation session reads
@@ -53,23 +62,23 @@ phase with a fresh session that is told what it inherited. `pnpm demo:recovery` 
 against Docker with a `kill -9`.
 
 `packages/sandbox` is real; `buildPipeline()` gives `provisioning`, `analyzing`, `planning`,
-`implementing`, `testing` and `finalizing` real bodies - create a container, clone the repository,
-resolve the commit, restore a checkpoint when there is one, install dependencies, run the
-repository's own test suite and record the baseline, produce a structured plan, run a coding
-session, judge what it did, then keep what it said and state what the run came to - and
-`apps/worker` calls it, selected by `RIVET_SANDBOX` (`docker` by default, `off` for the simulated
-pipeline). The processor owns the container and destroys it on every exit; the sweeper reaps
-whatever a `kill -9` left behind.
+`implementing`, `testing`, `reviewing` and `finalizing` real bodies, plus a directive-only
+`revising` body - create a container, clone the repository, resolve the commit, restore a checkpoint
+when there is one, install dependencies, run the repository's own test suite and record the
+baseline, produce a structured plan, run coding and review sessions, judge what they did, then keep
+what they said and state what the run came to - and `apps/worker` calls it, selected by
+`RIVET_SANDBOX` (`docker` by default, `off` for the simulated pipeline). The processor owns the
+container and destroys it on every exit; the sweeper reaps whatever a `kill -9` left behind.
 
-**`planning`, `implementing`, `testing` and `finalizing` are wired to the same condition: an
-agent.** Without one, all four stay sleeps. Validation's first act is to fail a job whose diff is
-empty, which is the right answer for a session that changed nothing and the wrong one for a pipeline
-that never had a session - it would be validating the absence of a phase, and every job under
-`RIVET_AGENT=off` would fail with `no_changes_produced` while nothing was wrong. `finalizing`
-follows for the milder version of the same reason: a phase whose two outputs are the session's
-summary and the validation outcome has nothing to summarize when neither of the phases producing
-them ran. Production is unaffected, because `parseWorkerConfig` refuses `RIVET_AGENT=off` - and
-`RIVET_AGENT=scripted` - under `NODE_ENV=production`.
+**`planning`, `implementing`, `testing`, `reviewing` and `finalizing` are wired to the same
+condition: an agent.** Without one, those phases stay sleeps. Validation's first act is to fail a
+job whose diff is empty, which is the right answer for a session that changed nothing and the wrong
+one for a pipeline that never had a session - it would be validating the absence of a phase, and
+every job under `RIVET_AGENT=off` would fail with `no_changes_produced` while nothing was wrong.
+`finalizing` follows for the milder version of the same reason: a phase whose two outputs are the
+session's summary and the validation outcome has nothing to summarize when neither of the phases
+producing them ran. Production is unaffected, because `parseWorkerConfig` refuses
+`RIVET_AGENT=off` - and `RIVET_AGENT=scripted` - under `NODE_ENV=production`.
 
 M3 makes the append-only event log observable. The job detail route serves JSON to ordinary callers
 and a Postgres-backed SSE stream to live viewers. The browser reducer reconnects from durable event
@@ -308,12 +317,14 @@ runs in the worker process; its four tools - `read`, `write`, `edit`, `bash` - e
 would put `OPENROUTER_API_KEY` inside a container running arbitrary cloned code, so it is ignored,
 always. And after `createAgentSession` returns, `PiCodingAgent` asserts that
 `session.getActiveToolNames()` is exactly the role's set - `bash, edit, read, write` for an
-implementer, `list_files, read, search_text, submit_plan` for a planner - and fails the job
-otherwise, which is the difference between believing no host-side tool survived and knowing it. The
-planner's read-only-ness is therefore a capability boundary rather than a sentence in a prompt, and
-`submit_plan` is the one deliberate worker-side tool: it validates a structured value and hands it
-to the phase, and can read nothing, write nothing and execute nothing. Be honest about what this
-buys: it contains the _model_, not the harness. Nothing sandboxes the harness process itself.
+implementer, `list_files, read, search_text, submit_plan` for a planner, and
+`list_files, read, search_text, submit_review` for a reviewer - and fails the job otherwise, which
+is the difference between believing no host-side tool survived and knowing it. The planner's and
+reviewer's read-only-ness is therefore a capability boundary rather than a sentence in a prompt, and
+`submit_plan` and `submit_review` are the deliberate worker-side tools: each validates a structured
+value and hands it to the phase, and can read nothing, write nothing and execute nothing. Be honest
+about what this buys: it contains the _model_, not the harness. Nothing sandboxes the harness
+process itself.
 
 **`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
 merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, so a caller cannot

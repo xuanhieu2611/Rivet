@@ -1,4 +1,4 @@
-import { FakeCodingAgent } from "@rivet/agent";
+import { approvingReview, FakeCodingAgent, type ScriptedSession } from "@rivet/agent";
 import {
   parseSerializedBaselineReport,
   parseSerializedValidationReport,
@@ -14,6 +14,8 @@ import {
   listEvents,
   type AgentOptions,
   type ImplementerAgentToolbox,
+  type Sandbox,
+  type SandboxProvider,
 } from "@rivet/core";
 import { DockerSandboxProvider } from "@rivet/sandbox";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -58,7 +60,11 @@ afterAll(async () => {
 
 function startRealWorker(
   suite: string,
-  options: { agent?: AgentOptions; artifactMaxBytes?: number } = {},
+  options: {
+    agent?: AgentOptions;
+    artifactMaxBytes?: number;
+    sandboxProvider?: SandboxProvider;
+  } = {},
 ): { queue: TestQueue; worker: TestWorker } {
   const testQueue = createTestQueue(suite, { attempts: 1 });
   const sandboxConfig = {
@@ -80,10 +86,12 @@ function startRealWorker(
     // The provider below reaps immediately; this suite builds its own.
     reapGraceMs: 0,
   };
-  const provider = new DockerSandboxProvider({
-    workerId: `sandbox-pipeline-${process.pid}`,
-    reapGraceMs: 0,
-  });
+  const provider =
+    options.sandboxProvider ??
+    new DockerSandboxProvider({
+      workerId: `sandbox-pipeline-${process.pid}`,
+      reapGraceMs: 0,
+    });
   const phases = buildPipeline({
     sandbox: provider,
     image: sandboxConfig.image,
@@ -119,6 +127,62 @@ function startRealWorker(
   return { queue: testQueue, worker: testWorker };
 }
 
+/**
+ * Observes the real container at the two sides of the read-only review.
+ *
+ * The production context does not expose its sandbox handle to the reviewer,
+ * so this wrapper records the staged diff when validation captures it and
+ * compares it again immediately before the processor destroys the container.
+ * A reviewer with an accidental write capability would make these bytes differ.
+ */
+class ReviewDiffProbe implements SandboxProvider {
+  before: string | undefined;
+  after: string | undefined;
+
+  constructor(private readonly delegate: SandboxProvider) {}
+
+  async create(...args: Parameters<SandboxProvider["create"]>): Promise<Sandbox> {
+    const sandbox = await this.delegate.create(...args);
+    let destroyed = false;
+
+    return {
+      id: sandbox.id,
+      exec: async (request) => {
+        const result = await sandbox.exec(request);
+        if (isValidationDiff(request.argv) && this.before === undefined) {
+          this.before = result.stdout;
+        }
+        return result;
+      },
+      getFile: (path, options, signal) => sandbox.getFile(path, options, signal),
+      putFile: (path, content, signal) => sandbox.putFile(path, content, signal),
+      destroy: async () => {
+        if (destroyed) return;
+        destroyed = true;
+        if (this.before !== undefined) {
+          const result = await sandbox.exec({
+            argv: ["git", "diff", "--cached"],
+            cwd: "/home/node/workspace/repo",
+            timeoutMs: 10_000,
+            signal: new AbortController().signal,
+            maxOutputBytes: 262_144,
+          });
+          this.after = result.stdout;
+        }
+        await sandbox.destroy();
+      },
+    };
+  }
+
+  reap(jobIsLive: Parameters<SandboxProvider["reap"]>[0]): ReturnType<SandboxProvider["reap"]> {
+    return this.delegate.reap(jobIsLive);
+  }
+}
+
+function isValidationDiff(argv: readonly string[]): boolean {
+  return argv.length === 3 && argv[0] === "git" && argv[1] === "diff" && argv[2] === "--cached";
+}
+
 async function createFixtureJob(variant: FixtureVariant, branch = "main") {
   return createJob({
     title: `${variant} sandbox fixture`,
@@ -132,6 +196,7 @@ async function createFixtureJob(variant: FixtureVariant, branch = "main") {
 
 function editingAgent(
   edit: (tools: ImplementerAgentToolbox, signal: AbortSignal) => Promise<void>,
+  reviewerScript?: ScriptedSession,
 ): AgentOptions {
   return {
     coding: new FakeCodingAgent({
@@ -147,6 +212,7 @@ function editingAgent(
           useTools: edit,
         },
       ],
+      ...(reviewerScript === undefined ? {} : { reviewerScript }),
     }),
     sessionTimeoutMs: 30_000,
     maxTurns: 4,
@@ -163,6 +229,30 @@ function harmlessEditingAgent(): AgentOptions {
       signal,
     );
   });
+}
+
+function reviewingEditingAgent(): AgentOptions {
+  return editingAgent(
+    async (tools, signal) => {
+      await tools.writeFile(
+        "/home/node/workspace/repo/acceptance-change.js",
+        "export const acceptanceChange = true;\n",
+        signal,
+      );
+    },
+    {
+      events: [
+        {
+          type: "session_started",
+          sessionId: "sandbox-review-session",
+          model: "fixture-model",
+          provider: "fixture-provider",
+          toolNames: ["list_files", "read", "search_text", "submit_review"],
+        },
+      ],
+      review: approvingReview(),
+    },
+  );
 }
 
 async function reportArtifact(jobId: string, type: ArtifactType) {
@@ -473,6 +563,38 @@ describe("real sandbox pipeline", () => {
       preExistingFailures: ["calculator.test.js::A", "calculator.test.js::B"],
       fixedFailures: [],
     });
+  });
+
+  it("runs an independent reviewer with read-only tools and preserves the diff byte-for-byte", async () => {
+    const probe = new ReviewDiffProbe(
+      new DockerSandboxProvider({
+        workerId: `sandbox-review-probe-${process.pid}`,
+        reapGraceMs: 0,
+      }),
+    );
+    const running = startRealWorker("sandbox-m8-review", {
+      agent: reviewingEditingAgent(),
+      sandboxProvider: probe,
+    });
+    const job = await createFixtureJob("green");
+    await enqueue(running.queue.queue, job.id);
+
+    await waitForStatus(job.id, "completed", { timeoutMs: 45_000 });
+    const events = await listEvents(job.id, { limit: 500 });
+    const reviewerStarted = events.find(
+      (event) => event.type === "agent.session_started" && event.data?.agentRole === "reviewer",
+    );
+
+    expect(reviewerStarted?.data?.toolNames).toEqual([
+      "list_files",
+      "read",
+      "search_text",
+      "submit_review",
+    ]);
+    expect(events.some((event) => event.type === "review.recorded")).toBe(true);
+    expect(probe.before).toBeDefined();
+    expect(probe.after).toBe(probe.before);
+    expect(probe.after).toContain("acceptance-change.js");
   });
 
   it("fails a present invalid rivet.json terminally without retrying", async () => {

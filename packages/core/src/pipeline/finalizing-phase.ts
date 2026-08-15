@@ -82,6 +82,8 @@ export function finalizingPhase(): (ctx: PhaseContext) => Promise<PhaseDirective
       data: {
         ...(validation ? { validation: validation.outcome } : {}),
         ...(validation?.stat ?? {}),
+        reviewLoops: ctx.job.reviewLoops ?? 0,
+        ...(ctx.job.reviewDecision === null ? {} : { reviewDecision: ctx.job.reviewDecision }),
       },
     });
 
