@@ -113,6 +113,11 @@ export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
   checkpoint_too_large: "Checkpoint too large",
   review_not_produced: "Review not produced",
   reviewer_rejection: "Rejected by review",
+  github_unavailable: "GitHub unavailable",
+  github_permission_denied: "GitHub permission denied",
+  push_rejected: "Push rejected",
+  pull_request_failed: "Pull request failed",
+  github_not_installed: "GitHub App not installed",
   unknown: "Unknown",
 };
 
@@ -191,4 +196,14 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   // A run that asked for no review is not a run whose reviewer said nothing,
   // and the timeline should be quiet about the difference rather than loud.
   "review.skipped": "bg-muted-foreground/40",
+  // Publication events are progress markers; their payload carries the
+  // branch, receipt, or pull request details shown by the M9 timeline work.
+  "github.repository_bound": "bg-violet-500",
+  "branch.created": "bg-violet-500",
+  "commit.created": "bg-sky-500",
+  "push.completed": "bg-emerald-500",
+  "pull_request.opened": "bg-emerald-500",
+  "pull_request.adopted": "bg-emerald-500",
+  "publication.skipped": "bg-muted-foreground/40",
+  "external_effect.recorded": "bg-violet-500",
 };

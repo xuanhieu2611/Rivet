@@ -50,43 +50,82 @@ export function isTerminal(status: JobStatus): boolean {
  * Field names are camelCase to match the Drizzle row shape, so the service layer
  * can pass the parsed value through without remapping.
  */
-export const createJobSchema = z.object({
-  title: z
-    .string()
-    .trim()
-    .min(1, "Title is required")
-    .max(200, "Title must be 200 characters or fewer"),
-  description: z
-    .string()
-    .trim()
-    .min(1, "Description is required")
-    .max(10_000, "Description must be 10000 characters or fewer"),
-  repoUrl: z
-    .url({ protocol: /^https$/, error: "Must be an https:// repository URL" })
-    .max(2048, "Repository URL is too long"),
-  baseBranch: z.string().trim().min(1).max(255).default("main"),
-  /**
-   * Whether this run gets an independent review session.
-   *
-   * A property of the job rather than a deployment switch, so a job that
-   * recorded `independent` is reviewed whichever worker picks it up. `none`
-   * runs the M7 workflow and says so on the timeline.
-   */
-  reviewMode: reviewModeSchema.default("independent"),
-  /**
-   * How many revisions this job may spend before a blocking verdict fails it.
-   *
-   * Bounded rather than open-ended because the loop multiplies cost, and zero
-   * is legal: it means one review whose `revise` verdict has no budget behind
-   * it.
-   */
-  maxReviewLoops: z
-    .number()
-    .int("Maximum review loops must be a whole number")
-    .min(0, "Maximum review loops must be 0 or more")
-    .max(5, "Maximum review loops must be 5 or fewer")
-    .default(2),
-});
+export const createJobSchema = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1, "Title is required")
+      .max(200, "Title must be 200 characters or fewer"),
+    description: z
+      .string()
+      .trim()
+      .min(1, "Description is required")
+      .max(10_000, "Description must be 10000 characters or fewer"),
+    repoUrl: z
+      .url({ protocol: /^https$/, error: "Must be an https:// repository URL" })
+      .max(2048, "Repository URL is too long"),
+    baseBranch: z.string().trim().min(1).max(255).default("main"),
+    /** GitHub App binding, when this job is allowed to publish externally. */
+    githubInstallationId: z.number().int().positive().optional(),
+    repoOwner: z.string().trim().min(1).max(255).optional(),
+    repoName: z.string().trim().min(1).max(255).optional(),
+    issueNumber: z.number().int().positive().optional(),
+    issueUrl: z
+      .url({ protocol: /^https$/, error: "Issue URL must be an https:// URL" })
+      .max(2048, "Issue URL is too long")
+      .optional(),
+    /**
+     * Whether this run gets an independent review session.
+     *
+     * A property of the job rather than a deployment switch, so a job that
+     * recorded `independent` is reviewed whichever worker picks it up. `none`
+     * runs the M7 workflow and says so on the timeline.
+     */
+    reviewMode: reviewModeSchema.default("independent"),
+    /**
+     * How many revisions this job may spend before a blocking verdict fails it.
+     *
+     * Bounded rather than open-ended because the loop multiplies cost, and zero
+     * is legal: it means one review whose `revise` verdict has no budget behind
+     * it.
+     */
+    maxReviewLoops: z
+      .number()
+      .int("Maximum review loops must be a whole number")
+      .min(0, "Maximum review loops must be 0 or more")
+      .max(5, "Maximum review loops must be 5 or fewer")
+      .default(2),
+  })
+  .superRefine((job, ctx) => {
+    const hasOwner = job.repoOwner !== undefined;
+    const hasName = job.repoName !== undefined;
+
+    if (hasOwner !== hasName) {
+      if (!hasOwner) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["repoOwner"],
+          message: "repoOwner and repoName must be provided together.",
+        });
+      }
+      if (!hasName) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["repoName"],
+          message: "repoOwner and repoName must be provided together.",
+        });
+      }
+    }
+
+    if (job.githubInstallationId !== undefined && (!hasOwner || !hasName)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["githubInstallationId"],
+        message: "A GitHub installation requires repoOwner and repoName.",
+      });
+    }
+  });
 
 /** What a client sends - `baseBranch` may be omitted. */
 export type CreateJobInput = z.input<typeof createJobSchema>;

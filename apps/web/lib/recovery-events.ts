@@ -201,7 +201,8 @@ function checkpointSequence(event: JobEvent): number | null {
 }
 
 function checkpointKind(event: JobEvent): CheckpointKind | null {
-  return event.data?.checkpointKind ?? event.data?.kind ?? null;
+  const kind = event.data?.checkpointKind ?? event.data?.kind;
+  return kind === "phase_boundary" || kind === "agent_turn" ? kind : null;
 }
 
 /**

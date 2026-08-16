@@ -31,6 +31,75 @@ describe("createJobSchema", () => {
     expect(result.baseBranch).toBe("develop");
   });
 
+  it("accepts a complete GitHub repository binding", () => {
+    const result = createJobSchema.parse({
+      ...validInput,
+      githubInstallationId: 42,
+      repoOwner: "  acme ",
+      repoName: " widgets ",
+      issueNumber: 17,
+      issueUrl: "https://github.com/acme/widgets/issues/17",
+    });
+
+    expect(result).toMatchObject({
+      githubInstallationId: 42,
+      repoOwner: "acme",
+      repoName: "widgets",
+      issueNumber: 17,
+      issueUrl: "https://github.com/acme/widgets/issues/17",
+    });
+  });
+
+  it("keeps manual repository jobs valid without a GitHub binding", () => {
+    expect(createJobSchema.parse(validInput)).not.toHaveProperty("githubInstallationId");
+    expect(
+      createJobSchema.parse({ ...validInput, repoOwner: "acme", repoName: "widgets" }),
+    ).toMatchObject({ repoOwner: "acme", repoName: "widgets" });
+  });
+
+  it("requires repository owner and name together", () => {
+    expect(createJobSchema.safeParse({ ...validInput, repoOwner: "acme" }).success).toBe(false);
+    expect(createJobSchema.safeParse({ ...validInput, repoName: "widgets" }).success).toBe(false);
+  });
+
+  it("requires a complete repository binding when an installation is supplied", () => {
+    expect(createJobSchema.safeParse({ ...validInput, githubInstallationId: 42 }).success).toBe(
+      false,
+    );
+    expect(
+      createJobSchema.safeParse({
+        ...validInput,
+        githubInstallationId: 42,
+        repoOwner: "acme",
+      }).success,
+    ).toBe(false);
+    expect(
+      createJobSchema.safeParse({
+        ...validInput,
+        githubInstallationId: 42,
+        repoName: "widgets",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects invalid GitHub binding values", () => {
+    for (const githubInstallationId of [0, -1, 1.5, "42"]) {
+      expect(createJobSchema.safeParse({ ...validInput, githubInstallationId }).success).toBe(
+        false,
+      );
+    }
+    expect(
+      createJobSchema.safeParse({ ...validInput, repoOwner: " ", repoName: "widgets" }).success,
+    ).toBe(false);
+    expect(createJobSchema.safeParse({ ...validInput, issueNumber: 0 }).success).toBe(false);
+    expect(
+      createJobSchema.safeParse({
+        ...validInput,
+        issueUrl: "http://github.com/acme/widgets/issues/1",
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects an empty title", () => {
     const result = createJobSchema.safeParse({ ...validInput, title: "   " });
     expect(result.success).toBe(false);

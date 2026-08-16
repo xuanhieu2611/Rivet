@@ -24,6 +24,8 @@ import { jobStatusSchema, type JobStatus } from "./job";
  * - `review_report` - the canonical structured verdict submitted by an
  *   independent review session. One row per review loop, and it stays readable
  *   on a job that the reviewer rejected.
+ * - `pull_request_body` - the complete body Rivet was about to publish, kept
+ *   before the GitHub request so a publication failure remains diagnosable.
  */
 export const ARTIFACT_TYPES = [
   "diff",
@@ -33,6 +35,7 @@ export const ARTIFACT_TYPES = [
   "baseline_report",
   "validation_report",
   "review_report",
+  "pull_request_body",
 ] as const;
 
 export const artifactTypeSchema = z.enum(ARTIFACT_TYPES);

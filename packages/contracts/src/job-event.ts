@@ -8,6 +8,14 @@ import {
   type CheckpointPatchCompression,
   type CheckpointPatchFormat,
 } from "./checkpoint";
+import {
+  externalEffectKindSchema,
+  publicationSkipReasonSchema,
+  pullRequestStateSchema,
+  type ExternalEffectKind,
+  type PublicationSkipReason,
+  type PullRequestState,
+} from "./github";
 import { jobStatusSchema, type JobStatus } from "./job";
 import { artifactTypeSchema, type ArtifactType } from "./job-artifact";
 import {
@@ -156,6 +164,24 @@ export const JOB_EVENT_TYPES = [
    * review event at all. The two absences are different facts.
    */
   "review.skipped",
+
+  // --- GitHub publication (M9) -------------------------------------------
+  /** The job's immutable repository binding was selected for this run. */
+  "github.repository_bound",
+  /** The deterministic publication branch was selected and persisted. */
+  "branch.created",
+  /** The validated tree was committed on the publication branch. */
+  "commit.created",
+  /** The publication branch was pushed or force-updated. */
+  "push.completed",
+  /** A new pull request was opened for the publication branch. */
+  "pull_request.opened",
+  /** An existing pull request was found and adopted. */
+  "pull_request.adopted",
+  /** Publication was intentionally skipped for a known reason. */
+  "publication.skipped",
+  /** An external-effect receipt was committed with its audit event. */
+  "external_effect.recorded",
 ] as const;
 
 export const jobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
@@ -273,6 +299,18 @@ export const FAILURE_CATEGORIES = [
    * attributable to named findings.
    */
   "reviewer_rejection",
+
+  // --- GitHub publication (M9) -------------------------------------------
+  /** GitHub transport, server, or rate-limit failure after adapter retries. */
+  "github_unavailable",
+  /** The App cannot access the bound repository or installation. */
+  "github_permission_denied",
+  /** Git refused a publication branch update. */
+  "push_rejected",
+  /** The branch exists, but the pull request could not be opened. */
+  "pull_request_failed",
+  /** The job references an installation that is not available. */
+  "github_not_installed",
 
   "unknown",
 ] as const;
@@ -485,8 +523,8 @@ export type JobEventData = {
   /** Alias accepted by older event producers that use the column name directly. */
   sequence?: number;
   checkpointKind?: CheckpointKind;
-  /** Alias for checkpointKind used by compact timeline payloads. */
-  kind?: CheckpointKind;
+  /** Alias for checkpointKind used by compact timeline payloads, or an external-effect kind. */
+  kind?: CheckpointKind | ExternalEffectKind;
   completedPhase?: JobStatus;
   resumePhase?: JobStatus;
   /** The sandbox that produced or currently owns the checkpoint. */
@@ -525,6 +563,32 @@ export type JobEventData = {
   confidence?: number;
   /** The job's review mode, on `review.skipped`. */
   reviewMode?: ReviewMode;
+
+  // --- GitHub publication (M9) -------------------------------------------
+  /** The installation and repository selected for publication. */
+  installationId?: number;
+  owner?: string;
+  repo?: string;
+  private?: boolean;
+  issueNumber?: number;
+  /** The deterministic publication branch and its base. */
+  branch?: string;
+  baseBranch?: string;
+  baseCommitSha?: string;
+  treeSha?: string;
+  forced?: boolean;
+  /** Pull request identity and state, on opened/adopted events. */
+  number?: number;
+  url?: string;
+  state?: PullRequestState;
+  bodyArtifactId?: number;
+  updated?: boolean;
+  /** Why publication was skipped rather than attempted. */
+  reason?: PublicationSkipReason;
+  /** External-effect receipt details. */
+  externalId?: string;
+  externalUrl?: string;
+  adopted?: boolean;
 };
 
 /** One row of the job timeline. */
@@ -616,7 +680,7 @@ const jobEventDataSchema = z
     checkpointSequence: z.number().int().positive().optional(),
     sequence: z.number().int().positive().optional(),
     checkpointKind: checkpointKindSchema.optional(),
-    kind: checkpointKindSchema.optional(),
+    kind: z.union([checkpointKindSchema, externalEffectKindSchema]).optional(),
     completedPhase: jobStatusSchema.optional(),
     resumePhase: jobStatusSchema.optional(),
     sandboxId: z.string().min(1).optional(),
@@ -637,6 +701,25 @@ const jobEventDataSchema = z
     nonBlockingCount: z.number().int().nonnegative().optional(),
     confidence: z.number().min(0).max(1).optional(),
     reviewMode: reviewModeSchema.optional(),
+    installationId: z.number().int().positive().optional(),
+    owner: z.string().min(1).optional(),
+    repo: z.string().min(1).optional(),
+    private: z.boolean().optional(),
+    issueNumber: z.number().int().positive().optional(),
+    branch: z.string().min(1).optional(),
+    baseBranch: z.string().min(1).optional(),
+    baseCommitSha: z.string().min(1).optional(),
+    treeSha: z.string().min(1).optional(),
+    forced: z.boolean().optional(),
+    number: z.number().int().positive().optional(),
+    url: z.string().min(1).optional(),
+    state: pullRequestStateSchema.optional(),
+    bodyArtifactId: safeEventIdSchema.optional(),
+    updated: z.boolean().optional(),
+    reason: publicationSkipReasonSchema.optional(),
+    externalId: z.string().min(1).optional(),
+    externalUrl: z.string().min(1).optional(),
+    adopted: z.boolean().optional(),
   })
   .passthrough();
 
@@ -761,6 +844,25 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.nonBlockingCount === undefined ? {} : { nonBlockingCount: value.nonBlockingCount }),
     ...(value.confidence === undefined ? {} : { confidence: value.confidence }),
     ...(value.reviewMode === undefined ? {} : { reviewMode: value.reviewMode }),
+    ...(value.installationId === undefined ? {} : { installationId: value.installationId }),
+    ...(value.owner === undefined ? {} : { owner: value.owner }),
+    ...(value.repo === undefined ? {} : { repo: value.repo }),
+    ...(value.private === undefined ? {} : { private: value.private }),
+    ...(value.issueNumber === undefined ? {} : { issueNumber: value.issueNumber }),
+    ...(value.branch === undefined ? {} : { branch: value.branch }),
+    ...(value.baseBranch === undefined ? {} : { baseBranch: value.baseBranch }),
+    ...(value.baseCommitSha === undefined ? {} : { baseCommitSha: value.baseCommitSha }),
+    ...(value.treeSha === undefined ? {} : { treeSha: value.treeSha }),
+    ...(value.forced === undefined ? {} : { forced: value.forced }),
+    ...(value.number === undefined ? {} : { number: value.number }),
+    ...(value.url === undefined ? {} : { url: value.url }),
+    ...(value.state === undefined ? {} : { state: value.state }),
+    ...(value.bodyArtifactId === undefined ? {} : { bodyArtifactId: value.bodyArtifactId }),
+    ...(value.updated === undefined ? {} : { updated: value.updated }),
+    ...(value.reason === undefined ? {} : { reason: value.reason }),
+    ...(value.externalId === undefined ? {} : { externalId: value.externalId }),
+    ...(value.externalUrl === undefined ? {} : { externalUrl: value.externalUrl }),
+    ...(value.adopted === undefined ? {} : { adopted: value.adopted }),
   };
   const knownKeys = new Set(Object.keys(known));
   const extras = Object.fromEntries(

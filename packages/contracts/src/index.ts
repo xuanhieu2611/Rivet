@@ -1,4 +1,5 @@
 export * from "./checkpoint";
+export * from "./github";
 export * from "./implementation-plan";
 export * from "./job";
 export * from "./job-artifact";

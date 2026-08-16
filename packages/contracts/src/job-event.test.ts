@@ -344,3 +344,145 @@ describe("review events", () => {
     expect(parseFailureCategory("reviewer_rejection")).toBe("reviewer_rejection");
   });
 });
+
+describe("GitHub publication events", () => {
+  it("round-trips every publication field", () => {
+    const events: JobEvent[] = [
+      {
+        ...EVENT,
+        type: "github.repository_bound",
+        message: "Repository bound.",
+        data: {
+          installationId: 42,
+          owner: "acme",
+          repo: "widgets",
+          private: true,
+          issueNumber: 17,
+        },
+      },
+      {
+        ...EVENT,
+        type: "branch.created",
+        message: "Branch selected.",
+        data: {
+          branch: "rivet/job-1234-fix-widget",
+          baseBranch: "main",
+          baseCommitSha: "a".repeat(40),
+        },
+      },
+      {
+        ...EVENT,
+        type: "commit.created",
+        message: "Commit created.",
+        data: {
+          branch: "rivet/job-1234-fix-widget",
+          commitSha: "b".repeat(40),
+          treeSha: "c".repeat(40),
+          filesChanged: 2,
+          insertions: 7,
+          deletions: 3,
+        },
+      },
+      {
+        ...EVENT,
+        type: "push.completed",
+        message: "Push completed.",
+        data: {
+          branch: "rivet/job-1234-fix-widget",
+          commitSha: "b".repeat(40),
+          treeSha: "c".repeat(40),
+          forced: true,
+        },
+      },
+      {
+        ...EVENT,
+        type: "pull_request.opened",
+        message: "Pull request opened.",
+        data: {
+          number: 18,
+          url: "https://github.com/acme/widgets/pull/18",
+          branch: "rivet/job-1234-fix-widget",
+          state: "open",
+          bodyArtifactId: 91,
+        },
+      },
+      {
+        ...EVENT,
+        type: "pull_request.adopted",
+        message: "Pull request adopted.",
+        data: {
+          number: 18,
+          url: "https://github.com/acme/widgets/pull/18",
+          branch: "rivet/job-1234-fix-widget",
+          state: "merged",
+          bodyArtifactId: 91,
+          updated: false,
+        },
+      },
+      {
+        ...EVENT,
+        type: "publication.skipped",
+        message: "Publication skipped.",
+        data: { reason: "github_off" },
+      },
+      {
+        ...EVENT,
+        type: "external_effect.recorded",
+        message: "External effect recorded.",
+        data: {
+          kind: "branch_pushed",
+          provider: "github",
+          externalId: "b".repeat(40),
+          externalUrl: "https://github.com/acme/widgets/tree/rivet/job-1234-fix-widget",
+          adopted: true,
+        },
+      },
+    ];
+
+    for (const event of events) {
+      expect(parseSerializedJobEvent(serializeJobEvent(event))).toEqual(event);
+    }
+  });
+
+  it("accepts external effect kinds without changing checkpoint kinds", () => {
+    const checkpoint = parseSerializedJobEvent(
+      serializeJobEvent({ ...EVENT, type: "checkpoint.created", data: { kind: "agent_turn" } }),
+    );
+    const effect = parseSerializedJobEvent(
+      serializeJobEvent({
+        ...EVENT,
+        type: "external_effect.recorded",
+        data: { kind: "pull_request_opened", provider: "github", adopted: false },
+      }),
+    );
+
+    expect(checkpoint.data?.kind).toBe("agent_turn");
+    expect(effect.data?.kind).toBe("pull_request_opened");
+  });
+
+  it("rejects malformed publication fields", () => {
+    const withData = (data: Record<string, unknown>) => ({
+      ...serializeJobEvent(EVENT),
+      type: "pull_request.opened",
+      data,
+    });
+
+    expect(() => parseSerializedJobEvent(withData({ state: "draft" }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ bodyArtifactId: -1 }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ reason: "not_applicable" }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ forced: "yes" }))).toThrow();
+    expect(() => parseSerializedJobEvent(withData({ kind: "phase_boundary" }))).not.toThrow();
+  });
+
+  it("recognises the GitHub publication failure categories", () => {
+    for (const category of [
+      "github_unavailable",
+      "github_permission_denied",
+      "push_rejected",
+      "pull_request_failed",
+      "github_not_installed",
+    ] as const) {
+      expect(parseFailureCategory(category)).toBe(category);
+    }
+  });
+});

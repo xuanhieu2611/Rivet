@@ -12,6 +12,7 @@ const ARTIFACT_LABELS: Record<ArtifactType, string> = {
   baseline_report: "Baseline report",
   validation_report: "Validation report",
   review_report: "Review report",
+  pull_request_body: "Pull request body",
 };
 
 interface JobArtifactsPanelProps {
