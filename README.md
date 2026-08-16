@@ -62,10 +62,12 @@ real Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with
 ends in a real pull request on a throwaway repository.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together,
-[docs/plans/milestone-8.md](docs/plans/milestone-8.md) for the committed M8 plan,
-[docs/plans/milestone-8-acceptance.md](docs/plans/milestone-8-acceptance.md) for its acceptance
-contract, [docs/milestone-8-guide.md](docs/milestone-8-guide.md) for an educational walkthrough, and
-[docs/milestone-7-guide.md](docs/milestone-7-guide.md) for the preceding validation guide.
+[docs/plans/milestone-9.md](docs/plans/milestone-9.md) for the committed M9 plan,
+[docs/plans/milestone-9-acceptance.md](docs/plans/milestone-9-acceptance.md) for its acceptance
+contract, [docs/milestone-9-guide.md](docs/milestone-9-guide.md) for an educational walkthrough of
+GitHub publication, [docs/milestone-9-setup.md](docs/milestone-9-setup.md) for the one-time GitHub
+App setup, and [docs/milestone-8-guide.md](docs/milestone-8-guide.md) for the preceding review
+guide.
 
 ## Prerequisites
 
