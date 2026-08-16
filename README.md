@@ -110,7 +110,10 @@ pnpm db:migrate
 pnpm dev
 ```
 
-`pnpm dev` starts two processes: the Next.js app on <http://localhost:3000> and the worker.
+`pnpm dev` starts two processes: the Next.js app on <http://localhost:3000> and the worker. For the
+Milestone 9 GitHub App prerequisites, follow
+[`docs/milestone-9-setup.md`](docs/milestone-9-setup.md). The current application is local-only; see
+[`SECURITY.md`](SECURITY.md) before installing an App.
 
 The demo is watching a job run. Create one from **New job** with a public Node repository and you
 land on its detail page. With Docker and `RIVET_AGENT=pi` configured, the worker creates a sandbox,
