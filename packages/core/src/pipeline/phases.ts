@@ -1,6 +1,7 @@
 import type { JobStatus } from "@rivet/contracts";
 
 import type { CodingAgent } from "../agent/coding-agent";
+import type { GitHubPipelineOptions } from "../github/host-git";
 import type { SandboxProvider } from "../sandbox/sandbox";
 import { baselinePhase } from "./baseline-phase";
 import { finalizingPhase } from "./finalizing-phase";
@@ -137,6 +138,17 @@ export interface PipelineOptions {
   diffMaxBytes: number;
   /** Passed to every sandbox. Empty at Milestone 2, and that is the point. */
   env?: Record<string, string>;
+  /**
+   * Host GitHub operations used when GitHub publication is enabled and a job
+   * carries an installation binding.
+   *
+   * The client and the host seed operation are supplied together so the enabled
+   * path cannot accidentally fall back to an unauthenticated clone. The token
+   * minted by the client is consumed by `seedClone` on the worker host and
+   * never enters `SandboxSpec.env`. When GitHub is deliberately off, the
+   * public-repository clone path remains available for local and CI runs.
+   */
+  github?: GitHubPipelineOptions;
   /**
    * The coding agent, if this worker has one.
    *

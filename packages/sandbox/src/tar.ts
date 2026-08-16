@@ -9,12 +9,12 @@
  * thing here to get subtly wrong, and a pure function is one that can be tested
  * exhaustively without a container.
  *
- * The scope is deliberately tiny: **one regular file**, written or read. That is
- * what makes hand-rolling defensible. Rivet never packs a tree, so it never
- * needs long-name extensions on the write side; it reads only what Docker
- * produced for a single path, so on the read side it needs to recognise the
- * extended-header entries GNU and PAX may prepend and skip past them, which is
- * a loop rather than an implementation of either extension.
+ * The write side remains deliberately tiny: **one regular file**. That is what
+ * makes hand-rolling defensible for `putFile`. Archive reads have two callers:
+ * `getFile` reads the first file it needs, while the scripted fake needs the
+ * complete tree uploaded by `putArchive`. Both readers recognise the extended-
+ * header entries GNU and PAX may prepend and skip or apply them, which is a
+ * loop rather than an implementation of either extension.
  *
  * ```text
  * offset  size  field
@@ -130,6 +130,83 @@ export interface TarFileContent {
   size: number;
   content: Buffer;
   truncated: boolean;
+}
+
+/** One entry from a complete archive, used by the scripted sandbox fake. */
+export interface TarArchiveEntry {
+  name: string;
+  type: "file" | "directory" | "symlink";
+  content: Buffer;
+  linkName?: string;
+}
+
+/**
+ * Unpacks a complete tar archive in memory.
+ *
+ * Docker performs this operation in the daemon. The fake needs the same
+ * observable filesystem effect without a daemon, so it uses the same header
+ * validation and understands the metadata entries GNU tar and PAX use for long
+ * names. It intentionally does not preserve ownership: the fake has no kernel
+ * filesystem, and ownership is an adapter concern.
+ */
+export function unpackArchive(input: Uint8Array): TarArchiveEntry[] {
+  const archive = Buffer.from(input);
+  const entries: TarArchiveEntry[] = [];
+  let offset = 0;
+  let pendingName: string | undefined;
+  let pendingLinkName: string | undefined;
+  let pax: { path?: string; linkpath?: string } = {};
+
+  while (offset + TAR_BLOCK_BYTES <= archive.byteLength) {
+    const header = archive.subarray(offset, offset + TAR_BLOCK_BYTES);
+    offset += TAR_BLOCK_BYTES;
+    if (isZeroBlock(header)) break;
+
+    const parsed = parseHeader(header);
+    const end = offset + parsed.size;
+    if (end > archive.byteLength) {
+      throw new TarFormatError("A tar entry extends beyond the end of the archive.");
+    }
+    const content = archive.subarray(offset, end);
+    offset = end + paddingFor(parsed.size);
+    if (offset > archive.byteLength) {
+      throw new TarFormatError("A tar entry is missing its block padding.");
+    }
+
+    if (parsed.type === "L") {
+      pendingName = nulTerminated(content);
+      continue;
+    }
+    if (parsed.type === "K") {
+      pendingLinkName = nulTerminated(content);
+      continue;
+    }
+    if (parsed.type === "x" || parsed.type === "g") {
+      pax = { ...pax, ...parsePax(content) };
+      continue;
+    }
+
+    const name = pax.path ?? pendingName ?? parsed.name;
+    const linkName = pax.linkpath ?? pendingLinkName ?? parsed.linkName;
+    pendingName = undefined;
+    pendingLinkName = undefined;
+    pax = {};
+
+    if (parsed.type === DIRECTORY) {
+      entries.push({ name, type: "directory", content: Buffer.alloc(0) });
+    } else if (parsed.type === REGULAR_FILE || parsed.type === ALTERNATE_REGULAR_FILE) {
+      entries.push({ name, type: "file", content: Buffer.from(content) });
+    } else if (parsed.type === "2") {
+      entries.push({
+        name,
+        type: "symlink",
+        content: Buffer.alloc(0),
+        ...(linkName === undefined ? {} : { linkName }),
+      });
+    }
+  }
+
+  return entries;
 }
 
 /**
@@ -254,7 +331,12 @@ export class TarFileReader {
   }
 }
 
-function parseHeader(header: Buffer): { name: string; size: number; type: string } {
+function parseHeader(header: Buffer): {
+  name: string;
+  size: number;
+  type: string;
+  linkName: string;
+} {
   const stated = readOctal(header, 148, 8);
   const blanked = Buffer.from(header);
   blanked.fill(0x20, 148, 156);
@@ -270,7 +352,38 @@ function parseHeader(header: Buffer): { name: string; size: number; type: string
     name: prefix ? `${prefix}/${name}` : name,
     size: readOctal(header, 124, 12),
     type: String.fromCharCode(header[156] ?? 0),
+    linkName: readString(header, 157, 100),
   };
+}
+
+function nulTerminated(value: Buffer): string {
+  const end = value.indexOf(0);
+  return value.subarray(0, end === -1 ? value.byteLength : end).toString("utf8");
+}
+
+function parsePax(content: Buffer): { path?: string; linkpath?: string } {
+  const values: { path?: string; linkpath?: string } = {};
+  let offset = 0;
+  while (offset < content.byteLength) {
+    const lineEnd = content.indexOf(0x0a, offset);
+    if (lineEnd === -1) throw new TarFormatError("A PAX header has no terminating newline.");
+    const line = content.subarray(offset, lineEnd + 1).toString("utf8");
+    const separator = line.indexOf(" ");
+    const length = Number.parseInt(line.slice(0, separator), 10);
+    if (!Number.isSafeInteger(length) || length <= 0 || offset + length > content.byteLength) {
+      throw new TarFormatError("A PAX header has an invalid record length.");
+    }
+    const record = content.subarray(offset, offset + length).toString("utf8");
+    const equals = record.indexOf("=");
+    if (equals > 0) {
+      const key = record.slice(record.indexOf(" ") + 1, equals);
+      const value = record.slice(equals + 1).replace(/\n$/, "");
+      if (key === "path") values.path = value;
+      if (key === "linkpath") values.linkpath = value;
+    }
+    offset += length;
+  }
+  return values;
 }
 
 function paddingFor(size: number): number {

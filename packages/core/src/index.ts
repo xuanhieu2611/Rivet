@@ -31,6 +31,7 @@ export * from "./events/validation-log";
 export * from "./github/effect-store";
 export * from "./github/errors";
 export type * from "./github/github";
+export type * from "./github/host-git";
 export * from "./jobs/agent-usage";
 export * from "./jobs/cancel";
 export * from "./jobs/claims";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { packFile, TAR_BLOCK_BYTES, TarFileReader, TarFormatError } from "./tar";
+import { packFile, TAR_BLOCK_BYTES, TarFileReader, TarFormatError, unpackArchive } from "./tar";
 
 /**
  * The tar codec, tested the way `stream.test.ts` tests the frame parser: pure
@@ -73,6 +73,20 @@ describe("packFile", () => {
     expect(() => packFile("src/sum.ts", Buffer.alloc(0))).toThrow(TarFormatError);
     expect(() => packFile("", Buffer.alloc(0))).toThrow(TarFormatError);
     expect(() => packFile("a".repeat(101), Buffer.alloc(0))).toThrow(TarFormatError);
+  });
+});
+
+describe("unpackArchive", () => {
+  it("preserves binary bytes and PAX long names", () => {
+    const content = Buffer.from([0, 1, 2, 255, 3]);
+    const pax = Buffer.from("27 path=repo/deep/name.bin\n", "utf8");
+    const archive = Buffer.concat([entry("PaxHeaders/0", pax, "x"), packFile("name.bin", content)]);
+
+    expect(unpackArchive(archive)).toContainEqual({
+      name: "repo/deep/name.bin",
+      type: "file",
+      content,
+    });
   });
 });
 

@@ -10,8 +10,8 @@
  * adapter for the real system, and a scripted fake for tests.
  *
  * The port is deliberately smaller than Docker. It knows about creating an
- * environment, running an argument vector inside it, moving one file in or out
- * of it, and destroying it. It does not know about image layers, networks,
+ * environment, running an argument vector inside it, moving files or archives
+ * in or out of it, and destroying it. It does not know about image layers, networks,
  * volumes or execs, because none of those are things the domain has an opinion
  * about.
  */
@@ -178,6 +178,17 @@ export interface Sandbox {
    * time.
    */
   putFile(path: string, content: string, signal: AbortSignal): Promise<void>;
+
+  /**
+   * Extracts a complete tar archive into a directory in the environment.
+   *
+   * Archives are the binary-safe counterpart to `putFile`. The caller owns the
+   * archive bytes and the adapter extracts them at `path`; the archive itself
+   * decides which files appear beneath that directory. This is used to move a
+   * host-authenticated repository into a sandbox without placing a GitHub token
+   * in the container.
+   */
+  putArchive(path: string, archive: Uint8Array, signal: AbortSignal): Promise<void>;
 
   /**
    * Tears the environment down. Idempotent, and **never throws**.

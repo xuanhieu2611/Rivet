@@ -1,6 +1,7 @@
 import { SandboxFileError, type ExecRequest, type SandboxSpec } from "@rivet/core";
 import { describe, expect, it } from "vitest";
 
+import { packFile } from "./tar";
 import { FakeSandboxProvider } from "./fake-sandbox";
 
 const SPEC: SandboxSpec = {
@@ -196,6 +197,27 @@ describe("the fake's filesystem", () => {
       content: "written\n",
       truncated: false,
     });
+  });
+
+  it("extracts a binary archive beneath the requested directory", async () => {
+    const sandbox = await sandboxWith({});
+    const archive = packFile("repo.bin", Buffer.from([0, 1, 2, 255, 3]));
+
+    await sandbox.putArchive("/repo", archive, signal);
+
+    expect(sandbox.archives).toEqual([{ path: "/repo", archive }]);
+    expect(sandbox.fileBytes.get("/repo/repo.bin")).toEqual(Buffer.from([0, 1, 2, 255, 3]));
+  });
+
+  it("does not upload an archive after cancellation", async () => {
+    const sandbox = await sandboxWith({});
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      sandbox.putArchive("/repo", packFile("a.txt", Buffer.from("x")), controller.signal),
+    ).rejects.toThrow();
+    expect(sandbox.archives).toEqual([]);
   });
 
   it("overwrites rather than appending, which is what write means", async () => {

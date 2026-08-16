@@ -1,5 +1,7 @@
 import type { JobCheckpoint } from "../checkpoints/checkpoint-store";
 import { sha256CheckpointPatch } from "../checkpoints/checkpoint-store";
+import { GitHubNotInstalledError, GitHubPermissionDeniedError } from "../github/errors";
+import type { GitHubPipelineOptions, SeedCloneResult } from "../github/host-git";
 import {
   CheckpointRestoreFailedError,
   describeError as describeJobError,
@@ -57,15 +59,27 @@ export function provisioningPhase(
     // a terminal failure, and discovering that after paying for a container and
     // a clone tells nobody anything the row did not already say.
     const checkpoint = await readCheckpoint(ctx);
+    const seedTarget = checkpoint?.baseCommitSha ?? ctx.job.baseCommitSha ?? undefined;
+    const seeded = await seedRepository(ctx, options, {
+      // The checkpoint's commit wins over the job row's: they agree today, and
+      // the one the patch was cut against is the one that has to be checked out.
+      ...(seedTarget === undefined ? {} : { target: seedTarget }),
+    });
 
     await createSandbox(ctx, options);
-    await cloneRepository(ctx, options, repoDir);
+    if (seeded) {
+      await uploadSeed(ctx, options, seeded);
+    } else {
+      // The unauthenticated public-repository path is deliberately unchanged.
+      await cloneRepository(ctx, options, repoDir);
+    }
     const commitSha = await resolveBaseCommit(ctx, options, {
       repoDir,
       // The checkpoint's commit wins over the job row's: they agree today, and
       // the one the patch was cut against is the one that has to be checked out.
       target: checkpoint?.baseCommitSha ?? ctx.job.baseCommitSha ?? null,
       recovering: checkpoint !== null,
+      ...(seeded === null ? {} : { seededCommitSha: seeded.commitSha }),
     });
 
     if (checkpoint) {
@@ -79,6 +93,114 @@ export function provisioningPhase(
     // Nothing to ask the runner for: the queue carries on. See `PhaseDirective`.
     return undefined;
   };
+}
+
+/**
+ * Seeds an installation-bound repository on the worker host.
+ *
+ * The host clone is deliberately complete before a container exists. A private
+ * repository therefore fails as a GitHub/host operation rather than creating a
+ * container that can never be populated, and the short-lived read token never
+ * crosses the sandbox boundary.
+ */
+async function seedRepository(
+  ctx: PhaseContext,
+  options: PipelineOptions,
+  input: { target?: string },
+): Promise<SeedCloneResult | null> {
+  const binding = githubBinding(ctx);
+  if (!binding) return null;
+
+  const github = options.github;
+  if (!github) {
+    // `RIVET_GITHUB=off` deliberately leaves no provider in the pipeline. A
+    // bound public job may still use the legacy clone path, while finalizing
+    // records that publication was skipped. Production refuses that worker
+    // mode, and a private repository still fails naturally at clone time.
+    return null;
+  }
+
+  const repository = await findRepository(github, binding);
+  await ctx.event({
+    type: "github.repository_bound",
+    message:
+      `Bound GitHub installation ${binding.installationId} to ` +
+      `${binding.repo.owner}/${binding.repo.name}.`,
+    data: {
+      installationId: binding.installationId,
+      owner: binding.repo.owner,
+      repo: binding.repo.name,
+      private: repository.private,
+      ...(ctx.job.issueNumber === null || ctx.job.issueNumber === undefined
+        ? {}
+        : { issueNumber: ctx.job.issueNumber }),
+    },
+  });
+
+  const token = await github.client.mintInstallationToken(
+    binding.installationId,
+    binding.repo,
+    "read",
+  );
+  return github.seedClone({
+    remoteUrl: ctx.job.repoUrl,
+    baseBranch: ctx.job.baseBranch,
+    ...(input.target === undefined ? {} : { baseCommitSha: input.target }),
+    token,
+    timeoutMs: github.cloneTimeoutMs,
+    maxArchiveBytes: github.seedMaxBytes,
+    signal: ctx.signal,
+  });
+}
+
+/** Finds the immutable repository metadata needed for the binding audit event. */
+async function findRepository(
+  github: GitHubPipelineOptions,
+  binding: GitHubBinding,
+): Promise<{ private: boolean }> {
+  const repositories = await github.client.listRepositories(binding.installationId);
+  const repository = repositories.find(
+    (candidate) =>
+      candidate.owner.toLowerCase() === binding.repo.owner.toLowerCase() &&
+      candidate.name.toLowerCase() === binding.repo.name.toLowerCase(),
+  );
+  if (!repository) {
+    throw new GitHubPermissionDeniedError(
+      `GitHub installation ${binding.installationId} cannot access ` +
+        `${binding.repo.owner}/${binding.repo.name}.`,
+    );
+  }
+  return repository;
+}
+
+interface GitHubBinding {
+  installationId: number;
+  repo: { owner: string; name: string };
+}
+
+function githubBinding(ctx: PhaseContext): GitHubBinding | null {
+  const installationId = ctx.job.githubInstallationId;
+  if (installationId === null || installationId === undefined) return null;
+
+  if (!ctx.job.repoOwner || !ctx.job.repoName) {
+    throw new GitHubNotInstalledError(
+      `Job ${ctx.job.id} has GitHub installation ${installationId} without a repository binding.`,
+    );
+  }
+
+  return {
+    installationId,
+    repo: { owner: ctx.job.repoOwner, name: ctx.job.repoName },
+  };
+}
+
+/** Uploads the complete archive into the existing sandbox without a command row. */
+async function uploadSeed(
+  ctx: PhaseContext,
+  options: PipelineOptions,
+  seeded: SeedCloneResult,
+): Promise<void> {
+  await ctx.sandboxes.require().putArchive(options.workdir, seeded.archive, ctx.signal);
 }
 
 /**
@@ -158,9 +280,14 @@ async function cloneRepository(
 async function resolveBaseCommit(
   ctx: PhaseContext,
   options: PipelineOptions,
-  input: { repoDir: string; target: string | null; recovering: boolean },
+  input: {
+    repoDir: string;
+    target: string | null;
+    recovering: boolean;
+    seededCommitSha?: string;
+  },
 ): Promise<string> {
-  const { repoDir, target, recovering } = input;
+  const { repoDir, target, recovering, seededCommitSha } = input;
   const fail = (message: string, details?: { argv?: readonly string[]; stderr?: string }): Error =>
     recovering
       ? new CheckpointRestoreFailedError(message, details ?? {})
@@ -175,7 +302,23 @@ async function resolveBaseCommit(
 
   let commitSha = head.stdout.trim();
 
-  if (target && target !== commitSha) {
+  if (seededCommitSha !== undefined) {
+    // The host seed already resolved and checked out the exact object. Fetching
+    // from the archive's removed origin would both be impossible for a private
+    // repository and reintroduce the credential boundary this path exists to
+    // preserve.
+    if (target && target !== seededCommitSha) {
+      throw fail(
+        `The host seed resolved to ${seededCommitSha}, not the requested base commit ${target}.`,
+      );
+    }
+    if (commitSha !== seededCommitSha) {
+      throw fail(
+        `The seeded archive resolved to ${commitSha}, not the host commit ${seededCommitSha}.`,
+      );
+    }
+    commitSha = seededCommitSha;
+  } else if (target && target !== commitSha) {
     const fetch = await run(ctx, {
       argv: ["git", "fetch", "--depth", "1", "origin", target],
       cwd: repoDir,
@@ -227,7 +370,9 @@ async function resolveBaseCommit(
   await ctx.recordProvisioning({ baseCommitSha: commitSha });
   await ctx.event({
     type: "repo.cloned",
-    message: `Cloned ${ctx.job.repoUrl} at ${ctx.job.baseBranch} (${commitSha.slice(0, 7)}).`,
+    message:
+      `${seededCommitSha === undefined ? "Cloned" : "Seeded"} ` +
+      `${ctx.job.repoUrl} at ${ctx.job.baseBranch} (${commitSha.slice(0, 7)}).`,
     data: { commitSha },
   });
 

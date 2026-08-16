@@ -41,6 +41,7 @@ function harness(options: HarnessOptions = {}) {
       return options.read?.() ?? Promise.resolve({ content: REPORT, truncated: false });
     },
     putFile: () => Promise.reject(new Error("runCheck never writes files")),
+    putArchive: () => Promise.reject(new Error("runCheck never writes archives")),
     destroy: () => Promise.resolve(),
   };
   holder.set(sandbox);

@@ -222,11 +222,26 @@ export async function seedClone(input: SeedCloneInput): Promise<SeedCloneResult>
 
         let archive: Buffer;
         try {
-          const tar = await runHostCommand(["tar", "-C", root, "-cf", "-", "repo"], {
-            ...command,
-            cwd: root,
-            maxStdoutBytes: maxArchiveBytes,
-          });
+          const tar = await runHostCommand(
+            [
+              "tar",
+              "--uid",
+              "1000",
+              "--gid",
+              "1000",
+              "--numeric-owner",
+              "-C",
+              root,
+              "-cf",
+              "-",
+              "repo",
+            ],
+            {
+              ...command,
+              cwd: root,
+              maxStdoutBytes: maxArchiveBytes,
+            },
+          );
           archive = tar.stdout;
         } catch (error) {
           if (error instanceof HostGitCommandError && error.reason === "output_limit") {

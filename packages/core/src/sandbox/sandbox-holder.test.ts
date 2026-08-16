@@ -10,6 +10,7 @@ function fake(id = "container-1", destroy: () => Promise<void> = () => Promise.r
     exec: () => Promise.reject(new Error("not used")),
     getFile: () => Promise.reject(new Error("not used")),
     putFile: () => Promise.reject(new Error("not used")),
+    putArchive: () => Promise.reject(new Error("not used")),
     destroy: () => {
       destroyCount += 1;
       return destroy();

@@ -108,6 +108,7 @@ function harness(
       return options.read?.(path) ?? Promise.reject(new Error("unexpected reporter read"));
     },
     putFile: () => Promise.reject(new Error("the validation phase writes no files")),
+    putArchive: () => Promise.reject(new Error("the validation phase writes no archives")),
     destroy: () => Promise.resolve(),
   };
   holder.set(sandbox);

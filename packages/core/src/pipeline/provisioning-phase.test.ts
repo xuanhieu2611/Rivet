@@ -1,4 +1,4 @@
-import type { JobDetail } from "@rivet/contracts";
+import type { JobDetail, Repository } from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
 import { sha256CheckpointPatch, type JobCheckpoint } from "../checkpoints/checkpoint-store";
@@ -17,6 +17,8 @@ import {
   UnsupportedProjectError,
 } from "../sandbox/errors";
 import type { ExecResult, Sandbox, SandboxProvider, SandboxSpec } from "../sandbox/sandbox";
+import type { GitHubClient } from "../github/github";
+import type { GitHubPipelineOptions, SeedCloneRequest } from "../github/host-git";
 import { SandboxHolder } from "../sandbox/sandbox-holder";
 import type {
   PhaseContext,
@@ -71,6 +73,8 @@ type Responder = (argv: string[]) => Partial<ExecResult> | undefined;
 interface HarnessOptions {
   respond?: Responder;
   createFails?: Error;
+  job?: Partial<JobDetail>;
+  github?: GitHubPipelineOptions;
   /** The durable checkpoint this claim finds, if any. */
   checkpoint?: JobCheckpoint;
   /** What reading the newest checkpoint row throws, for the corrupt-row case. */
@@ -90,6 +94,7 @@ function harness(options: HarnessOptions = {}) {
   const specs: SandboxSpec[] = [];
   const writes: { path: string; content: string }[] = [];
   const housekeeping: string[][] = [];
+  const archives: { path: string; archive: Uint8Array }[] = [];
 
   const sandbox: Sandbox = {
     id: "c0ffee0c0ffee0c0ffee",
@@ -114,6 +119,10 @@ function harness(options: HarnessOptions = {}) {
       writes.push({ path, content });
       return Promise.resolve();
     },
+    putArchive: (path, archive) => {
+      archives.push({ path, archive });
+      return Promise.resolve();
+    },
     destroy: () => Promise.resolve(),
   };
 
@@ -126,10 +135,18 @@ function harness(options: HarnessOptions = {}) {
     reap: () => Promise.resolve([]),
   };
 
-  const pipelineOptions: PipelineOptions = { ...OPTIONS_BASE, sandbox: provider };
+  const pipelineOptions: PipelineOptions = {
+    ...OPTIONS_BASE,
+    sandbox: provider,
+    ...(options.github === undefined ? {} : { github: options.github }),
+  };
 
   const ctx: PhaseContext = {
-    job: options.baseCommitSha ? { ...JOB, baseCommitSha: options.baseCommitSha } : JOB,
+    job: {
+      ...JOB,
+      ...(options.baseCommitSha ? { baseCommitSha: options.baseCommitSha } : {}),
+      ...options.job,
+    },
     phase: {
       status: "provisioning",
       label: "Provision sandbox",
@@ -206,6 +223,7 @@ function harness(options: HarnessOptions = {}) {
     specs,
     sandbox,
     writes,
+    archives,
     housekeeping,
     typesOf: () => events.map((event) => event.type),
     find: (type: string) => events.find((event) => event.type === type),
@@ -215,6 +233,41 @@ function harness(options: HarnessOptions = {}) {
 }
 
 const STATS = { filesChanged: 2, insertions: 12, deletions: 3 };
+const SEEDED_COMMIT = "2b3c4d5e6f708192a3b4c5d6e7f809112233445566";
+const SEEDED_TREE = "3c4d5e6f708192a3b4c5d6e7f80911223344556677";
+const BOUND_REPOSITORY: Repository = {
+  id: 42,
+  owner: "acme",
+  name: "widgets",
+  private: true,
+  defaultBranch: "main",
+};
+
+function githubForSeed(
+  seed: (input: SeedCloneRequest) => Promise<{
+    archive: Uint8Array;
+    commitSha: string;
+    treeSha: string;
+  }>,
+): GitHubPipelineOptions {
+  const client: GitHubClient = {
+    listInstallations: () => Promise.resolve([]),
+    listRepositories: () => Promise.resolve([BOUND_REPOSITORY]),
+    listIssues: () => Promise.resolve([]),
+    mintInstallationToken: () =>
+      Promise.resolve({
+        value: "sentinel-token",
+        expiresAt: new Date("2026-08-15T00:00:00.000Z"),
+        redact: () => "[REDACTED]",
+      }),
+    getRef: () => Promise.resolve(null),
+    findPullRequest: () => Promise.resolve(null),
+    createPullRequest: () => Promise.reject(new Error("not used")),
+    updatePullRequest: () => Promise.reject(new Error("not used")),
+  };
+
+  return { client, seedClone: seed, seedMaxBytes: 8 * 1_024 * 1_024, cloneTimeoutMs: 30_000 };
+}
 
 /** A patch whose bytes, size and checksum agree, the way a stored row's do. */
 function checkpointFixture(overrides: Partial<JobCheckpoint> = {}): JobCheckpoint {
@@ -293,6 +346,122 @@ describe("provisioningPhase", () => {
     ]);
     expect(test.executed[0]?.cwd).toBe("/home/node/workspace");
     expect(test.executed[0]?.timeoutMs).toBe(OPTIONS_BASE.cloneTimeoutMs);
+  });
+
+  it("seeds an installation-bound repository before creating a container", async () => {
+    const seedInputs: SeedCloneRequest[] = [];
+    const archive = Buffer.from([0, 1, 2, 255, 3]);
+    const test = harness({
+      job: {
+        githubInstallationId: 42,
+        repoOwner: "acme",
+        repoName: "widgets",
+        issueNumber: 7,
+      },
+      github: githubForSeed((input) => {
+        seedInputs.push(input);
+        return Promise.resolve({ archive, commitSha: SEEDED_COMMIT, treeSha: SEEDED_TREE });
+      }),
+      respond: (argv) =>
+        argv[1] === "rev-parse" ? { stdout: `${SEEDED_COMMIT}\n` } : defaultResponse(argv),
+    });
+
+    await test.run();
+
+    expect(seedInputs).toHaveLength(1);
+    expect(seedInputs[0]).toMatchObject({
+      remoteUrl: JOB.repoUrl,
+      baseBranch: JOB.baseBranch,
+      timeoutMs: 30_000,
+      maxArchiveBytes: 8 * 1_024 * 1_024,
+    });
+    expect(seedInputs[0]?.token.value).toBe("sentinel-token");
+    expect(test.archives).toEqual([{ path: OPTIONS_BASE.workdir, archive }]);
+    expect(test.ran((argv) => argv[1] === "clone")).toBeUndefined();
+    expect(test.ran((argv) => argv[1] === "fetch")).toBeUndefined();
+    expect(test.patches[1]).toEqual({ baseCommitSha: SEEDED_COMMIT });
+    expect(test.find("github.repository_bound")?.data).toEqual({
+      installationId: 42,
+      owner: "acme",
+      repo: "widgets",
+      private: true,
+      issueNumber: 7,
+    });
+    expect(test.typesOf()).toEqual([
+      "github.repository_bound",
+      "sandbox.created",
+      "repo.cloned",
+      "deps.installed",
+    ]);
+    expect(test.specs[0]?.env).toEqual({});
+  });
+
+  it("keeps the public clone path when no installation is bound", async () => {
+    const seedInputs: SeedCloneRequest[] = [];
+    const test = harness({
+      github: githubForSeed((input) => {
+        seedInputs.push(input);
+        return Promise.reject(new Error("the seed path must not run"));
+      }),
+    });
+
+    await test.run();
+
+    expect(seedInputs).toEqual([]);
+    expect(test.archives).toEqual([]);
+    expect(test.executed[0]?.argv[1]).toBe("clone");
+  });
+
+  it("keeps a bound public job on the clone path when GitHub is off", async () => {
+    const test = harness({
+      job: { githubInstallationId: 42, repoOwner: "acme", repoName: "widgets" },
+    });
+
+    await test.run();
+
+    expect(test.archives).toEqual([]);
+    expect(test.executed[0]?.argv[1]).toBe("clone");
+    expect(test.typesOf()).not.toContain("github.repository_bound");
+  });
+
+  it("pins a seeded recovery to the host commit without fetching inside the container", async () => {
+    const seedInputs: SeedCloneRequest[] = [];
+    const test = harness({
+      baseCommitSha: ORIGINAL_COMMIT,
+      job: {
+        githubInstallationId: 42,
+        repoOwner: "acme",
+        repoName: "widgets",
+      },
+      github: githubForSeed((input) => {
+        seedInputs.push(input);
+        return Promise.resolve({
+          archive: Buffer.from("seed"),
+          commitSha: ORIGINAL_COMMIT,
+          treeSha: SEEDED_TREE,
+        });
+      }),
+      respond: (argv) =>
+        argv[1] === "rev-parse" ? { stdout: `${ORIGINAL_COMMIT}\n` } : defaultResponse(argv),
+    });
+
+    await test.run();
+
+    expect(seedInputs[0]?.baseCommitSha).toBe(ORIGINAL_COMMIT);
+    expect(test.ran((argv) => argv[1] === "fetch")).toBeUndefined();
+    expect(test.ran((argv) => argv[1] === "checkout")).toBeUndefined();
+  });
+
+  it("fails a bound seed before creating a sandbox", async () => {
+    const failure = new Error("host clone failed");
+    const test = harness({
+      job: { githubInstallationId: 42, repoOwner: "acme", repoName: "widgets" },
+      github: githubForSeed(() => Promise.reject(failure)),
+    });
+
+    await expect(test.run()).rejects.toBe(failure);
+    expect(test.specs).toEqual([]);
+    expect(test.holder.current).toBeUndefined();
   });
 
   it("passes the limits and an empty environment to the sandbox", async () => {

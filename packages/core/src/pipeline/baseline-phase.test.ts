@@ -84,6 +84,7 @@ function harness(options: HarnessOptions = {}) {
       return options.read?.() ?? Promise.resolve({ content: TEST_REPORT, truncated: false });
     },
     putFile: () => Promise.reject(new Error("the baseline phase writes no files")),
+    putArchive: () => Promise.reject(new Error("the baseline phase writes no archives")),
     destroy: () => Promise.resolve(),
   };
   holder.set(sandbox);

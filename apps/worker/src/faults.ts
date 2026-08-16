@@ -269,6 +269,10 @@ class FaultSandbox implements Sandbox {
     return this.inner.putFile(...args);
   }
 
+  putArchive(...args: Parameters<Sandbox["putArchive"]>): ReturnType<Sandbox["putArchive"]> {
+    return this.inner.putArchive(...args);
+  }
+
   destroy(): Promise<void> {
     return this.inner.destroy();
   }

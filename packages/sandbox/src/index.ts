@@ -31,3 +31,11 @@ export {
   type ScriptedCommand,
 } from "./fake-sandbox";
 export { CappedOutput, DockerStreamDemuxer, encodeFrame } from "./stream";
+export {
+  packFile,
+  TAR_BLOCK_BYTES,
+  TarFileReader,
+  TarFormatError,
+  type TarArchiveEntry,
+  unpackArchive,
+} from "./tar";

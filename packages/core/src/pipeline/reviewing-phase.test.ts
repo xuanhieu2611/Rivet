@@ -230,6 +230,7 @@ function harness({
       return Promise.reject(new Error(`unexpected read: ${path}`));
     },
     putFile: () => Promise.reject(new Error("reviewer cannot write")),
+    putArchive: () => Promise.reject(new Error("reviewer cannot seed")),
     destroy: () => Promise.resolve(),
   };
   holder.set(sandbox);

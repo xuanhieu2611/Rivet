@@ -185,6 +185,7 @@ function harness(
       writes.push({ path, content });
       return Promise.resolve();
     },
+    putArchive: () => Promise.resolve(),
     destroy: () => Promise.resolve(),
   };
   holder.set(sandbox);

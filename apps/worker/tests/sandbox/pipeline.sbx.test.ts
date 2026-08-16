@@ -156,6 +156,7 @@ class ReviewDiffProbe implements SandboxProvider {
       },
       getFile: (path, options, signal) => sandbox.getFile(path, options, signal),
       putFile: (path, content, signal) => sandbox.putFile(path, content, signal),
+      putArchive: (path, archive, signal) => sandbox.putArchive(path, archive, signal),
       destroy: async () => {
         if (destroyed) return;
         destroyed = true;

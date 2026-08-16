@@ -137,6 +137,7 @@ function harness(planner: ScriptedPlanner) {
       return Promise.reject(new Error(`unexpected read: ${path}`));
     },
     putFile: () => Promise.reject(new Error("planner cannot write")),
+    putArchive: () => Promise.reject(new Error("planner cannot seed")),
     destroy: () => Promise.resolve(),
   };
   holder.set(sandbox);

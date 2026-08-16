@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+
 import {
   type ExecRequest,
   type ExecResult,
@@ -11,6 +13,7 @@ import {
 
 import { namesAFile } from "./paths";
 import { CappedOutput } from "./stream";
+import { unpackArchive } from "./tar";
 
 /**
  * A `SandboxProvider` that is a list of canned answers.
@@ -112,10 +115,14 @@ export class FakeSandboxProvider implements SandboxProvider {
 
 export class FakeSandbox implements Sandbox {
   readonly calls: ExecRequest[] = [];
+  /** Archives uploaded through the binary-safe sandbox boundary. */
+  readonly archives: { path: string; archive: Uint8Array }[] = [];
   destroyed = false;
 
   /** How many times `destroy()` was called, to prove it is idempotent. */
   destroyCount = 0;
+
+  private readonly files = new Map<string, Buffer>();
 
   constructor(
     readonly id: string,
@@ -132,8 +139,12 @@ export class FakeSandbox implements Sandbox {
      * other part of this class makes. The `*.sbx.test.ts` suite is the evidence
      * about Docker; nothing asserted against this map is.
      */
-    private readonly files: Record<string, string> = {},
-  ) {}
+    files: Record<string, string> = {},
+  ) {
+    for (const [path, content] of Object.entries(files)) {
+      this.files.set(path, Buffer.from(content, "utf8"));
+    }
+  }
 
   get jobId(): string {
     return this.spec.jobId;
@@ -141,6 +152,13 @@ export class FakeSandbox implements Sandbox {
 
   /** What the sandbox holds now, for asserting on what a phase wrote. */
   get filesystem(): Readonly<Record<string, string>> {
+    return Object.fromEntries(
+      [...this.files].map(([path, content]) => [path, content.toString("utf8")]),
+    );
+  }
+
+  /** The exact bytes held by the fake, including binary archive contents. */
+  get fileBytes(): ReadonlyMap<string, Buffer> {
     return this.files;
   }
 
@@ -168,12 +186,12 @@ export class FakeSandbox implements Sandbox {
   getFile(path: string, options: FileReadOptions, signal: AbortSignal): Promise<FileRead> {
     if (signal.aborted) return Promise.reject(signal.reason as Error);
 
-    const content = this.files[path];
-    if (content === undefined) {
+    const bytes = this.files.get(path);
+    if (bytes === undefined) {
       // A path that is a prefix of a stored one is the closest this map gets to
       // having a directory, and reporting it as one keeps the tool layer's two
       // error branches both reachable without Docker.
-      const isDirectory = Object.keys(this.files).some((key) =>
+      const isDirectory = [...this.files.keys()].some((key) =>
         key.startsWith(path.endsWith("/") ? path : `${path}/`),
       );
       return Promise.reject(
@@ -184,12 +202,13 @@ export class FakeSandbox implements Sandbox {
     }
 
     // Cut on bytes rather than characters, because that is what the real
-    // adapter's cap counts and a test that disagrees about a multi-byte file
+    // adapter's cap counts and a test that disagreed about a multi-byte file
     // would be testing the fake.
-    const bytes = Buffer.from(content, "utf8");
     const truncated = bytes.byteLength > options.maxBytes;
     return Promise.resolve({
-      content: truncated ? bytes.subarray(0, options.maxBytes).toString("utf8") : content,
+      content: truncated
+        ? bytes.subarray(0, options.maxBytes).toString("utf8")
+        : bytes.toString("utf8"),
       truncated,
     });
   }
@@ -200,8 +219,24 @@ export class FakeSandbox implements Sandbox {
     if (!namesAFile(path)) {
       return Promise.reject(new SandboxFileError(`${path} does not name a file.`, "not_a_file"));
     }
-    this.files[path] = content;
+    this.files.set(path, Buffer.from(content, "utf8"));
     return Promise.resolve();
+  }
+
+  putArchive(path: string, archive: Uint8Array, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(signal.reason as Error);
+
+    return Promise.resolve().then(() => {
+      const copy = Buffer.from(archive);
+      this.archives.push({ path, archive: copy });
+
+      for (const entry of unpackArchive(copy)) {
+        signal.throwIfAborted();
+        if (entry.type !== "file") continue;
+        const entryPath = virtualArchivePath(path, entry.name);
+        this.files.set(entryPath, Buffer.from(entry.content));
+      }
+    });
   }
 
   destroy(): Promise<void> {
@@ -239,6 +274,13 @@ export class FakeSandbox implements Sandbox {
       request.signal.addEventListener("abort", onAbort, { once: true });
     });
   }
+}
+
+function virtualArchivePath(root: string, name: string): string {
+  if (name.startsWith("/") || name.split("/").includes("..")) {
+    throw new Error(`Archive entry escapes its destination: ${name}.`);
+  }
+  return posix.join(root, name);
 }
 
 function matches(matcher: ArgvMatcher, argv: string[]): boolean {

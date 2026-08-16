@@ -50,6 +50,7 @@ function sandboxFor(respond: (request: ExecRequest) => ExecResult | Promise<Exec
     },
     getFile: () => Promise.reject(new Error("not used")),
     putFile: () => Promise.reject(new Error("not used")),
+    putArchive: () => Promise.reject(new Error("not used")),
     destroy: () => Promise.resolve(),
   };
   return { sandbox, calls };

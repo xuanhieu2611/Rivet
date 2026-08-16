@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   claimJob,
@@ -9,7 +9,7 @@ import {
   type SandboxSpec,
 } from "@rivet/core";
 import { closeDb } from "@rivet/database";
-import { DockerSandboxProvider } from "@rivet/sandbox";
+import { DockerSandboxProvider, packFile } from "@rivet/sandbox";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_SANDBOX_IMAGE } from "../../src/config";
@@ -155,6 +155,26 @@ describe("Docker sandbox adapter", () => {
     );
 
     expect(read).toEqual({ content, truncated: false });
+  });
+
+  it("extracts a binary archive with container-owned files", async () => {
+    const sandbox = await create();
+    const content = Buffer.from([0, 1, 2, 255, 3]);
+    const path = "/home/node/workspace/binary.dat";
+
+    await sandbox.putArchive(
+      "/home/node/workspace",
+      packFile("binary.dat", content),
+      controller.signal,
+    );
+
+    const checksum = await exec(sandbox, ["sha256sum", path]);
+    const owner = await exec(sandbox, ["stat", "-c", "%u:%g", path]);
+
+    expect(checksum.stdout.trim().split(/\s+/)[0]).toBe(
+      createHash("sha256").update(content).digest("hex"),
+    );
+    expect(owner.stdout.trim()).toBe("1000:1000");
   });
 
   it("creates the parent directories and leaves them owned by the container user", async () => {

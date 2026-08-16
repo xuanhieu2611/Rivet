@@ -511,7 +511,7 @@ class DockerSandbox implements Sandbox {
 
     const archive = packFile(name, Buffer.from(content, "utf8"));
     try {
-      await this.container.putArchive(Readable.from(archive), { path: directory });
+      await this.container.putArchive(Readable.from([archive]), { path: directory });
     } catch (cause) {
       if (isNotFound(cause)) {
         throw new SandboxFileError(`${directory} does not exist in the sandbox.`, "not_found", {
@@ -519,6 +519,31 @@ class DockerSandbox implements Sandbox {
         });
       }
       throw asSandboxError(cause, `Could not write ${path} into the sandbox.`);
+    }
+  }
+
+  /**
+   * Extracts a host-produced repository archive into the sandbox.
+   *
+   * The archive is already complete and bounded by the host Git operation, so
+   * it crosses the Docker API as bytes rather than through an argv or a UTF-8
+   * string. The abort listener destroys the upload stream; a cancelled seed
+   * must not leave an in-flight Docker request holding the worker open.
+   */
+  async putArchive(path: string, archive: Uint8Array, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const stream = Readable.from([Buffer.from(archive)]);
+    const onAbort = () => stream.destroy(abortError(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      await this.container.putArchive(stream, { path });
+      signal.throwIfAborted();
+    } catch (cause) {
+      if (signal.aborted) throw abortError(signal);
+      throw asSandboxError(cause, `Could not extract an archive into ${path}.`);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
     }
   }
 
@@ -684,4 +709,11 @@ function isNotRunning(cause: unknown): boolean {
 
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function abortError(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason;
+  if (reason instanceof Error) return reason;
+  if (typeof reason === "string") return new Error(reason);
+  return new Error("Sandbox archive upload aborted.");
 }
