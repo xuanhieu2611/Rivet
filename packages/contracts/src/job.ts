@@ -158,6 +158,12 @@ export interface JobSummary {
 export interface JobDetail extends JobSummary {
   description: string;
   baseCommitSha: string | null;
+  /** GitHub App binding, when this job is allowed to publish externally. */
+  githubInstallationId: number | null;
+  repoOwner: string | null;
+  repoName: string | null;
+  issueNumber: number | null;
+  issueUrl: string | null;
   /** The environment recorded by provisioning, for reproducibility. */
   envFingerprint: Record<string, unknown> | null;
   priority: number;
@@ -189,6 +195,7 @@ export interface JobDetail extends JobSummary {
   completedAt: Date | null;
   finalBranch: string | null;
   pullRequestUrl: string | null;
+  pullRequestNumber: number | null;
   failureReason: string | null;
 
   /** The durable delivery generation carried by the queue message. */

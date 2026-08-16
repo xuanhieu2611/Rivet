@@ -71,6 +71,11 @@ export function toJobDetail(row: Job): JobDetail {
     ...toJobSummary(row),
     description: row.description,
     baseCommitSha: row.baseCommitSha,
+    githubInstallationId: row.githubInstallationId,
+    repoOwner: row.repoOwner,
+    repoName: row.repoName,
+    issueNumber: row.issueNumber,
+    issueUrl: row.issueUrl,
     envFingerprint: row.envFingerprint,
     priority: row.priority,
     maxDurationSeconds: row.maxDurationSeconds,
@@ -88,6 +93,7 @@ export function toJobDetail(row: Job): JobDetail {
     completedAt: row.completedAt,
     finalBranch: row.finalBranch,
     pullRequestUrl: row.pullRequestUrl,
+    pullRequestNumber: row.pullRequestNumber,
     failureReason: row.failureReason,
     dispatchGeneration: row.dispatchGeneration,
     attemptCount: row.attemptCount,
@@ -127,6 +133,13 @@ export async function createJob(input: CreateJob, database: Database = db): Prom
         description: input.description,
         repoUrl: input.repoUrl,
         baseBranch: input.baseBranch,
+        ...(input.githubInstallationId === undefined
+          ? {}
+          : { githubInstallationId: input.githubInstallationId }),
+        ...(input.repoOwner === undefined ? {} : { repoOwner: input.repoOwner }),
+        ...(input.repoName === undefined ? {} : { repoName: input.repoName }),
+        ...(input.issueNumber === undefined ? {} : { issueNumber: input.issueNumber }),
+        ...(input.issueUrl === undefined ? {} : { issueUrl: input.issueUrl }),
         reviewMode: input.reviewMode,
         maxReviewLoops: input.maxReviewLoops,
       })

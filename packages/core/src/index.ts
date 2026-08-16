@@ -28,6 +28,7 @@ export * from "./events/event-service";
 export * from "./events/session-log";
 export * from "./events/review-log";
 export * from "./events/validation-log";
+export * from "./github/effect-store";
 export * from "./jobs/agent-usage";
 export * from "./jobs/cancel";
 export * from "./jobs/claims";

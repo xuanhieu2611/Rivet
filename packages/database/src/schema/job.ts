@@ -59,6 +59,16 @@ export const jobs = pgTable(
     baseBranch: text("base_branch").notNull().default("main"),
     baseCommitSha: text("base_commit_sha"),
 
+    // --- GitHub binding (M9) ---------------------------------------------
+    /** GitHub's App installation id, when this job may publish externally. */
+    githubInstallationId: integer("github_installation_id"),
+    /** Repository identity used by GitHub API calls. */
+    repoOwner: text("repo_owner"),
+    repoName: text("repo_name"),
+    /** Optional issue that supplied the job's task. */
+    issueNumber: integer("issue_number"),
+    issueUrl: text("issue_url"),
+
     status: jobStatusEnum("status").notNull().default("queued"),
     priority: integer("priority").notNull().default(0),
 
@@ -119,6 +129,7 @@ export const jobs = pgTable(
 
     finalBranch: text("final_branch"),
     pullRequestUrl: text("pull_request_url"),
+    pullRequestNumber: integer("pull_request_number"),
     failureReason: text("failure_reason"),
 
     // --- worker lease (PRD §16) ------------------------------------------
