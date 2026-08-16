@@ -136,7 +136,7 @@ export class HostGitCommandError extends Error {
 }
 
 /** A seed archive exceeded its complete-byte bound and was refused. */
-export class SeedArchiveTooLargeError extends Error {
+export class SeedArchiveTooLargeError extends RepoUnavailableError {
   readonly size: number;
   readonly maxBytes: number;
 
@@ -145,6 +145,10 @@ export class SeedArchiveTooLargeError extends Error {
       `The seeded repository archive is larger than its ${maxBytes}-byte limit ` +
         `(at least ${size} bytes were produced).`,
     );
+    // `repo_unavailable` rather than a category of its own: from the job's side
+    // this is a repository Rivet cannot work with, which is exactly what that
+    // category already means. A stated category is the whole point of bounding
+    // the archive - the alternative is `unknown` on a limit we chose.
     this.name = "SeedArchiveTooLargeError";
     this.size = size;
     this.maxBytes = maxBytes;
@@ -230,6 +234,15 @@ export async function seedClone(input: SeedCloneInput): Promise<SeedCloneResult>
               "--gid",
               "1000",
               "--numeric-owner",
+              // Not decoration, and macOS is why. bsdtar records extended
+              // attributes, and on this platform every file carries
+              // `com.apple.provenance`; Docker's archive extraction then fails
+              // the whole upload with `lsetxattr ... operation not supported`,
+              // which surfaces as `sandbox_create_failed` on a repository that
+              // is perfectly fine. The seed needs contents, modes and
+              // ownership - never a host's extended attributes. GNU tar has
+              // accepted the flag since 1.27, so CI reads it the same way.
+              "--no-xattrs",
               "-C",
               root,
               "-cf",
@@ -239,6 +252,12 @@ export async function seedClone(input: SeedCloneInput): Promise<SeedCloneResult>
             {
               ...command,
               cwd: root,
+              // The other half of the macOS story: without this, bsdtar writes
+              // an AppleDouble `._name` sidecar next to every entry, and the
+              // container ends up with a repository whose `git status` is a
+              // page of untracked files Rivet invented. GNU tar ignores the
+              // variable, so this costs nothing on Linux.
+              env: { ...command.env, COPYFILE_DISABLE: "1" },
               maxStdoutBytes: maxArchiveBytes,
             },
           );

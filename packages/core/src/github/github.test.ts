@@ -113,7 +113,10 @@ describe("GitHub response classification", () => {
     });
 
     expect(error).toBeInstanceOf(ErrorType);
-    expect(classify(error)).toBe(category === "github_unavailable" ? "retryable" : "terminal");
+    // Every GitHub category is terminal, including the transient-looking one.
+    // The bounded retry lives in the adapter, so a response that reaches this
+    // classification has already been repeated as often as it is worth.
+    expect(classify(error)).toBe("terminal");
     expect(failureCategoryFor(error)).toBe(category);
     expect(error.cause).toEqual(new Error("provider response"));
   });

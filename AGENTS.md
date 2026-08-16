@@ -12,15 +12,30 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 8 is complete.** Jobs execute, survive their worker, deterministically
-validate what the coding session changed, and run an independent read-only review. Creating one
-enqueues it, a worker claims it under a Postgres lease, provisions a sandbox, records per-check
-baselines, plans, runs a Pi coding session, heartbeats while it runs, compares targeted tests plus
-the full test, typecheck and lint checks, reviews the result, and lands it in a terminal status.
-Retries, cancellation, timeouts, crash recovery, agent budgets, usage persistence, provider failure
-classification, named test-failure attribution and bounded review loops all work and are covered by
-the unit, integration, sandbox and streaming suites. Branch, commit and pull request belong to
-Milestone 9.
+**Current state: Milestone 9 is complete.** Jobs execute, survive their worker, deterministically
+validate what the coding session changed, run an independent read-only review, and **end in a pull
+request on GitHub**. Creating one enqueues it, a worker claims it under a Postgres lease, provisions
+a sandbox - seeded from an authenticated host clone when the job carries an installation binding -
+records per-check baselines, plans, runs a Pi coding session, heartbeats while it runs, compares
+targeted tests plus the full test, typecheck and lint checks, reviews the result, publishes the
+validated tree from the worker host, and lands it in a terminal status. Retries, cancellation,
+timeouts, crash recovery, agent budgets, usage persistence, provider failure classification, named
+test-failure attribution, bounded review loops and the external-effect receipt protocol all work and
+are covered by the unit, integration, sandbox and streaming suites. `pnpm demo:pr` is the
+milestone's demo: one real job against a throwaway repository, ending in a real pull request.
+
+M9's own acceptance runs are `apps/worker/tests/integration/publication.int.test.ts` (runs A-G,
+against `FakeGitHubClient`, the **real** host Git operations and a local bare repository standing in
+for GitHub) and `apps/worker/tests/sandbox/publication.sbx.test.ts` (run H, against Docker: the
+seeded container, a binary file that survives the round trip byte for byte, and the sentinel-token
+grep across the container environment, its `.git/config`, every command row, every event row and
+every host Git argv). `docs/plans/milestone-9-acceptance.md` is the contract they implement.
+
+**Every GitHub failure category is terminal, including `github_unavailable`.** The bounded,
+jittered, `Retry-After`-honouring retry lives in the adapter, one HTTP call away from the failure. A
+runner-level retry would re-run provisioning, a clone and a model session to repeat one request -
+safe, because the receipts make publication idempotent, and wasteful enough to be wrong. It also
+prints three identical timelines for one outage.
 
 M7 generalizes M5's baseline and validation into a shared check runner. `analyzing` resolves and
 runs test, typecheck and lint in that order, records one `baseline.check_recorded` event per check,
@@ -113,6 +128,15 @@ it reaches its caller, and `createLogger` runs every log argument through that r
 It is a safety net rather than a boundary: nothing logs a token deliberately, `host-git.ts` redacts
 its own transcripts, and the token still never enters an argv, a remote URL or `SandboxSpec.env`.
 
+**The seed archive is tarred with `--no-xattrs` and `COPYFILE_DISABLE=1`, and both are load-bearing
+on macOS.** bsdtar records extended attributes, every file on this platform carries
+`com.apple.provenance`, and Docker's `putArchive` then fails the whole upload with
+`lsetxattr ... operation not supported` - reported as `sandbox_create_failed` on a repository that
+is perfectly fine. Without the environment variable it instead writes an AppleDouble `._name`
+sidecar beside every entry, and the container gets a repository whose `git status` is a page of
+untracked files Rivet invented. GNU tar has accepted the flag since 1.27 and ignores the variable,
+so CI reads it identically. Run H in `publication.sbx.test.ts` is what catches both.
+
 **A red baseline is not a failed job.** The `analyzing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
 whatever the exit code was: PRD §11 C wants to know whether the repository was already broken
@@ -168,6 +192,7 @@ pnpm test:streaming      # the web SSE suite; needs LOCAL Postgres, no Redis or 
 pnpm demo:agent          # one real Pi session against a disposable Docker fixture
 pnpm demo:job            # full job against rivet-fixture-node with Pi, Postgres, Redis and Docker
 pnpm demo:recovery       # kill a worker mid-job and prove the replacement resumes; no model key
+pnpm demo:pr             # one real job against the throwaway GitHub repo, ending in a real PR
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 

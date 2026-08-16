@@ -65,6 +65,8 @@ const DIFF = [
   "",
 ].join("\n");
 const NUMSTAT = "1\t1\ttest.js\n";
+/** A workspace capture validates this as an object id; see `review-fixture.ts`. */
+const TREE = "3f5a1b9c7d2e40516273849506a7b8c9d0e1f2a3";
 
 const PIPELINE_OPTIONS: Omit<PipelineOptions, "sandbox" | "agent"> = {
   image: "node@sha256:test",
@@ -129,6 +131,10 @@ function fixtureProvider(first: ScriptedCommand[] = []): FakeSandboxProvider {
     {
       match: (argv) => argv[0] === "git" && argv[1] === "ls-files",
       stdout: TRACKED,
+    },
+    {
+      match: (argv) => argv[0] === "git" && argv[1] === "write-tree",
+      stdout: `${TREE}\n`,
     },
     { match: "ls", stdout: LISTING },
     { match: "cat", stdout: MANIFEST },

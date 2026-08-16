@@ -58,6 +58,8 @@ both the reviewer tool boundary and a byte-identical workspace diff before and a
 as a patch captured in one container restoring byte for byte in another. `pnpm demo:agent` runs one
 real Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with a real session, and
 `pnpm demo:recovery` kills a worker mid-job and checks every fact the recovery claim rests on.
+`pnpm demo:pr` runs the Milestone 9 definition of done: a job created from a real GitHub issue that
+ends in a real pull request on a throwaway repository.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together,
 [docs/plans/milestone-8.md](docs/plans/milestone-8.md) for the committed M8 plan,
@@ -316,6 +318,7 @@ Every command is run from the repository root. Turborepo fans them out across th
 | `pnpm demo:agent`       | Runs one real Pi session against a disposable fixture in Docker                 |
 | `pnpm demo:job`         | Runs a full job against `rivet-fixture-node` with a real Pi session             |
 | `pnpm demo:recovery`    | Kills a worker mid-job and proves the replacement resumes from its checkpoint   |
+| `pnpm demo:pr`          | Runs one bound job against the demo repository and opens a real pull request    |
 | `pnpm build`            | Production build of every workspace. Needs no database and no Redis             |
 | `pnpm lint`             | ESLint across every workspace                                                   |
 | `pnpm typecheck`        | `tsc --noEmit` across every workspace                                           |

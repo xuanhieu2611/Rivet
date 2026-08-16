@@ -1,8 +1,27 @@
 # Milestone 9: the acceptance contract
 
-**Status: not started.** This document is written before any M9 code, so the code is measured
-against it rather than the other way around. [`docs/plans/milestone-9.md`](milestone-9.md) is the
-plan; this document is the set of assertions the Stage 10 tests make.
+**Status: satisfied.** This document was written before any M9 code, so the code is measured against
+it rather than the other way around. [`docs/plans/milestone-9.md`](milestone-9.md) is the plan; this
+document is the set of assertions the Stage 10 tests make, and they now exist:
+
+- Runs A through G are `apps/worker/tests/integration/publication.int.test.ts`, against
+  `FakeGitHubClient`, the real host Git operations and a local bare repository.
+- Run H is `apps/worker/tests/sandbox/publication.sbx.test.ts`, against Docker.
+- Run B against real GitHub is `pnpm demo:pr`, which is not part of CI.
+
+Three things Stage 10 settled that this document had left open, each recorded where it was decided:
+
+- **Obligation 3 is now literally true.** `GitHubUnavailableError` shipped as a `RetryableJobError`,
+  which would have re-run a whole attempt to repeat one HTTP call. It is terminal; the bounded retry
+  lives in the adapter, where `github-client.test.ts` proves it. Run F's third variant therefore
+  asserts `github_unavailable` with `attempt_count` **1** and exactly one `getRef` call, rather than
+  the "5xx three times, then completes" phrasing below - that behaviour is the adapter's and is
+  tested at its own boundary, because a fake port has no retry to exercise.
+- **Run D's differing tree is sequenced, not faked.** The replacement's first workspace capture is
+  the one its restore re-derives and must checksum against; the second is the workspace it
+  publishes. Breaking the first would test the restore instead of the force-push.
+- **The seed archive bound reports `repo_unavailable`.** The plan asked for "a stated failure"
+  without naming a category, and `unknown` on a limit we chose is not one.
 
 M9 is the first milestone whose phase produces an effect Rivet cannot roll back, so this contract
 spends most of its length on the runs where something goes wrong at exactly the worst moment. Eight

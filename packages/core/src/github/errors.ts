@@ -1,6 +1,6 @@
 import type { FailureCategory } from "@rivet/contracts";
 
-import { RetryableJobError, TerminalJobError } from "../jobs/failure";
+import { TerminalJobError } from "../jobs/failure";
 
 /** Details that can safely cross the adapter boundary with a GitHub failure. */
 export interface GitHubErrorOptions {
@@ -21,8 +21,20 @@ export interface GitHubResponse {
 /** Which domain operation received the provider response. */
 export type GitHubResponseOperation = "installation" | "repository" | "pull_request";
 
-/** GitHub could not be reached, is rate limiting us, or returned a server error. */
-export class GitHubUnavailableError extends RetryableJobError {
+/**
+ * GitHub could not be reached, is rate limiting us, or returned a server error.
+ *
+ * Terminal, and deliberately so despite being the one GitHub failure a repeat
+ * could get past. The repeat that is worth making is the adapter's: bounded,
+ * jittered, and honouring `Retry-After`, close enough to the request to be one
+ * call rather than one attempt. A runner-level retry re-runs the entire job
+ * from provisioning to reach the same publication - safe by construction,
+ * because the receipt protocol makes the external effect idempotent, but it
+ * spends a container, a clone and a model session to repeat one HTTP call, and
+ * turns a GitHub outage into three identical timelines. The adapter has already
+ * given up by the time this reaches a phase.
+ */
+export class GitHubUnavailableError extends TerminalJobError {
   readonly status: number | undefined;
   readonly retryAfterMs: number | undefined;
 

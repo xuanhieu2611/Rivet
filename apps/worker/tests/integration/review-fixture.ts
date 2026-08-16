@@ -28,6 +28,16 @@ export const DIFF = [
   "",
 ].join("\n");
 export const NUMSTAT = "1\t1\ttest.js\n";
+/**
+ * What `git write-tree` answers during a workspace capture.
+ *
+ * Scripted rather than left to the fake's empty default because the capture
+ * validates it as a real object id: a checkpoint whose tree is unknown is
+ * refused as corrupt, which is correct against a container and merely a
+ * missing line in a fixture. The M9 publication fixture replaces this with a
+ * tree a real repository actually produces.
+ */
+export const TREE = "3f5a1b9c7d2e40516273849506a7b8c9d0e1f2a3";
 
 export const PIPELINE_OPTIONS: Omit<PipelineOptions, "sandbox" | "agent"> = {
   image: "node@sha256:test",
@@ -76,6 +86,10 @@ export function fixtureProvider(first: ScriptedCommand[] = []): FakeSandboxProvi
     {
       match: (argv) => argv[0] === "git" && argv[1] === "ls-files",
       stdout: TRACKED,
+    },
+    {
+      match: (argv) => argv[0] === "git" && argv[1] === "write-tree",
+      stdout: `${TREE}\n`,
     },
     { match: "ls", stdout: LISTING },
     { match: "cat", stdout: MANIFEST },
