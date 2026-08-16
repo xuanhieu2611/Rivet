@@ -266,7 +266,14 @@ function githubForSeed(
     updatePullRequest: () => Promise.reject(new Error("not used")),
   };
 
-  return { client, seedClone: seed, seedMaxBytes: 8 * 1_024 * 1_024, cloneTimeoutMs: 30_000 };
+  return {
+    client,
+    seedClone: seed,
+    publish: () => Promise.reject(new Error("not used")),
+    seedMaxBytes: 8 * 1_024 * 1_024,
+    cloneTimeoutMs: 30_000,
+    pushTimeoutMs: 30_000,
+  };
 }
 
 /** A patch whose bytes, size and checksum agree, the way a stored row's do. */

@@ -639,6 +639,15 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
     }
 
     case "retryable": {
+      // GitHub publication retries inside the adapter, while the receipt
+      // protocol makes a whole finalizing replay safe. Retrying the entire
+      // worker delivery here would turn a terminal publication outage into a
+      // second sandbox run and would blur the external failure on the timeline.
+      if (currentStatus === "finalizing") {
+        await finishBadly(jobId, currentStatus, "failed", workerId, error, log);
+        throw new UnrecoverableError(describeError(error));
+      }
+
       // A transient error gets the normal release-and-rethrow path while
       // BullMQ still has another delivery available. Once the message has
       // spent its last attempt, leaving the row in `queued` would lose the

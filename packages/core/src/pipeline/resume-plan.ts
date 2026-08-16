@@ -155,10 +155,11 @@ function phaseOrder(
  * replay of the original phase boundary, and the cheapest way to guarantee that
  * is for provisioning never to write a boundary at all.
  *
- * `finalizing` is absent because the lease-fenced transition from `finalizing`
- * to `completed` is already its durable acknowledgement. A checkpoint there
- * would only ever instruct a replacement worker to finish an already finished
- * pipeline.
+ * `finalizing` is absent because its external effects are acknowledged by the
+ * receipt ledger and provider reconciliation, while the lease-fenced transition
+ * from `finalizing` to `completed` remains the durable job acknowledgement. A
+ * workspace checkpoint there would snapshot a tree nobody would restore; the
+ * receipts are what make replay safe.
  */
 export const BOUNDARY_CHECKPOINT_PHASES: readonly JobStatus[] = [
   "analyzing",

@@ -9,6 +9,7 @@ import {
 } from "./workspace-snapshot";
 
 const REPOSITORY = "/home/node/workspace/repo";
+const TREE = "3333333333333333333333333333333333333333";
 const PATCH = Buffer.from(
   [
     "diff --git a/src/example.ts b/src/example.ts",
@@ -27,7 +28,7 @@ function result(request: ExecRequest, overrides: Partial<ExecResult> = {}): Exec
     argv: request.argv,
     cwd: request.cwd,
     exitCode: 0,
-    stdout: "",
+    stdout: TREE + "\n",
     stderr: "",
     truncated: false,
     timedOut: false,
@@ -107,19 +108,22 @@ describe("captureWorkspacePatch", () => {
     expect(test.calls.map((call) => call.argv.slice(0, 2))).toEqual([
       ["git", "read-tree"],
       ["git", "add"],
+      ["git", "write-tree"],
       ["git", "diff"],
       ["rm", "-f"],
     ]);
 
-    const indexPaths = test.calls.slice(0, 3).map((call) => call.env?.GIT_INDEX_FILE);
+    const indexPaths = test.calls.slice(0, 4).map((call) => call.env?.GIT_INDEX_FILE);
     expect(indexPaths[0]).toMatch(/^\/tmp\/rivet-checkpoint-.+\.index$/);
     expect(indexPaths.every((path) => path === indexPaths[0])).toBe(true);
     expect(test.calls[0]?.cwd).toBe(REPOSITORY);
-    expect(test.calls[3]?.cwd).toBe("/");
+    expect(test.calls[4]?.cwd).toBe("/");
   });
 
   it("accepts an empty patch as a valid snapshot", async () => {
-    const test = sandboxFor((request) => result(request));
+    const test = sandboxFor((request) =>
+      request.argv[1] === "diff" ? result(request, { stdout: "" }) : result(request),
+    );
 
     await expect(captureWorkspacePatch(captureInput(test.sandbox))).resolves.toMatchObject({
       patch: Buffer.alloc(0),

@@ -14,6 +14,8 @@ export interface CheckpointPatchStats {
 export interface WorkspaceSnapshot {
   patch: Buffer;
   stats: CheckpointPatchStats;
+  /** The Git tree represented by the patch, when capture also computes it. */
+  treeSha?: string;
 }
 
 export interface CaptureWorkspacePatchInput {
@@ -74,6 +76,21 @@ export async function captureWorkspacePatch(
     await runSnapshotCommand(input, signal, deadline.signal, ["git", "read-tree", "HEAD"], env);
     await runSnapshotCommand(input, signal, deadline.signal, ["git", "add", "-A"], env);
 
+    const tree = await runSnapshotCommand(
+      input,
+      signal,
+      deadline.signal,
+      ["git", "write-tree"],
+      env,
+    );
+    const treeSha = tree.stdout.trim();
+    if (!/^[0-9a-f]{40}$/iu.test(treeSha)) {
+      throw new WorkspaceSnapshotError(
+        `Git returned an invalid tree id while capturing the workspace: ${treeSha || "(empty)"}.`,
+        { argv: tree.argv, stderr: tree.stderr },
+      );
+    }
+
     const diff = await runSnapshotCommand(
       input,
       signal,
@@ -99,7 +116,7 @@ export async function captureWorkspacePatch(
       );
     }
 
-    snapshot = { patch, stats: parseCheckpointPatchStats(patch) };
+    snapshot = { patch, stats: parseCheckpointPatchStats(patch), treeSha };
   } catch (error) {
     failed = true;
     failure = error;

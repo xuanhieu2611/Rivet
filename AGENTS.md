@@ -328,18 +328,19 @@ process itself.
 
 **`transitionJob()` is the only writer of `jobs.status`**, and this is compile-enforced rather than
 merely agreed: `TransitionInput["patch"]` is `Omit<Partial<NewJob>, "status">`, so a caller cannot
-sneak a status through the patch. There are exactly six `.update(jobs)` sites in `packages/`, and
-the other five touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
+sneak a status through the patch. There are exactly seven `.update(jobs)` sites in `packages/`, and
+the other six touch only their own columns - `claims.ts` renews the lease, `cancel.ts` stamps
 `cancel_requested_at`, `jobs/provisioning.ts` writes `sandbox_id`, `base_commit_sha` and
 `env_fingerprint`, `jobs/agent-usage.ts` writes cumulative model, tool, turn, token and cost totals,
-and `jobs/review.ts` writes the durable review decision, loop counter and blocking count. These
-writers accept status-free patches and are fenced on `lease_owner`; they exist because those facts
-become true when a command, model turn or review verdict answers, not when the job later changes
-phase, and a fact recorded at a moment that has nothing to do with the fact is how a timeline starts
-lying. Stamping a cancel is deliberately not a status change; the job reaches `cancelled` through
-the worker's own transition under its own lease. Every status change is a compare-and-swap on the
-expected `from` status, optionally fenced on `lease_owner`, and writes its event row in the same
-transaction. Adding another status writer breaks all of that at once.
+`jobs/review.ts` writes the durable review decision, loop counter and blocking count, and
+`jobs/publication.ts` writes the final branch and pull request identity. These writers accept
+status-free patches and are fenced on `lease_owner`; they exist because those facts become true when
+a command, model turn or review verdict answers, not when the job later changes phase, and a fact
+recorded at a moment that has nothing to do with the fact is how a timeline starts lying. Stamping a
+cancel is deliberately not a status change; the job reaches `cancelled` through the worker's own
+transition under its own lease. Every status change is a compare-and-swap on the expected `from`
+status, optionally fenced on `lease_owner`, and writes its event row in the same transaction. Adding
+another status writer breaks all of that at once.
 
 **`appendEvent()` is the only writer of `job_events`, and it takes an `Executor`.** Pass the
 transaction and the event lands atomically with the status change it describes; pass nothing and it

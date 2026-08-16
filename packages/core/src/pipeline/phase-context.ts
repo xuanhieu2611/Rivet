@@ -4,6 +4,8 @@ import type {
   ArtifactType,
   BaselineReport,
   CheckpointKind,
+  ExternalEffect,
+  ExternalEffectKind,
   ImplementationPlan,
   JobDetail,
   JobEventData,
@@ -44,12 +46,21 @@ import {
 } from "../events/validation-log";
 import { type AgentUsagePatch, recordAgentUsage as persistAgentUsage } from "../jobs/agent-usage";
 import {
+  getExternalEffect,
+  recordExternalEffectWithResult,
+  type RecordExternalEffectInput,
+} from "../github/effect-store";
+import {
   CheckpointCorruptError,
   describeError as describeJobError,
   failureCategoryFor,
   LeaseLostError,
 } from "../jobs/failure";
 import { type ProvisioningPatch, recordProvisioning } from "../jobs/provisioning";
+import {
+  recordPublication as persistPublication,
+  type PublicationPatch,
+} from "../jobs/publication";
 import { type ReviewPatch, recordReview as persistReview } from "../jobs/review";
 import { recordCommand } from "../sandbox/command-log";
 import type { ExecResult } from "../sandbox/sandbox";
@@ -98,6 +109,20 @@ export interface PhaseContext {
 
   /** Appends one line to the job's timeline. */
   event(input: PhaseEventInput): Promise<void>;
+
+  /**
+   * Persists an external-effect receipt and its audit event in one transaction.
+   *
+   * Optional for compatibility with focused contexts that never publish. A
+   * publication phase requires it before it can ask GitHub to create a PR.
+   */
+  recordExternalEffect?: (input: PhaseExternalEffectInput) => Promise<ExternalEffect>;
+
+  /** Reads the receipt used by the publication reconciliation protocol. */
+  readExternalEffect?: (kind: ExternalEffectKind) => Promise<ExternalEffect | null>;
+
+  /** Writes branch and pull-request identities under the active lease. */
+  recordPublication?: (patch: PublicationPatch) => Promise<void>;
 
   /**
    * Persists one durable output of the run and points the timeline at it.
@@ -270,6 +295,12 @@ export interface PhaseEventInput {
   message: string;
   data?: JobEventData;
 }
+
+/** The phase-facing slice of an external-effect receipt request. */
+export type PhaseExternalEffectInput = Omit<RecordExternalEffectInput, "jobId" | "leaseOwner"> & {
+  /** Whether the provider effect was found rather than performed. */
+  adopted: boolean;
+};
 
 export interface PhaseArtifactInput {
   type: ArtifactType;
@@ -466,6 +497,61 @@ export function createPhaseContextFactory(
       await appendOwnedEvent(input);
     },
 
+    async recordExternalEffect(input) {
+      const recorded = await database.transaction(async (tx) => {
+        const receipt = await recordExternalEffectWithResult(
+          {
+            ...input,
+            jobId: job.id,
+            leaseOwner,
+          },
+          tx,
+        );
+
+        if (receipt.inserted) {
+          await appendEvent(
+            {
+              jobId: job.id,
+              type: "external_effect.recorded",
+              message: `Recorded ${receipt.effect.kind} external effect.`,
+              data: {
+                kind: receipt.effect.kind,
+                provider: receipt.effect.provider,
+                externalId: receipt.effect.externalId,
+                externalUrl: receipt.effect.externalUrl,
+                adopted: input.adopted,
+              },
+              leaseOwner,
+            },
+            tx,
+          );
+        }
+
+        return receipt.effect;
+      });
+
+      return recorded;
+    },
+
+    readExternalEffect(kind) {
+      return getExternalEffect(job.id, kind, database);
+    },
+
+    async recordPublication(patch) {
+      const held = await persistPublication(job.id, leaseOwner, patch, database);
+      if (!held) {
+        throw new LeaseLostError(
+          `Job ${job.id} is no longer leased by ${leaseOwner}; publication stood down.`,
+        );
+      }
+
+      if (patch.finalBranch !== undefined) job.finalBranch = patch.finalBranch;
+      if (patch.pullRequestNumber !== undefined) {
+        job.pullRequestNumber = patch.pullRequestNumber;
+      }
+      if (patch.pullRequestUrl !== undefined) job.pullRequestUrl = patch.pullRequestUrl;
+    },
+
     async artifact(input) {
       const artifact = await database.transaction(async (tx) => {
         const recorded = await recordArtifact(
@@ -559,6 +645,7 @@ export function createPhaseContextFactory(
       // without making the phase runner pass mutable state across a boundary.
       if (patch.baseCommitSha !== undefined && patch.baseCommitSha !== null) {
         currentBaseCommitSha = patch.baseCommitSha;
+        job.baseCommitSha = patch.baseCommitSha;
       }
       if (patch.envFingerprint !== undefined && patch.envFingerprint !== null) {
         currentEnvFingerprint = patch.envFingerprint;

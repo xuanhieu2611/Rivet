@@ -4,10 +4,11 @@ import { and, eq, sql } from "drizzle-orm";
 /**
  * The columns that describe what a run is executing in.
  *
- * This is one of six places in `packages/` that issues an `.update(jobs)`.
- * The other five are `transitions.ts` (status, and only status), `claims.ts`
+ * This is one of seven places in `packages/` that issues an `.update(jobs)`.
+ * The other six are `transitions.ts` (status, and only status), `claims.ts`
  * (the lease), `cancel.ts` (the cancel stamp), `agent-usage.ts` (model totals),
- * and `review.ts` (review accounting). Adding one is not free, so it is worth writing down why this is not smuggled
+ * `review.ts` (review accounting), and `publication.ts` (branch and pull-request
+ * identities). Adding one is not free, so it is worth writing down why this is not smuggled
  * onto the next phase's transition patch instead:
  *
  * - `base_commit_sha` becomes true when `git rev-parse` answers, not when the

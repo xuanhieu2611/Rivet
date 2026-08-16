@@ -40,11 +40,9 @@ import { validationPhase } from "./validation-phase";
  *   recovery continues from it rather than repeating it. `implementing` is the
  *   only one in M6: its turn checkpoints are the workflow cursor.
  * - `reconcile_external` - the phase has an effect outside Rivet, so before
- *   repeating it the run must ask the provider what already happened. Nothing
- *   declares this yet, and that is the point: M9's branch, commit, push and
- *   pull request cannot be added to a phase without someone choosing this word,
- *   because the field is required and `replay` would be a claim that pushing a
- *   branch twice is harmless.
+ *   repeating it the run must ask the provider what already happened. M9's
+ *   `finalizing` phase is the first declaration: its branch, push and pull
+ *   request effects are safe to repeat only through the receipt protocol.
  *
  * See `docs/plans/milestone-6.md` §7 for the protocol the third one implies.
  */
@@ -138,6 +136,8 @@ export interface PipelineOptions {
   diffMaxBytes: number;
   /** Passed to every sandbox. Empty at Milestone 2, and that is the point. */
   env?: Record<string, string>;
+  /** Relative or absolute link included in a published pull-request body. */
+  runUrl?: string;
   /**
    * Host GitHub operations used when GitHub publication is enabled and a job
    * carries an installation binding.
@@ -210,10 +210,16 @@ const PHASE_TEMPLATE: readonly Phase[] = [
   { status: "implementing", label: "Implement change", durationMs: 5_000, recovery: "checkpoint" },
   { status: "testing", label: "Validate change", durationMs: 4_000, recovery: "replay" },
   { status: "reviewing", label: "Review patch", durationMs: 3_000, recovery: "replay" },
-  // Replayable only while it writes nothing outside Rivet. M9 puts a branch, a
-  // push and a pull request here, and each of those makes this
-  // `reconcile_external` - which is exactly the decision this field forces.
-  { status: "finalizing", label: "Finalize", durationMs: 2_000, recovery: "replay" },
+  // Publication effects live here. The body reconciles its receipt and remote
+  // GitHub state before it creates or updates anything external.
+  {
+    status: "finalizing",
+    label: "Finalize",
+    durationMs: 2_000,
+    // Publication effects are reconciled against GitHub and the receipt ledger
+    // before a reclaimed worker performs them again.
+    recovery: "reconcile_external",
+  },
 ];
 
 /**
@@ -239,8 +245,8 @@ export function simulatedPipeline(): PhasePipeline {
  * dependencies; `analyzing` runs the repository's own suite and records the
  * baseline; a configured agent makes `planning` run a dedicated read-only
  * planner, `implementing` run a coding session, `testing` judge what it did,
- * `reviewing` run an independent verdict, and `finalizing` record what it said
- * and what the run came to. A blocking review reaches `revising` through the
+ * `reviewing` run an independent verdict, and `finalizing` record what it said,
+ * summarize the result and publish it. A blocking review reaches `revising` through the
  * directive metadata rather than through the ordinary template. Without an
  * agent, planning, implementation, validation and finalization remain simulated
  * so the infrastructure-free worker path stays usable.
@@ -285,7 +291,7 @@ export function buildPipeline(options: PipelineOptions): PhasePipeline {
     bodies.planning = planningPhase(options.agent, options);
     bodies.implementing = implementingPhase(options.agent, options);
     bodies.testing = validationPhase(options);
-    bodies.finalizing = finalizingPhase();
+    bodies.finalizing = finalizingPhase(options);
 
     const reviewing = phaseForStatus(phases, "reviewing");
     const testing = phaseForStatus(phases, "testing");

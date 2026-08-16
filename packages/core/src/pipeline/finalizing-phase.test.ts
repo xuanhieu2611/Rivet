@@ -1,10 +1,20 @@
-import type { JobDetail, ValidationReport } from "@rivet/contracts";
+import type {
+  ExternalEffect,
+  ImplementationPlan,
+  JobDetail,
+  PullRequest,
+  ReviewReport,
+  ValidationReport,
+} from "@rivet/contracts";
 import { describe, expect, it } from "vitest";
 
 import type { ValidationRecord } from "../events/validation-log";
+import type { GitHubPipelineOptions } from "../github/host-git";
+import type { WorkspaceSnapshot } from "../checkpoints/workspace-snapshot";
 import { JobCancelledError } from "../jobs/failure";
 import { SandboxHolder } from "../sandbox/sandbox-holder";
 import { finalizingPhase } from "./finalizing-phase";
+import type { PipelineOptions } from "./phases";
 import type { PhaseArtifactInput, PhaseContext, PhaseEventInput } from "./phase-context";
 
 /**
@@ -31,6 +41,10 @@ function harness(
     summary?: string | null;
     validation?: ValidationRecord | null;
     report?: ValidationReport | null;
+    job?: JobDetail;
+    workspace?: WorkspaceSnapshot;
+    plan?: ImplementationPlan | null;
+    reviewReport?: ReviewReport | null;
   } = {},
 ) {
   const controller = new AbortController();
@@ -39,8 +53,13 @@ function harness(
   const sequence: string[] = [];
 
   const ctx: PhaseContext = {
-    job: JOB,
-    phase: { status: "finalizing", label: "Finalize", durationMs: 2_000, recovery: "replay" },
+    job: options.job ?? JOB,
+    phase: {
+      status: "finalizing",
+      label: "Finalize",
+      durationMs: 2_000,
+      recovery: "reconcile_external",
+    },
     sandboxes: new SandboxHolder(),
     signal: controller.signal,
     log: { debug: () => undefined, info: () => undefined, warn: () => undefined },
@@ -54,7 +73,10 @@ function harness(
     recordProvisioning: () => Promise.reject(new Error("the finalizing phase writes no columns")),
     recordAgentUsage: () => Promise.reject(new Error("the finalizing phase spends nothing")),
     readLatestCheckpoint: () => Promise.resolve(null),
-    captureWorkspace: () => Promise.reject(new Error("no workspace capture here")),
+    captureWorkspace: () =>
+      options.workspace === undefined
+        ? Promise.reject(new Error("no workspace capture here"))
+        : Promise.resolve(options.workspace),
     checkpoint: () => Promise.reject(new Error("the finalizing phase records no checkpoints")),
 
     readSummary: () =>
@@ -64,6 +86,8 @@ function harness(
         options.validation === undefined ? { outcome: "fixed", stat: STAT } : options.validation,
       ),
     readValidationReport: () => Promise.resolve(options.report ?? null),
+    readImplementationPlan: () => Promise.resolve(options.plan ?? null),
+    readLatestReviewReport: () => Promise.resolve(options.reviewReport ?? null),
 
     event: (input) => {
       events.push(input);
@@ -78,7 +102,7 @@ function harness(
     },
   };
 
-  return { run: () => finalizingPhase()(ctx), controller, events, artifacts, sequence };
+  return { ctx, run: () => finalizingPhase()(ctx), controller, events, artifacts, sequence };
 }
 
 describe("finalizingPhase", () => {
@@ -114,22 +138,42 @@ describe("finalizingPhase", () => {
 
     await test.run();
 
-    expect(test.events).toHaveLength(1);
+    expect(test.events).toHaveLength(2);
     expect(test.events[0]?.type).toBe("run.summarized");
+    expect(test.events[1]).toMatchObject({
+      type: "publication.skipped",
+      data: { reason: "no_installation" },
+    });
     expect(test.events[0]?.data).toEqual({ validation: "fixed", ...STAT, reviewLoops: 0 });
     expect(test.events[0]?.message).toMatch(/fixed/);
     expect(test.events[0]?.message).toMatch(/1 file changed, \+1\/-1/);
   });
 
-  it("writes the summary first, so the closing line is genuinely the last row", async () => {
-    // Order rather than mere presence: this event exists to be the bottom of the
-    // timeline, and an artifact written after it would put a row underneath the
-    // sentence claiming to conclude the run.
+  it("distinguishes a bound job when the GitHub provider is disabled", async () => {
+    const test = harness({
+      job: { ...JOB, githubInstallationId: 42 },
+    });
+
+    await test.run();
+
+    expect(test.events.at(-1)).toMatchObject({
+      type: "publication.skipped",
+      data: { reason: "github_off" },
+    });
+  });
+
+  it("writes the summary before the publication decision", async () => {
+    // Order rather than mere presence: publication failures must not erase the
+    // run summary that explains what the validated work came to.
     const test = harness();
 
     await test.run();
 
-    expect(test.sequence).toEqual(["artifact:implementation_summary", "event:run.summarized"]);
+    expect(test.sequence).toEqual([
+      "artifact:implementation_summary",
+      "event:run.summarized",
+      "event:publication.skipped",
+    ]);
   });
 
   it("says a run was not validated differently from one that was unverified", async () => {
@@ -253,6 +297,156 @@ describe("finalizingPhase", () => {
     expect(test.events[0]?.message).toBe(
       "Run finished fixed: the suite was failing before the change and passes after it (1 file changed, +1/-1). The session's own account of the change is recorded.",
     );
+  });
+
+  it("publishes from the captured tree and keeps the receipt event order", async () => {
+    const job = {
+      ...JOB,
+      title: "Fixed comparison",
+      description: "Fix the comparison.",
+      repoUrl: "https://github.com/acme/widgets.git",
+      baseBranch: "main",
+      baseCommitSha: "0123456789abcdef0123456789abcdef01234567",
+      githubInstallationId: 42,
+      repoOwner: "acme",
+      repoName: "widgets",
+      issueNumber: 17,
+      issueUrl: "https://github.com/acme/widgets/issues/17",
+    } as JobDetail;
+    const test = harness({
+      job,
+      plan: {
+        problemInterpretation: "The check races with the write.",
+        relevantComponents: ["booking service"],
+        reproductionStrategy: ["Run two requests."],
+        implementationApproach: ["Make the write atomic."],
+        validationPlan: ["Run the test."],
+        riskAreas: ["Old duplicate rows."],
+      },
+      report: validationReport({
+        outcome: "verified",
+        typecheck: "verified",
+        lint: "verified",
+      }),
+      workspace: {
+        patch: Buffer.from("git patch"),
+        treeSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        stats: STAT,
+      },
+    });
+    const effects = new Map<"branch_pushed" | "pull_request_opened", ExternalEffect>();
+    const calls: string[] = [];
+    const pullRequest: PullRequest = {
+      nodeId: "fake-pr-node-1",
+      number: 1,
+      url: "https://github.com/acme/widgets/pull/1",
+      branch: "rivet/job-11111111-fixed-comparison",
+      state: "open",
+    };
+    const github: GitHubPipelineOptions = {
+      client: {
+        listInstallations: () => Promise.resolve([]),
+        listRepositories: () => Promise.resolve([]),
+        listIssues: () => Promise.resolve([]),
+        mintInstallationToken: () => {
+          calls.push("mint");
+          return Promise.resolve({
+            value: "test-token",
+            expiresAt: new Date("2026-08-15T00:00:00.000Z"),
+            redact: () => "[REDACTED]",
+          });
+        },
+        getRef: () => {
+          calls.push("getRef");
+          return Promise.resolve(null);
+        },
+        findPullRequest: () => {
+          calls.push("findPullRequest");
+          return Promise.resolve(null);
+        },
+        createPullRequest: () => {
+          calls.push("createPullRequest");
+          return Promise.resolve(pullRequest);
+        },
+        updatePullRequest: () => Promise.reject(new Error("not used")),
+      },
+      seedClone: () => Promise.reject(new Error("not used")),
+      publish: () => {
+        calls.push("publish");
+        return Promise.resolve({
+          ...STAT,
+          commitSha: "b".repeat(40),
+          treeSha: "a".repeat(40),
+          forced: false,
+        });
+      },
+      seedMaxBytes: 8 * 1_024 * 1_024,
+      cloneTimeoutMs: 30_000,
+      pushTimeoutMs: 30_000,
+    };
+    test.ctx.readExternalEffect = (kind) => Promise.resolve(effects.get(kind) ?? null);
+    test.ctx.recordPublication = (patch) => {
+      calls.push(`record:${Object.keys(patch).join(",")}`);
+      Object.assign(test.ctx.job, patch);
+      return Promise.resolve();
+    };
+    test.ctx.recordExternalEffect = (input) => {
+      const effect: ExternalEffect = {
+        id: effects.size + 1,
+        jobId: test.ctx.job.id,
+        kind: input.kind,
+        provider: "github",
+        externalId: input.externalId,
+        externalUrl: input.externalUrl,
+        payload: input.payload ?? null,
+        createdAt: new Date("2026-08-15T00:00:00.000Z"),
+      };
+      effects.set(input.kind, effect);
+      test.events.push({
+        type: "external_effect.recorded",
+        message: "Recorded external effect.",
+        data: {
+          kind: input.kind,
+          provider: "github",
+          externalId: input.externalId,
+          externalUrl: input.externalUrl,
+          adopted: input.adopted,
+        },
+      });
+      test.sequence.push("event:external_effect.recorded");
+      return Promise.resolve(effect);
+    };
+
+    await finalizingPhase({
+      github,
+      runUrl: `http://localhost:3000/jobs/${job.id}`,
+    } as PipelineOptions)(test.ctx);
+
+    expect(calls).toEqual([
+      "getRef",
+      "record:finalBranch",
+      "mint",
+      "publish",
+      "findPullRequest",
+      "createPullRequest",
+      "record:pullRequestNumber,pullRequestUrl",
+    ]);
+    expect(test.artifacts.map((artifact) => artifact.type)).toEqual([
+      "implementation_summary",
+      "pull_request_body",
+    ]);
+    expect(test.events.map((event) => event.type)).toEqual([
+      "run.summarized",
+      "branch.created",
+      "commit.created",
+      "push.completed",
+      "external_effect.recorded",
+      "pull_request.opened",
+      "external_effect.recorded",
+    ]);
+    expect(test.artifacts[1]?.content).toContain("http://localhost:3000/jobs/");
+    expect(test.ctx.job.finalBranch).toBe("rivet/job-11111111-fixed-comparison");
+    expect(test.ctx.job.pullRequestUrl).toBe(pullRequest.url);
   });
 
   it("stops on an aborted signal rather than writing to a job that ended", async () => {

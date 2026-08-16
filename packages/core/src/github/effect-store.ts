@@ -31,6 +31,12 @@ export interface RecordExternalEffectInput {
   leaseOwner?: string;
 }
 
+/** The receipt plus whether this call inserted it or adopted an existing row. */
+export interface RecordedExternalEffect {
+  effect: ExternalEffect;
+  inserted: boolean;
+}
+
 /**
  * Inserts a receipt, or returns the existing receipt for the same job/kind.
  *
@@ -39,15 +45,15 @@ export interface RecordExternalEffectInput {
  * conflict and also works when the insert is participating in a caller's
  * transaction.
  */
-export async function recordExternalEffect(
+export async function recordExternalEffectWithResult(
   input: RecordExternalEffectInput,
   executor: Executor = db,
-): Promise<ExternalEffect> {
+): Promise<RecordedExternalEffect> {
   // Keep the lease check and the conflict-aware insert in one transaction when
   // the caller uses the shared database handle. A replacement worker cannot
   // race a stale worker between those two operations.
   if (input.leaseOwner !== undefined && executor === db) {
-    return db.transaction((tx) => recordExternalEffect(input, tx));
+    return db.transaction((tx) => recordExternalEffectWithResult(input, tx));
   }
 
   if (input.leaseOwner !== undefined) {
@@ -71,7 +77,7 @@ export async function recordExternalEffect(
     })
     .returning();
 
-  if (inserted) return toExternalEffect(inserted);
+  if (inserted) return { effect: toExternalEffect(inserted), inserted: true };
 
   const existing = await getExternalEffect(input.jobId, input.kind, executor);
   if (!existing) {
@@ -83,7 +89,16 @@ export async function recordExternalEffect(
       `External effect ${input.jobId}/${input.kind} conflicted but no existing row was found.`,
     );
   }
-  return existing;
+  return { effect: existing, inserted: false };
+}
+
+/** Inserts a receipt and returns the durable row, preserving the original API. */
+export async function recordExternalEffect(
+  input: RecordExternalEffectInput,
+  executor: Executor = db,
+): Promise<ExternalEffect> {
+  const result = await recordExternalEffectWithResult(input, executor);
+  return result.effect;
 }
 
 /** Reads one receipt by its durable per-job idempotency key. */

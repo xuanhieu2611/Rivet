@@ -70,8 +70,16 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
   const artifacts: RecordArtifactInput[] = [];
   const checkpoints: RecordCheckpointInput[] = [];
   const sequence: string[] = [];
-  const sandboxExec = vi.fn(() => {
+  const sandboxExec = vi.fn((request: Parameters<Sandbox["exec"]>[0]) => {
     sequence.push("exec");
+    if (request.argv[1] === "write-tree") {
+      return Promise.resolve({
+        ...RESULT,
+        argv: request.argv,
+        cwd: request.cwd,
+        stdout: "4".repeat(40) + "\n",
+      });
+    }
     return exec();
   });
   const sandbox: Sandbox = {
@@ -242,11 +250,12 @@ describe("PhaseContext checkpoints", () => {
       repositoryDir: "/home/node/workspace/repo",
     });
 
-    expect(test.sandboxExec).toHaveBeenCalledTimes(4);
+    expect(test.sandboxExec).toHaveBeenCalledTimes(5);
     const calls = test.sandboxExec.mock.calls as unknown as [Parameters<Sandbox["exec"]>[0]][];
     expect(calls.map(([call]) => call.argv.slice(0, 2))).toEqual([
       ["git", "read-tree"],
       ["git", "add"],
+      ["git", "write-tree"],
       ["git", "diff"],
       ["rm", "-f"],
     ]);
