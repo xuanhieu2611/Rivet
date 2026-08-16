@@ -57,6 +57,13 @@
       "when": 1786840592206,
       "tag": "0007_unknown_lionheart",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786923748450,
+      "tag": "0008_serious_ghost_rider",
+      "breakpoints": true
     }
   ]
 }

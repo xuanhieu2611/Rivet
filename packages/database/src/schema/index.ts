@@ -1,3 +1,6 @@
+export * from "./benchmark-case";
+export * from "./evaluation-run";
+export * from "./evaluation-suite";
 export * from "./job";
 export * from "./job-artifact";
 export * from "./job-checkpoint";

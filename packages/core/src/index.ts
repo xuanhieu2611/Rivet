@@ -12,8 +12,8 @@
  *   things that know Redis, Docker and Pi exist.
  * - No `process.env` reads. Configuration arrives as function arguments, which
  *   is what lets tests drive the pipeline with zero-millisecond phases.
- * - Every module lives under one of `agent/`, `artifacts/`, `checkpoints/`, `jobs/`,
- *   `events/`, `pipeline/`, `queue/`, `sandbox/`.
+ * - Every module lives under one of `agent/`, `artifacts/`, `checkpoints/`, `evaluation/`,
+ *   `jobs/`, `events/`, `pipeline/`, `queue/`, `sandbox/`.
  *   A file at the top level next to this one is the first sign the package is
  *   turning into a junk drawer.
  */
@@ -28,6 +28,9 @@ export * from "./events/event-service";
 export * from "./events/session-log";
 export * from "./events/review-log";
 export * from "./events/validation-log";
+export * from "./evaluation/case-store";
+export * from "./evaluation/run-store";
+export * from "./evaluation/suite-store";
 export * from "./github/branch-name";
 export * from "./github/effect-store";
 export * from "./github/errors";
