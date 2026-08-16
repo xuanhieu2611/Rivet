@@ -72,12 +72,14 @@ here that re-asserts it is asserting M9.
   `FakeCodingAgent` as in M8, `RIVET_GITHUB=off`, `RIVET_EVAL=on`.
 - **Runs B, C, D, F**: real Docker via the dockerode adapter, the pinned base image, real host Git
   for the local seed, `RIVET_AGENT=scripted`, `RIVET_GITHUB=off`, `RIVET_EVAL=on`.
-- **A scripted agent that writes a named diff.** M10 needs one thing `ScriptedCodingAgent` does not
-  have today: the ability to produce a _specific_ patch, because run D's whole point is the
-  difference between two diffs against the same seed. The contract requires that a scripted run can
-  be given a set of file writes; whether that is a new scripted-agent mode or a per-case fixture is
-  Stage 6's decision, but the two diffs in run D must come from the same mechanism, or the run is
-  comparing a mechanism rather than a grade.
+- **A scripted agent that writes a named diff**, which needs no new machinery.
+  `RIVET_AGENT=scripted` already loads an arbitrary module from `RIVET_AGENT_SCRIPT` that supplies a
+  `CodingAgent`, and `recovery-demo-agent.ts` is already exactly that: a scripted planner and
+  implementer that makes one named edit against a known fixture. Run D's two arms are two such
+  modules over the same seed - or one module selecting on an env var, which is cheaper and keeps the
+  two diffs coming from the same mechanism. That last property is the requirement: if the good diff
+  and the public-tests-only diff are produced differently, run D compares mechanisms rather than
+  grades.
 - **No model key, in A through G.** Any run in this document that would fail without
   `OPENROUTER_API_KEY` is in the wrong suite.
 - **No network, in A through G.** The bare repositories are on disk; there is no GitHub in this
@@ -88,7 +90,10 @@ here that re-asserts it is asserting M9.
 Runs A-G do not need all five authored cases and must not depend on them, because Stage 4 is content
 that will keep being edited and a test that breaks when a hidden test is improved is a test that
 teaches people to stop improving hidden tests. A-G run against **two fixture cases owned by the test
-suite**, under `apps/worker/tests/fixtures/benchmarks/`:
+suite**, under `apps/worker/tests/fixtures/benchmarks/` - a new directory, and deliberately not
+`tests/sandbox/fixtures/` where the existing repo fixture lives, because these two cases are read by
+both the integration and the sandbox suite and a fixture owned by one suite that another imports is
+how a test directory starts depending on its neighbours:
 
 - `fixture-pass` - one seeded bug, a public test that names it, a hidden test that checks the
   boundary the public test does not.
@@ -219,10 +224,25 @@ equals `case.lock.json`'s, and a mismatch fails loudly and names both SHAs. This
 that catches a case edited without a rebuild, and it is why the lockfile is git-tracked.
 
 **Case validation:** a `case.json` with an unknown key, an empty `validationCommand`, a
-`validationCommand` given as a shell string, a `difficulty` of 0 or 5, a category outside the §24.1
+`validationCommand` given as a shell string, a `difficulty` of 0 or 7, a category outside the §24.1
 set, or a `hidden/` directory that is empty - each is a named load failure, not a case that builds
 with a default. A `repo/` containing a path that also exists in `hidden/` is a load failure too:
 grading overwrites, and a case where the overwrite is silent is a case whose author did not mean it.
+
+**The two closed vocabularies Stage 1 needs are fixed here**, because both exist in the PRD as prose
+and Stage 1 would otherwise have to invent the identifiers. `category` is §24.1's seven, in
+snake_case:
+
+```text
+bug_fix, feature, refactor, test_generation, concurrency, api_change, database_change
+```
+
+`difficulty` is an integer **1 through 6**, which is §32's full ladder - simple deterministic bug,
+repository search, multi-file feature, test creation, database change, concurrency. The plan's
+"level 1-4" describes the five cases M10 actually authors, not the bound the schema enforces; a
+schema that refuses a level 5 case would have to be migrated by the first person who writes one, and
+the ladder is already six rungs long in §32. Levels 5 and 6 are unused in M10 and that is a fact
+about the corpus, not about the contract.
 
 ## B. A job seeded from `rivet-local:`
 
@@ -372,7 +392,7 @@ Integration suite, no Docker. A job that fails in `provisioning` - `sandbox_crea
 cleanest - so there is no checkpoint row at all.
 
 ```text
-result                      errored
+result                      errored, and explicitly NOT ungraded
 score                       null
 graded_at                   set  (it was judged; it just needed no container)
 metrics_json                present, with runtimeSeconds and the usage totals, and nulls where the
@@ -381,7 +401,14 @@ the Sandbox port            received ZERO create calls from the grader
 job_id                      set - the job exists and its timeline is the record
 ```
 
-The zero-create assertion is the run's whole point and must be made against the port, not inferred
+**`errored` rather than `ungraded` is the whole assertion**, and the wrong answer is the tempting
+one: there is no checkpoint, so grading could not run, so `ungraded` looks right. It is not. The
+ordering at the top of this document is what settles it - the job is classified before grading is
+attempted, so a job that failed in `provisioning` never reaches the question. `ungraded` is reserved
+for a job that _could_ have been graded and whose grading broke, which is run F. Conflating them
+puts Docker outages in the same bucket as harness bugs.
+
+The zero-create assertion is the run's other point and must be made against the port, not inferred
 from timing. A grader that provisions a container to discover there is nothing to grade costs a
 container per infrastructure failure, and infrastructure failures come in bursts.
 
