@@ -102,6 +102,17 @@ that fallback is the path every fixture, `demo:job` and `demo:recovery` take. Th
 events have their own timeline presentation, the only rows in the log that link outward, and the job
 detail page renders the pull request and issue as links once they exist.
 
+The worker's half of that switch is `apps/worker/src/github.ts`, the only place the Octokit adapter
+and the two host Git operations are assembled. It returns `undefined` under `RIVET_GITHUB=off`,
+which leaves `PipelineOptions.github` absent, the unauthenticated in-container clone in place and
+`finalizing` recording `publication.skipped` - the mode CI, every existing suite and a laptop with
+no App run under. App credentials are passed to the adapter explicitly rather than read from the
+environment by it, because `parseWorkerConfig` already validated and decoded them. Every client the
+worker builds is wrapped so a minted installation token is registered with `SecretRegistry` before
+it reaches its caller, and `createLogger` runs every log argument through that registry (PRD §27).
+It is a safety net rather than a boundary: nothing logs a token deliberately, `host-git.ts` redacts
+its own transcripts, and the token still never enters an argv, a remote URL or `SandboxSpec.env`.
+
 **A red baseline is not a failed job.** The `analyzing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
 whatever the exit code was: PRD §11 C wants to know whether the repository was already broken
@@ -514,6 +525,21 @@ pure function of an env object.
   It must remain above `RIVET_ARTIFACT_MAX_BYTES`, because truncated JSON is not a report.
 - `RIVET_TARGETED_MAX_FILES` - deterministic targeted-test selection cap, 25 by default. A selection
   above it is recorded as skipped rather than mislabeled as a targeted full-suite run.
+- `RIVET_GITHUB` - `app` or `off`, `off` by default and **refused under `NODE_ENV=production`**, the
+  third member of the `RIVET_SANDBOX`/`RIVET_AGENT` family and the one that hides best: every phase
+  runs for real and the job still completes without producing a pull request. `app` additionally
+  requires `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY`, which are validated and base64-decoded at
+  startup rather than at publication - `finalizing` is the last phase, so the alternative fails a
+  job whose work was already written, validated and approved.
+- `GITHUB_CLONE_TIMEOUT_MS` / `GITHUB_PUSH_TIMEOUT_MS` - 180,000 ms each, and deliberately not the
+  `SANDBOX_*` ones. These bound the host clone, archive, apply, commit and push; the sandbox
+  timeouts bound an unauthenticated clone inside a container.
+- `GITHUB_SEED_MAX_BYTES` - complete seed-archive bound, 256MiB by default, applied before the
+  archive crosses into the sandbox so a very large repository is a stated failure rather than a
+  worker heap problem.
+- `RIVET_APP_URL` - absolute base URL of the web app, reaching `PipelineOptions.appBaseUrl` and used
+  for the run link in a published pull-request body. Unset, the body falls back to a relative
+  `/jobs/<id>`, which resolves against github.com.
 
 Schema changes go: edit `packages/database/src/schema/`, run `pnpm db:generate`, **commit the
 generated SQL** under `packages/database/drizzle/`, then `pnpm db:migrate`. Migrations are applied

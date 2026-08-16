@@ -20,10 +20,12 @@ import { Worker } from "bullmq";
 
 import { loadRootEnv, parseWorkerConfig, WorkerConfigError } from "./config";
 import { createFaultInjection, type FaultInjection } from "./faults";
+import { createGitHubOptions } from "./github";
 import { createWorkerId } from "./identity";
 import { createLogger } from "./logger";
 import { createProcessor, RunRegistry } from "./processor";
 import { loadScriptedAgent } from "./scripted-agent";
+import { SecretRegistry } from "./secrets";
 import { createSweepRunner } from "./sweeper";
 
 /**
@@ -52,8 +54,26 @@ const config = (() => {
 })();
 
 const workerId = createWorkerId();
-const log = createLogger(config.logLevel, workerId);
+// Constructed before the logger, because the logger's redaction pass reads from
+// it on every line and a token must never exist before the pass knows about it.
+const secrets = new SecretRegistry();
+const log = createLogger(config.logLevel, workerId, secrets);
 const runs = new RunRegistry();
+
+/**
+ * Publication, or the absence of it.
+ *
+ * Built once here so `packages/core` never learns that Octokit exists, and so
+ * the App credentials stay in the worker process. Under `RIVET_GITHUB=off` this
+ * is undefined, `PipelineOptions.github` is absent, provisioning keeps the
+ * unauthenticated in-container clone and `finalizing` records
+ * `publication.skipped` - which is what CI and every existing suite run under,
+ * and what `parseWorkerConfig` refuses in production.
+ */
+const github = createGitHubOptions(config.github, secrets);
+if (!github) {
+  log.warn("RIVET_GITHUB=off: no pull request will be opened, jobs end at the validated diff");
+}
 
 /**
  * The pipeline this worker runs, and the provider behind it.
@@ -149,6 +169,8 @@ const { phases, phaseFactory, sandbox } = ((): {
   });
   const pipelineOptions = {
     ...(agent ? { agent } : {}),
+    ...(github ? { github } : {}),
+    ...(config.github.appBaseUrl ? { appBaseUrl: config.github.appBaseUrl } : {}),
     image: config.sandbox.image,
     workdir: config.sandbox.workdir,
     memoryBytes: config.sandbox.memoryBytes,
@@ -270,6 +292,12 @@ log.info(
     sandboxImage: config.sandbox.mode === "docker" ? config.sandbox.image : null,
     agent: config.agent.mode,
     model: agent ? `${config.agent.provider}/${config.agent.model}` : null,
+    github: config.github.mode,
+    // The App id identifies the App, not the credential, so it is safe to
+    // print - and it is the first thing anyone checks when an installation
+    // cannot see a repository.
+    githubAppId: github ? (config.github.appId ?? null) : null,
+    appBaseUrl: config.github.appBaseUrl ?? null,
   },
   "worker started",
 );

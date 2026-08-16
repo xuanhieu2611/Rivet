@@ -101,6 +101,16 @@ export const TEST_CONFIG: WorkerConfig = {
     previewMaxBytes: 512,
     homeDir: "/tmp/rivet-pi-test",
   },
+  // `off` for the third time and the same reason: this suite has no App
+  // credentials and reaches no network. A case about publication supplies
+  // `FakeGitHubClient` and a local bare repository to the pipeline it builds,
+  // which is what the M9 runs do.
+  github: {
+    mode: "off",
+    cloneTimeoutMs: 5_000,
+    pushTimeoutMs: 5_000,
+    seedMaxBytes: 64 * 1_024 * 1_024,
+  },
 };
 
 export function uniqueQueueName(suite: string): string {

@@ -151,6 +151,56 @@ export interface SandboxConfig {
 }
 
 /**
+ * Whether a job's work is published to GitHub, or stops at its validated diff.
+ *
+ * The `RIVET_SANDBOX` rule a third time, and the stakes are the highest of the
+ * three: `off` leaves `finalizing` recording `publication.skipped`, which is
+ * exactly right for CI, for the integration suite and for a laptop with no App,
+ * and in production would mean every job reporting `completed` without ever
+ * producing the deliverable it exists to produce - a pull request. A worker
+ * that quietly skips publication looks perfectly healthy, so `parseWorkerConfig`
+ * refuses `off` under `NODE_ENV=production` rather than warning about it.
+ */
+export const GITHUB_MODES = ["app", "off"] as const;
+export type GitHubMode = (typeof GITHUB_MODES)[number];
+
+export interface GitHubConfig {
+  mode: GitHubMode;
+  /**
+   * Host clone and archive budget, distinct from `SANDBOX_CLONE_TIMEOUT_MS`.
+   *
+   * They are different operations on different machines: one clones with a
+   * short-lived token on the worker host and tars the result, the other clones
+   * a public repository inside a container. Sharing a budget would mean tuning
+   * one of them by changing the other.
+   */
+  cloneTimeoutMs: number;
+  /** Host publication budget: clone, apply, commit and push. */
+  pushTimeoutMs: number;
+  /**
+   * Bound on the complete seed archive, applied before it enters the sandbox.
+   *
+   * A repository large enough to matter is a real limit of the seeding design,
+   * and the only question is whether it is reported as a stated failure or
+   * discovered as a worker heap problem. This is what makes it the former.
+   */
+  seedMaxBytes: number;
+  /**
+   * Absolute base URL of the web app, used for the run link in a PR body.
+   *
+   * Absent it, the body falls back to a relative `/jobs/<id>`, which resolves
+   * against github.com and therefore points at nothing. §6.9 asks the pull
+   * request to link back to the run, so a deployment that publishes should set
+   * this.
+   */
+  appBaseUrl?: string;
+  /** The App id. Present exactly when `mode` is `app`. */
+  appId?: string;
+  /** The decoded PEM. Present exactly when `mode` is `app`, and never logged. */
+  privateKey?: string;
+}
+
+/**
  * Whether `implementing` runs a real coding session or the Milestone 1 sleep.
  *
  * Exactly the `RIVET_SANDBOX` rule, for exactly the same reason. `off` is what
@@ -262,6 +312,8 @@ export interface WorkerConfig {
   sandbox: SandboxConfig;
   /** What runs the `implementing` phase, and the ceilings it runs under. */
   agent: AgentConfig;
+  /** Whether `finalizing` publishes, and the host budgets it publishes under. */
+  github: GitHubConfig;
   /** How long to wait for in-flight jobs on SIGTERM before forcing an exit. */
   shutdownGraceMs: number;
   logLevel: LogLevel;
@@ -335,6 +387,28 @@ const schema = z.object({
   AGENT_PREVIEW_MAX_BYTES: z.coerce.number().int().min(128).max(65_536).default(2_048),
   AGENT_HOME_DIR: z.string().min(1).default(join(tmpdir(), "rivet-pi")),
   RIVET_AGENT_SCRIPT: z.string().min(1).optional(),
+
+  // --- GitHub (M9) -----------------------------------------------------
+  RIVET_GITHUB: z.enum(GITHUB_MODES).default("off"),
+  GITHUB_APP_ID: z.string().min(1).optional(),
+  // Base64 rather than PEM text, because a multi-line value does not survive
+  // most environment loaders intact and a half-loaded private key fails as a
+  // signature error rather than as a configuration error.
+  GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
+  GITHUB_CLONE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(180_000),
+  GITHUB_PUSH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(180_000),
+  // 256MiB. Large enough for every repository Rivet is useful on, small enough
+  // that hitting it is a stated failure rather than a heap the worker dies on.
+  GITHUB_SEED_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_048_576)
+    .max(2_147_483_648)
+    .default(268_435_456),
+  RIVET_APP_URL: z
+    .string()
+    .url({ error: "RIVET_APP_URL must be an absolute URL, e.g. https://rivet.example.com" })
+    .optional(),
 });
 
 /** Every problem with the environment at once, rather than one per restart. */
@@ -428,6 +502,20 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
       homeDir: parsed.data.AGENT_HOME_DIR,
       ...parseAgentScript(parsed.data.RIVET_AGENT, parsed.data.RIVET_AGENT_SCRIPT),
     },
+    github: {
+      mode: parsed.data.RIVET_GITHUB,
+      cloneTimeoutMs: parsed.data.GITHUB_CLONE_TIMEOUT_MS,
+      pushTimeoutMs: parsed.data.GITHUB_PUSH_TIMEOUT_MS,
+      seedMaxBytes: parsed.data.GITHUB_SEED_MAX_BYTES,
+      ...(parsed.data.RIVET_APP_URL === undefined
+        ? {}
+        : { appBaseUrl: parsed.data.RIVET_APP_URL.replace(/\/+$/, "") }),
+      ...parseGitHubCredentials(
+        parsed.data.RIVET_GITHUB,
+        parsed.data.GITHUB_APP_ID,
+        parsed.data.GITHUB_APP_PRIVATE_KEY,
+      ),
+    },
   };
 
   assertLeaseInvariant(config.heartbeatSeconds, config.leaseSeconds);
@@ -438,6 +526,7 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
   );
   assertRealSandboxInProduction(config.sandbox.mode, env.NODE_ENV);
   assertRealAgentInProduction(config.agent.mode, env.NODE_ENV);
+  assertRealGitHubInProduction(config.github.mode, env.NODE_ENV);
   assertModelKeyPresent(config.agent, parsed.data.OPENROUTER_API_KEY);
   return config;
 }
@@ -508,6 +597,73 @@ export function assertRealAgentInProduction(mode: AgentMode, nodeEnv?: string): 
         "Set RIVET_AGENT=pi, or run this worker outside production.",
     ]);
   }
+}
+
+/**
+ * A deployment may not pretend to publish either.
+ *
+ * The last of the three, and the one that hides best. A worker with
+ * `RIVET_GITHUB=off` runs every phase for real - it provisions, plans, writes
+ * code, validates and reviews - and then records `publication.skipped` and
+ * reports `completed`. Every signal a human looks at says the job worked, and
+ * the one thing the job exists to produce was never created.
+ */
+export function assertRealGitHubInProduction(mode: GitHubMode, nodeEnv?: string): void {
+  if (mode === "off" && nodeEnv === "production") {
+    throw new WorkerConfigError([
+      "RIVET_GITHUB=off skips publication, which cannot be used with NODE_ENV=production: " +
+        "every job would be validated and reviewed and then complete without opening a pull " +
+        "request. Set RIVET_GITHUB=app, or run this worker outside production.",
+    ]);
+  }
+}
+
+/**
+ * The App credentials are checked at startup, not on the first publication.
+ *
+ * The same argument as `assertModelKeyPresent`, and a worse discovery point:
+ * `finalizing` is the last phase, so a missing credential would be found after
+ * a container, a clone, an install, a model session and a review have all been
+ * paid for - and it would fail a job whose work was already done and approved.
+ *
+ * The PEM arrives base64-encoded because a multi-line environment value does
+ * not survive most loaders intact, and a half-loaded key fails later as an
+ * unreadable signature rather than as a configuration problem. Decoding it here
+ * is what turns that into a refusal to boot.
+ */
+export function parseGitHubCredentials(
+  mode: GitHubMode,
+  appId: string | undefined,
+  encodedPrivateKey: string | undefined,
+): { appId?: string; privateKey?: string } {
+  if (mode !== "app") {
+    // Credentials without the mode are not an error: `.env.local` holds one set
+    // of values for a machine that switches between publishing and not, and the
+    // web app reads the same two variables for its own pickers.
+    return {};
+  }
+
+  const missing: string[] = [];
+  if (!appId) missing.push("GITHUB_APP_ID");
+  if (!encodedPrivateKey) missing.push("GITHUB_APP_PRIVATE_KEY");
+  if (missing.length > 0) {
+    throw new WorkerConfigError([
+      `RIVET_GITHUB=app needs ${missing.join(" and ")}. Without ${missing.length > 1 ? "them" : "it"} ` +
+        "every job would run to completion and only then fail to publish. Set the App " +
+        "credentials, or set RIVET_GITHUB=off to stop at the validated diff.",
+    ]);
+  }
+
+  const privateKey = Buffer.from(encodedPrivateKey ?? "", "base64").toString("utf8");
+  if (!privateKey.includes("PRIVATE KEY")) {
+    throw new WorkerConfigError([
+      "GITHUB_APP_PRIVATE_KEY did not decode to a PEM private key. It is the App's .pem file " +
+        "encoded as one base64 string, not the PEM text itself: " +
+        "base64 -i your-app.private-key.pem | tr -d '\\n'",
+    ]);
+  }
+
+  return { appId: appId ?? "", privateKey };
 }
 
 /**

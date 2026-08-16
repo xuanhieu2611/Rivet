@@ -17,6 +17,7 @@
     "@rivet/contracts": "workspace:*",
     "@rivet/core": "workspace:*",
     "@rivet/database": "workspace:*",
+    "@rivet/github": "workspace:*",
     "@rivet/queue": "workspace:*",
     "@rivet/sandbox": "workspace:*",
     "bullmq": "6.1.0",

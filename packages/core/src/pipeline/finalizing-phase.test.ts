@@ -419,7 +419,7 @@ describe("finalizingPhase", () => {
 
     await finalizingPhase({
       github,
-      runUrl: `http://localhost:3000/jobs/${job.id}`,
+      appBaseUrl: "http://localhost:3000",
     } as PipelineOptions)(test.ctx);
 
     expect(calls).toEqual([

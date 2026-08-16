@@ -75,6 +75,15 @@ describe("parseWorkerConfig", () => {
         previewMaxBytes: 2_048,
         homeDir: join(tmpdir(), "rivet-pi"),
       },
+      github: {
+        // Off by default, unlike the sandbox and the agent, because publishing
+        // needs an App that a fresh machine has not registered yet. Production
+        // refuses this value, which is where the default stops being benign.
+        mode: "off",
+        cloneTimeoutMs: 180_000,
+        pushTimeoutMs: 180_000,
+        seedMaxBytes: 268_435_456,
+      },
     });
   });
 
@@ -391,6 +400,92 @@ describe("the coding agent", () => {
         NODE_ENV: "production",
       }),
     ).toThrow(/rather than what a model decided/);
+  });
+});
+
+describe("GitHub publication", () => {
+  const PEM = "-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-key\n-----END RSA PRIVATE KEY-----\n";
+  const APP = {
+    RIVET_GITHUB: "app",
+    GITHUB_APP_ID: "123456",
+    GITHUB_APP_PRIVATE_KEY: Buffer.from(PEM, "utf8").toString("base64"),
+  };
+
+  it("is off by default, so publication is always a decision", () => {
+    expect(parseWorkerConfig().github.mode).toBe("off");
+  });
+
+  it("refuses to skip publication in production", () => {
+    // The third of the three, and the one that hides best: every phase runs for
+    // real and the job still completes without producing a pull request.
+    expect(() => parseWorkerConfig({ RIVET_GITHUB: "off", NODE_ENV: "production" })).toThrow(
+      /without opening a pull request/,
+    );
+  });
+
+  it("decodes the base64 private key into a PEM", () => {
+    const config = parseWorkerConfig(APP);
+
+    expect(config.github.mode).toBe("app");
+    expect(config.github.appId).toBe("123456");
+    expect(config.github.privateKey).toBe(PEM);
+  });
+
+  it("names every missing credential at once", () => {
+    // Checked at startup rather than at publication: `finalizing` is the last
+    // phase, so the alternative discovers this after a container, a clone, an
+    // install, a model session and a review have all been paid for.
+    expect(() => parseWorkerConfig({ RIVET_GITHUB: "app" })).toThrow(
+      /GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY/,
+    );
+  });
+
+  it("refuses a private key that is not base64-encoded PEM text", () => {
+    // The failure this prevents is a signature error on the first API call,
+    // which reads as an App misconfiguration rather than as a mangled variable.
+    expect(() => parseWorkerConfig({ ...APP, GITHUB_APP_PRIVATE_KEY: PEM })).toThrow(
+      /did not decode to a PEM private key/,
+    );
+  });
+
+  it("ignores credentials while GitHub is off", () => {
+    // Not an error, unlike RIVET_AGENT_SCRIPT: one `.env.local` serves a machine
+    // that switches between publishing and not, and the web app reads the same
+    // two variables for its own pickers.
+    const config = parseWorkerConfig({ ...APP, RIVET_GITHUB: "off" });
+
+    expect(config.github.appId).toBeUndefined();
+    expect(config.github.privateKey).toBeUndefined();
+  });
+
+  it("gives the host clone and push their own budgets and bound", () => {
+    // Distinct from SANDBOX_CLONE_TIMEOUT_MS: different operations, on
+    // different machines, with different reasons to be slow.
+    const config = parseWorkerConfig({
+      ...APP,
+      GITHUB_CLONE_TIMEOUT_MS: "60000",
+      GITHUB_PUSH_TIMEOUT_MS: "90000",
+      GITHUB_SEED_MAX_BYTES: "2097152",
+    });
+
+    expect(config.github.cloneTimeoutMs).toBe(60_000);
+    expect(config.github.pushTimeoutMs).toBe(90_000);
+    expect(config.github.seedMaxBytes).toBe(2_097_152);
+  });
+
+  it("keeps the run link base absolute, without a trailing slash", () => {
+    // The base is concatenated with `/jobs/<id>`, so a trailing slash would
+    // produce a double slash in every published pull request body.
+    expect(
+      parseWorkerConfig({ RIVET_APP_URL: "https://rivet.example.com/" }).github.appBaseUrl,
+    ).toBe("https://rivet.example.com");
+    expect(parseWorkerConfig().github.appBaseUrl).toBeUndefined();
+  });
+
+  it("rejects a run link base that is not a URL", () => {
+    // A relative value here would silently produce pull request links that
+    // resolve against github.com.
+    expect(() => parseWorkerConfig({ RIVET_APP_URL: "/jobs" })).toThrow(WorkerConfigError);
   });
 });
 

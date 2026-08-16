@@ -277,7 +277,7 @@ async function publishValidatedWorkspace(
     },
     validationReport,
     reviewReport,
-    runUrl: options.runUrl ?? `/jobs/${ctx.job.id}`,
+    runUrl: runUrlFor(options, ctx.job.id),
   });
   const bodyArtifactId = await ctx.artifact({
     type: "pull_request_body",
@@ -412,6 +412,20 @@ function parseDiffCount(value: string | undefined): number | null | undefined {
   if (value === "-") return null;
   if (value === undefined || !/^\d+$/u.test(value)) return undefined;
   return Number(value);
+}
+
+/**
+ * The link a pull request carries back to the run that produced it.
+ *
+ * Relative when no base URL is configured. That is a deliberately imperfect
+ * fallback: it is right in the app and wrong in a pull request body, which is a
+ * visible missing link rather than a silent one pointing at somebody else's
+ * deployment.
+ */
+function runUrlFor(options: PipelineOptions, jobId: string): string {
+  const path = `/jobs/${jobId}`;
+  const base = options.appBaseUrl?.replace(/\/+$/u, "");
+  return base ? `${base}${path}` : path;
 }
 
 function branchUrlFor(repo: RepoRef, branch: string): string {

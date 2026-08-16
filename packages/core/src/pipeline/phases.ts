@@ -136,8 +136,15 @@ export interface PipelineOptions {
   diffMaxBytes: number;
   /** Passed to every sandbox. Empty at Milestone 2, and that is the point. */
   env?: Record<string, string>;
-  /** Relative or absolute link included in a published pull-request body. */
-  runUrl?: string;
+  /**
+   * Absolute base URL of the web app, used to link a pull request to its run.
+   *
+   * A base rather than a link, because the link is per job and the
+   * configuration is per worker. Absent it, the body falls back to a relative
+   * `/jobs/<id>`, which is correct inside Rivet and resolves against github.com
+   * in a pull request - which is why a publishing deployment supplies this.
+   */
+  appBaseUrl?: string;
   /**
    * Host GitHub operations used when GitHub publication is enabled and a job
    * carries an installation binding.
