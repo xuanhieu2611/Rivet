@@ -1,0 +1,19 @@
+[
+  {
+    "number": 17,
+    "title": "Fix the widget",
+    "body": "The widget fails under concurrent use.",
+    "html_url": "https://github.com/acme/widgets/issues/17",
+    "state": "open"
+  },
+  {
+    "number": 18,
+    "title": "A pull request is not an issue",
+    "body": "",
+    "html_url": "https://github.com/acme/widgets/pull/18",
+    "state": "open",
+    "pull_request": {
+      "url": "https://api.github.com/repos/acme/widgets/pulls/18"
+    }
+  }
+]

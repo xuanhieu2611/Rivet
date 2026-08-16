@@ -1,0 +1,12 @@
+[
+  {
+    "node_id": "PR_kwDO123",
+    "number": 18,
+    "html_url": "https://github.com/acme/widgets/pull/18",
+    "state": "open",
+    "merged_at": null,
+    "head": {
+      "ref": "rivet/job-1234-fix-widget"
+    }
+  }
+]

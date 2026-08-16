@@ -1,0 +1,7 @@
+{
+  "sha": "commit-sha-1",
+  "tree": {
+    "sha": "tree-sha-1",
+    "url": "https://api.github.com/repos/acme/widgets/git/trees/tree-sha-1"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@rivet/github",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@octokit/app": "^16.1.4",
+    "@octokit/rest": "^22.0.1",
+    "@rivet/contracts": "workspace:*",
+    "@rivet/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@rivet/config": "workspace:*",
+    "@types/node": "^24.13.3",
+    "eslint": "^10.8.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
