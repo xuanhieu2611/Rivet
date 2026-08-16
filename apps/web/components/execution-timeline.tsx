@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { commandAnchorId } from "@/components/job-live/command-anchor";
 import { JOB_EVENT_TONE, statusLabel } from "@/lib/job-status";
 import { formatAgentCost, formatBytes, formatTimeOfDay, formatTokenCount } from "@/lib/format";
+import { describePublicationEvent, isPublicationEvent } from "@/lib/publication-events";
 import { describeRecoveryEvent, isRecoveryEvent } from "@/lib/recovery-events";
 import { describeReviewEvent, isReviewEvent } from "@/lib/review-events";
 import { cn } from "@/lib/utils";
@@ -248,6 +249,16 @@ function EventContent({ event }: { event: JobEvent }): ReactNode {
     case "review.skipped":
       return <ReviewEventContent event={event} />;
 
+    case "github.repository_bound":
+    case "branch.created":
+    case "commit.created":
+    case "push.completed":
+    case "pull_request.opened":
+    case "pull_request.adopted":
+    case "publication.skipped":
+    case "external_effect.recorded":
+      return <PublicationEventContent event={event} />;
+
     default:
       return <p className="text-sm leading-snug">{event.message}</p>;
   }
@@ -316,6 +327,54 @@ function ReviewEventContent({ event }: { event: JobEvent }) {
         <p className="text-muted-foreground text-xs break-words">
           {presentation.facts.join(" · ")}
         </p>
+      ) : null}
+    </div>
+  );
+}
+
+const PUBLICATION_EMPHASIS_CLASS = {
+  neutral: "text-foreground",
+  positive: "text-emerald-700 dark:text-emerald-300",
+  negative: "text-destructive",
+} as const;
+
+/**
+ * A publication entry, and the one kind of timeline row that links outward.
+ *
+ * Everything else in the log describes something that happened inside Rivet.
+ * These describe something that happened on a server Rivet does not own, so the
+ * row carries the link a reader would otherwise have to reconstruct from the
+ * job's repository and branch.
+ */
+function PublicationEventContent({ event }: { event: JobEvent }) {
+  const presentation = describePublicationEvent(event);
+  if (!presentation) return <p className="text-sm leading-snug">{event.message}</p>;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span
+          className={cn("text-sm font-medium", PUBLICATION_EMPHASIS_CLASS[presentation.emphasis])}
+        >
+          {presentation.label}
+        </span>
+        <p className="text-sm leading-snug">{event.message}</p>
+      </div>
+      <p className="text-muted-foreground text-xs leading-snug">{presentation.explanation}</p>
+      {presentation.facts.length > 0 ? (
+        <p className="text-muted-foreground font-mono text-xs break-words">
+          {presentation.facts.join(" · ")}
+        </p>
+      ) : null}
+      {presentation.link ? (
+        <a
+          href={presentation.link.href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="inline-block text-xs text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
+        >
+          {presentation.link.text}
+        </a>
       ) : null}
     </div>
   );
@@ -452,7 +511,8 @@ function describeEventData(event: JobEvent): string | null {
     event.type === "baseline.check_recorded" ||
     event.type === "validation.check_recorded" ||
     event.type === "validation.recorded" ||
-    isReviewEvent(event)
+    isReviewEvent(event) ||
+    isPublicationEvent(event)
   ) {
     return null;
   }

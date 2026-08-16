@@ -38,9 +38,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   autonomous engineering jobs
                 </span>
               </Link>
-              <span className="border-border text-muted-foreground rounded-full border px-2 py-0.5 text-[11px] font-medium">
-                Milestone 5
-              </span>
+              <nav className="flex items-center gap-4">
+                <Link
+                  href="/settings/github"
+                  className="text-muted-foreground hover:text-foreground text-xs"
+                >
+                  GitHub
+                </Link>
+                <span className="border-border text-muted-foreground rounded-full border px-2 py-0.5 text-[11px] font-medium">
+                  Milestone 9
+                </span>
+              </nav>
             </div>
           </header>
 

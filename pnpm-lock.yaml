@@ -32,6 +32,9 @@ importers:
       '@rivet/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@rivet/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@rivet/queue':
         specifier: workspace:*
         version: link:../../packages/queue

@@ -8,15 +8,31 @@ import {
   type JobDetail,
 } from "@rivet/contracts";
 import { useRouter } from "next/navigation";
+import { useCallback, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
+import {
+  type IssueSelection,
+  RepositoryPicker,
+  type RepositorySelection,
+} from "@/components/github/repository-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { ApiErrorBody } from "@/lib/api/responses";
 
-const FIELDS = ["title", "description", "repoUrl", "baseBranch"] as const;
+const FIELDS = [
+  "title",
+  "description",
+  "repoUrl",
+  "baseBranch",
+  "githubInstallationId",
+  "repoOwner",
+  "repoName",
+  "issueNumber",
+  "issueUrl",
+] as const;
 type FieldName = (typeof FIELDS)[number];
 
 function isFieldName(value: string): value is FieldName {
@@ -30,9 +46,20 @@ function isFieldName(value: string): value is FieldName {
  * route handler runs - so the client cannot drift from the server. Field errors
  * the server returns anyway (a race, or a rule the client build predates) are
  * pushed back onto the matching inputs rather than swallowed.
+ *
+ * Milestone 9 adds the GitHub binding. A picked repository fills `repoUrl` along
+ * with the installation, owner and name that let `finalizing` publish; the
+ * manual URL stays as a disclosed fallback, and a job created through it runs
+ * the whole pipeline and records that publication was skipped. That fallback is
+ * not a courtesy: it is the path every fixture, `demo:job` and `demo:recovery`
+ * take, and it must keep working with no GitHub App at all.
  */
-export function NewJobForm() {
+export function NewJobForm({ githubEnabled }: { githubEnabled: boolean }) {
   const router = useRouter();
+  const [mode, setMode] = useState<"picker" | "manual">(githubEnabled ? "picker" : "manual");
+  const [pickerUnavailable, setPickerUnavailable] = useState<string | null>(null);
+  const prefill = useRef<{ title: string; description: string } | null>(null);
+
   const form = useForm<CreateJobInput, unknown, CreateJob>({
     resolver: zodResolver(createJobSchema),
     defaultValues: { title: "", description: "", repoUrl: "", baseBranch: "main" },
@@ -42,8 +69,86 @@ export function NewJobForm() {
     register,
     handleSubmit,
     setError,
+    setValue,
+    getValues,
     formState: { errors, isSubmitting },
   } = form;
+
+  /** Clears every GitHub field at once, so a half-bound job can never be posted. */
+  const clearBinding = useCallback(() => {
+    setValue("githubInstallationId", undefined);
+    setValue("repoOwner", undefined);
+    setValue("repoName", undefined);
+  }, [setValue]);
+
+  const clearIssue = useCallback(() => {
+    setValue("issueNumber", undefined);
+    setValue("issueUrl", undefined);
+  }, [setValue]);
+
+  const onRepositoryChange = useCallback(
+    (selection: RepositorySelection | null) => {
+      if (!selection) {
+        clearBinding();
+        setValue("repoUrl", "");
+        return;
+      }
+      setValue("githubInstallationId", selection.installationId);
+      setValue("repoOwner", selection.owner);
+      setValue("repoName", selection.name);
+      setValue("repoUrl", selection.repoUrl);
+      setValue("baseBranch", selection.defaultBranch);
+    },
+    [clearBinding, setValue],
+  );
+
+  const onIssueChange = useCallback(
+    (selection: IssueSelection | null) => {
+      if (!selection) {
+        clearIssue();
+        return;
+      }
+
+      setValue("issueNumber", selection.number);
+      setValue("issueUrl", selection.url);
+
+      // Prefill only what the person has not written themselves. An empty field
+      // is fair game, and so is one still holding the previous issue's text;
+      // anything else is their typing and stays.
+      const current = getValues();
+      const nextTitle = selection.title;
+      const nextDescription = issueDescription(selection);
+      if (current.title === "" || current.title === prefill.current?.title) {
+        setValue("title", nextTitle, { shouldValidate: false });
+      }
+      if (current.description === "" || current.description === prefill.current?.description) {
+        setValue("description", nextDescription, { shouldValidate: false });
+      }
+      prefill.current = { title: nextTitle, description: nextDescription };
+    },
+    [clearIssue, getValues, setValue],
+  );
+
+  const onUnavailable = useCallback(
+    (reason: string) => {
+      setPickerUnavailable(reason);
+      setMode("manual");
+      clearBinding();
+      clearIssue();
+    },
+    [clearBinding, clearIssue],
+  );
+
+  const useManualUrl = () => {
+    setMode("manual");
+    clearBinding();
+    clearIssue();
+  };
+
+  const usePicker = () => {
+    setMode("picker");
+    setValue("repoUrl", "");
+  };
 
   const onSubmit = handleSubmit(async (values) => {
     let response: Response;
@@ -77,6 +182,35 @@ export function NewJobForm() {
 
   return (
     <form onSubmit={(event) => void onSubmit(event)} noValidate className="space-y-6">
+      {githubEnabled && mode === "picker" ? (
+        <div className="border-border/70 space-y-4 rounded-xl border p-4">
+          <div className="space-y-1">
+            <h2 className="text-sm font-medium">GitHub</h2>
+            <p className="text-muted-foreground text-xs">
+              A picked repository is what lets this job end in a pull request.
+            </p>
+          </div>
+          <RepositoryPicker
+            onRepositoryChange={onRepositoryChange}
+            onIssueChange={onIssueChange}
+            onUnavailable={onUnavailable}
+            disabled={isSubmitting}
+          />
+          <button
+            type="button"
+            onClick={useManualUrl}
+            className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
+          >
+            Enter a repository URL instead
+          </button>
+          {errors.githubInstallationId?.message || errors.repoOwner?.message ? (
+            <p className="text-destructive text-xs">
+              {errors.githubInstallationId?.message ?? errors.repoOwner?.message}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       <Field
         label="Title"
         htmlFor="title"
@@ -110,13 +244,14 @@ export function NewJobForm() {
         <Field
           label="Repository URL"
           htmlFor="repoUrl"
-          hint="Must be https."
+          hint={mode === "picker" ? "Filled by the picker." : "Must be https."}
           error={errors.repoUrl?.message}
         >
           <Input
             id="repoUrl"
             inputMode="url"
             placeholder="https://github.com/acme/widgets"
+            readOnly={mode === "picker"}
             aria-invalid={errors.repoUrl ? true : undefined}
             {...register("repoUrl")}
           />
@@ -137,6 +272,28 @@ export function NewJobForm() {
         </Field>
       </div>
 
+      {mode === "manual" ? (
+        <p className="text-muted-foreground text-xs">
+          {pickerUnavailable
+            ? `${pickerUnavailable} This job runs against the URL above and finishes without opening a pull request.`
+            : githubEnabled
+              ? "This job runs against the URL above and finishes without opening a pull request."
+              : "GitHub publication is off on this deployment, so a job ends at its validated diff."}
+          {githubEnabled && !pickerUnavailable ? (
+            <>
+              {" "}
+              <button
+                type="button"
+                onClick={usePicker}
+                className="text-foreground underline-offset-2 hover:underline"
+              >
+                Pick a repository instead
+              </button>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
       <div className="flex items-center gap-3 pt-2">
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Creating…" : "Create job"}
@@ -147,6 +304,19 @@ export function NewJobForm() {
       </div>
     </form>
   );
+}
+
+/**
+ * The issue, as the task text a coding session reads.
+ *
+ * The issue URL is on the job and in the pull request body already; repeating
+ * the number and title here is what makes the description standalone when
+ * somebody edits it before submitting.
+ */
+function issueDescription(issue: IssueSelection): string {
+  const heading = `Resolve issue #${String(issue.number)}: ${issue.title}`;
+  const body = issue.body?.trim();
+  return body ? `${heading}\n\n${body}` : heading;
 }
 
 function Field({

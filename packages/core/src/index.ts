@@ -32,6 +32,7 @@ export * from "./github/branch-name";
 export * from "./github/effect-store";
 export * from "./github/errors";
 export type * from "./github/github";
+export * from "./github/installation-store";
 export type * from "./github/host-git";
 export * from "./github/pull-request-body";
 export * from "./github/reconcile";

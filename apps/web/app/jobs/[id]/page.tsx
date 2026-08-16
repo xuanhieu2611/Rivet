@@ -204,9 +204,41 @@ export default async function JobDetailPage({ params }: PageProps) {
                     ["Final branch", job.finalBranch ?? "not yet", "font-mono text-xs"],
                     [
                       "Pull request",
-                      job.pullRequestUrl ?? "not yet",
+                      // The deliverable, so it is a link the moment one exists
+                      // rather than a URL the reader has to select and paste.
+                      job.pullRequestUrl ? (
+                        <ExternalLink href={job.pullRequestUrl}>
+                          {job.pullRequestNumber === null
+                            ? "View pull request"
+                            : `#${String(job.pullRequestNumber)}`}
+                        </ExternalLink>
+                      ) : (
+                        "not yet"
+                      ),
                       "break-all font-mono text-xs",
                     ],
+                    ...(job.issueUrl || job.issueNumber !== null
+                      ? ([
+                          [
+                            "Issue",
+                            job.issueUrl ? (
+                              <ExternalLink href={job.issueUrl}>
+                                {job.issueNumber === null
+                                  ? "View issue"
+                                  : `#${String(job.issueNumber)}`}
+                              </ExternalLink>
+                            ) : (
+                              `#${String(job.issueNumber)}`
+                            ),
+                            "font-mono text-xs",
+                          ],
+                        ] as const)
+                      : []),
+                    ...(job.githubInstallationId === null
+                      ? []
+                      : ([
+                          ["Installation", String(job.githubInstallationId), "font-mono text-xs"],
+                        ] as const)),
                   ]}
                 />
               </CardContent>
@@ -277,7 +309,20 @@ export default async function JobDetailPage({ params }: PageProps) {
   );
 }
 
-function DetailList({ rows }: { rows: readonly (readonly [string, string, string?])[] }) {
+function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
+    >
+      {children}
+    </a>
+  );
+}
+
+function DetailList({ rows }: { rows: readonly (readonly [string, React.ReactNode, string?])[] }) {
   return (
     <dl className="space-y-3 text-sm">
       {rows.map(([label, value, valueClassName]) => (

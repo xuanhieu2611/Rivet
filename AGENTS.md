@@ -90,6 +90,18 @@ validation, artifact, plan, checkpoint, reclaim, restore and resume events have 
 presentations, and the M6 surface adds an implementation-plan panel rendering the six structured
 sections. No checkpoint payload reaches the browser and there is no checkpoint download endpoint.
 
+The M9 web surface adds `/settings/github` and four routes under `/api/github` - `setup`,
+`installations`, `repositories`, `issues` - all read-only apart from the install callback, all
+backed by the GitHub port, and all answering 503 rather than 500 when `RIVET_GITHUB` is off or the
+App credentials are absent. `resolveGitHubWebConfig` is the web app's half of that switch and is a
+pure function of an env object, which is what keeps `next build` working on a machine with no
+credentials. The install callback trusts nothing in its query string: it lists the installations the
+App can actually act on and persists a row only if the callback's id is among them. The create form
+grows an installation/repository/issue picker with the manual URL kept as a disclosed fallback -
+that fallback is the path every fixture, `demo:job` and `demo:recovery` take. The eight publication
+events have their own timeline presentation, the only rows in the log that link outward, and the job
+detail page renders the pull request and issue as links once they exist.
+
 **A red baseline is not a failed job.** The `analyzing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
 whatever the exit code was: PRD §11 C wants to know whether the repository was already broken
@@ -372,6 +384,16 @@ cannot happen. Phases go through `PhaseContext.checkpoint()`, which captures the
 commits the row with its `checkpoint.created` event; at a phase boundary the capture happens before
 `phase.completed`, so a crash between the two replays the phase rather than skipping it.
 
+**M9's two tables have single writers too, and they are opposites.** `github/effect-store.ts` is the
+only writer of `job_external_effects` and is append-only like every other ledger here: its insert is
+conflict-aware on `(job_id, kind)` and returns the existing receipt rather than throwing, which is
+what makes "did I already do this" a question Postgres answers. `github/installation-store.ts` is
+the only writer of `github_installations` and is the one table in the system that is a **cache**
+rather than a record - GitHub owns the truth, so its upsert really updates, and a read of the
+control-plane surface goes to the API and refreshes what it learns. M9 subscribes to no webhooks, so
+pulling on demand is the only way an uninstall ever becomes visible. Rows for installations GitHub
+stops returning are left in place, because jobs reference them.
+
 **Workspace capture goes through a temporary Git index, and the flags are not decoration.**
 `GIT_INDEX_FILE=<temp> git read-tree HEAD`, `git add -A`, then
 `git diff --cached --binary --full-index --no-renames --no-ext-diff --no-textconv HEAD`. Against the
@@ -510,8 +532,9 @@ insert with no remapping.
   imports must be written as `import type`.
 - Prettier formats Markdown too. Run `pnpm format` after editing docs or CI will fail on
   `format:check`.
-- Client components are the exception, not the rule: currently the new-job form, cancel button, and
-  job-live provider plus its status, timeline, and command-log consumers.
+- Client components are the exception, not the rule: currently the new-job form and its GitHub
+  repository picker, the cancel button, and the job-live provider plus its status, timeline, and
+  command-log consumers.
 
 ### Retired scaffolding and live updates
 
