@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "eval:build": "tsx src/eval-build.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:sandbox": "vitest run --config vitest.sandbox.config.ts"
   },

@@ -17,6 +17,9 @@ out/
 # turborepo
 .turbo/
 
+# generated evaluation fixtures
+.rivet/
+
 # environment - never commit real credentials
 .env
 .env.*
