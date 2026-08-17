@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   assertArtifactReadLimits,
   assertLeaseInvariant,
+  DEFAULT_BENCHMARK_FIXTURE_ROOT,
+  DEFAULT_BENCHMARK_ROOT,
   DEFAULT_MODEL,
   DEFAULT_MODEL_PROVIDER,
   DEFAULT_SANDBOX_IMAGE,
@@ -82,6 +84,15 @@ describe("parseWorkerConfig", () => {
         mode: "off",
         cloneTimeoutMs: 180_000,
         pushTimeoutMs: 180_000,
+        seedMaxBytes: 268_435_456,
+      },
+      eval: {
+        // Off by default and refused in production: the evaluation harness is
+        // the one switch that widens what a worker will clone.
+        mode: "off",
+        benchmarkRoot: DEFAULT_BENCHMARK_ROOT,
+        fixtureRoot: DEFAULT_BENCHMARK_FIXTURE_ROOT,
+        cloneTimeoutMs: 180_000,
         seedMaxBytes: 268_435_456,
       },
     });
@@ -486,6 +497,64 @@ describe("GitHub publication", () => {
     // A relative value here would silently produce pull request links that
     // resolve against github.com.
     expect(() => parseWorkerConfig({ RIVET_APP_URL: "/jobs" })).toThrow(WorkerConfigError);
+  });
+});
+
+describe("evaluation harness", () => {
+  /** A production environment the other three switches already accept. */
+  const PRODUCTION = {
+    NODE_ENV: "production",
+    RIVET_GITHUB: "app",
+    GITHUB_APP_ID: "123456",
+    GITHUB_APP_PRIVATE_KEY: Buffer.from(
+      "-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-key\n-----END RSA PRIVATE KEY-----\n",
+      "utf8",
+    ).toString("base64"),
+  };
+
+  it("is off by default, so a worker never looks for benchmarks it was not asked for", () => {
+    const config = parseWorkerConfig();
+
+    expect(config.eval.mode).toBe("off");
+    expect(config.eval.benchmarkRoot).toBe(DEFAULT_BENCHMARK_ROOT);
+    expect(config.eval.fixtureRoot).toBe(DEFAULT_BENCHMARK_FIXTURE_ROOT);
+  });
+
+  it("refuses to run benchmark fixtures in production", () => {
+    // The fourth member of the switch family, and the only one whose refusal is
+    // about widening rather than narrowing: `on` teaches this worker to clone
+    // something other than the repository a job named. The rest of the
+    // environment is a valid production one, so this is the only complaint.
+    const production = { ...PRODUCTION, RIVET_EVAL: "on" };
+
+    expect(() => parseWorkerConfig(production)).toThrow(/widens what this worker will run against/);
+    expect(() => parseWorkerConfig(production)).toThrow(WorkerConfigError);
+    expect(() => parseWorkerConfig(PRODUCTION)).not.toThrow();
+  });
+
+  it("allows the harness outside production", () => {
+    // Including with no NODE_ENV at all, which is how CI and a laptop run.
+    expect(parseWorkerConfig({ RIVET_EVAL: "on" }).eval.mode).toBe("on");
+    expect(parseWorkerConfig({ RIVET_EVAL: "on", NODE_ENV: "test" }).eval.mode).toBe("on");
+  });
+
+  it("takes both roots and both host bounds from the environment", () => {
+    const config = parseWorkerConfig({
+      RIVET_EVAL: "on",
+      RIVET_BENCHMARK_ROOT: "/srv/benchmarks",
+      RIVET_BENCHMARK_FIXTURE_ROOT: "/srv/built",
+      RIVET_EVAL_CLONE_TIMEOUT_MS: "60000",
+      RIVET_EVAL_SEED_MAX_BYTES: "2097152",
+    });
+
+    expect(config.eval.benchmarkRoot).toBe("/srv/benchmarks");
+    expect(config.eval.fixtureRoot).toBe("/srv/built");
+    expect(config.eval.cloneTimeoutMs).toBe(60_000);
+    expect(config.eval.seedMaxBytes).toBe(2_097_152);
+  });
+
+  it("rejects a mode that is neither on nor off", () => {
+    expect(() => parseWorkerConfig({ RIVET_EVAL: "yes" })).toThrow(WorkerConfigError);
   });
 });
 

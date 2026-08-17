@@ -1,0 +1,11 @@
+{
+  "name": "rivet-benchmark-fixture-partial",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/order.test.js",
+    "typecheck": "node --check src/order.js && node --check test/order.test.js",
+    "lint": "node --check src/order.js && node --check test/order.test.js"
+  }
+}

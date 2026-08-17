@@ -1,6 +1,7 @@
 import type { JobStatus } from "@rivet/contracts";
 
 import type { CodingAgent } from "../agent/coding-agent";
+import type { LocalSeedPipelineOptions } from "../evaluation/local-seed";
 import type { GitHubPipelineOptions } from "../github/host-git";
 import type { SandboxProvider } from "../sandbox/sandbox";
 import { baselinePhase } from "./baseline-phase";
@@ -156,6 +157,16 @@ export interface PipelineOptions {
    * public-repository clone path remains available for local and CI runs.
    */
   github?: GitHubPipelineOptions;
+  /**
+   * The evaluation harness's seed source, when this worker runs benchmarks.
+   *
+   * Present only under `RIVET_EVAL=on`, and read only by a job whose `repoUrl`
+   * uses the `rivet-local:` scheme. Absent it, such a job fails with a stated
+   * reason rather than falling through to a clone that cannot possibly work -
+   * which is the same rule the GitHub option follows and exists for the same
+   * reason: a seed source that silently degrades measures a different system.
+   */
+  localSeed?: LocalSeedPipelineOptions;
   /**
    * The coding agent, if this worker has one.
    *

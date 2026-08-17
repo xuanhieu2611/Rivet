@@ -8,6 +8,7 @@ export * from "./job";
 export * from "./job-artifact";
 export * from "./job-command";
 export * from "./job-event";
+export * from "./local-repo-url";
 export * from "./review-report";
 export * from "./validation-check";
 export * from "./validation-config";

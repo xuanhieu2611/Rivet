@@ -1,12 +1,25 @@
 /* eslint-disable no-console -- this command is a local build transcript */
-import { resolve } from "node:path";
-
 import { buildBenchmarkFixtures } from "@rivet/core";
 
+import {
+  DEFAULT_BENCHMARK_FIXTURE_ROOT,
+  DEFAULT_BENCHMARK_ROOT,
+  findRepositoryRoot,
+} from "./config";
+import { resolveRoot } from "./eval";
+
 async function main(): Promise<void> {
-  const repositoryRoot = resolve(import.meta.dirname, "../../..");
-  const benchmarkRoot = resolve(repositoryRoot, process.env.RIVET_BENCHMARK_ROOT ?? "benchmarks");
-  const outputRoot = resolve(repositoryRoot, ".rivet", "benchmarks");
+  // The same two roots the worker's local seed source reads, resolved the same
+  // way, so a case that builds here is a case a job can be seeded from.
+  const repositoryRoot = findRepositoryRoot();
+  const benchmarkRoot = resolveRoot(
+    process.env.RIVET_BENCHMARK_ROOT ?? DEFAULT_BENCHMARK_ROOT,
+    repositoryRoot,
+  );
+  const outputRoot = resolveRoot(
+    process.env.RIVET_BENCHMARK_FIXTURE_ROOT ?? DEFAULT_BENCHMARK_FIXTURE_ROOT,
+    repositoryRoot,
+  );
   const built = await buildBenchmarkFixtures({ benchmarkRoot, outputRoot });
 
   if (built.length === 0) {

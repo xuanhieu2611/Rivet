@@ -201,6 +201,57 @@ export interface GitHubConfig {
 }
 
 /**
+ * Whether this worker will run evaluation jobs against local fixtures.
+ *
+ * The fourth member of the `RIVET_SANDBOX`/`RIVET_AGENT`/`RIVET_GITHUB` family
+ * and the one that widens rather than narrows: `on` teaches provisioning a
+ * second seed source, so a job whose `repoUrl` is `rivet-local:<case-id>`
+ * clones a bare repository this host built instead of a remote. Nothing a
+ * browser can submit reaches it - `createJobSchema.repoUrl` is https-only and
+ * stays that way - and the scheme carries an identifier rather than a path.
+ *
+ * Refused under `NODE_ENV=production` for the reason its three siblings are,
+ * with the direction reversed: the others refuse a mode that does less work
+ * than it claims, and this one refuses a mode that will clone something other
+ * than a customer's repository. A production worker has no benchmarks on disk
+ * and no business looking for any.
+ */
+/**
+ * The two benchmark roots, relative to the repository by default.
+ *
+ * Kept relative here because `parseWorkerConfig` is a pure function of an env
+ * object and resolving a path against a working directory is not. The one
+ * caller that needs an absolute path resolves it against the repository root,
+ * which is also how `pnpm eval:build` finds the same two directories.
+ */
+export const DEFAULT_BENCHMARK_ROOT = "benchmarks";
+export const DEFAULT_BENCHMARK_FIXTURE_ROOT = ".rivet/benchmarks";
+
+export const EVAL_MODES = ["on", "off"] as const;
+export type EvalMode = (typeof EVAL_MODES)[number];
+
+export interface EvalConfig {
+  mode: EvalMode;
+  /**
+   * Where the git-tracked benchmark cases live.
+   *
+   * Read by the fixture builder and, from Stage 7, by the evaluation runner and
+   * the grader. The worker's seed path does not use it: a job names a case, and
+   * the case's *built* repository is what gets cloned.
+   */
+  benchmarkRoot: string;
+  /**
+   * Where `pnpm eval:build` writes `<case-id>.git`, and the only directory the
+   * local seed source will resolve a job's repository below.
+   */
+  fixtureRoot: string;
+  /** Host clone and archive budget for a local fixture, mirroring the GitHub one. */
+  cloneTimeoutMs: number;
+  /** Bound on the complete seed archive, applied before it enters the sandbox. */
+  seedMaxBytes: number;
+}
+
+/**
  * Whether `implementing` runs a real coding session or the Milestone 1 sleep.
  *
  * Exactly the `RIVET_SANDBOX` rule, for exactly the same reason. `off` is what
@@ -314,6 +365,8 @@ export interface WorkerConfig {
   agent: AgentConfig;
   /** Whether `finalizing` publishes, and the host budgets it publishes under. */
   github: GitHubConfig;
+  /** Whether this worker will seed a job from a local benchmark fixture. */
+  eval: EvalConfig;
   /** How long to wait for in-flight jobs on SIGTERM before forcing an exit. */
   shutdownGraceMs: number;
   logLevel: LogLevel;
@@ -409,6 +462,18 @@ const schema = z.object({
     .string()
     .url({ error: "RIVET_APP_URL must be an absolute URL, e.g. https://rivet.example.com" })
     .optional(),
+
+  // --- evaluation harness (M10) ----------------------------------------
+  RIVET_EVAL: z.enum(EVAL_MODES).default("off"),
+  RIVET_BENCHMARK_ROOT: z.string().min(1).default(DEFAULT_BENCHMARK_ROOT),
+  RIVET_BENCHMARK_FIXTURE_ROOT: z.string().min(1).default(DEFAULT_BENCHMARK_FIXTURE_ROOT),
+  RIVET_EVAL_CLONE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(180_000),
+  RIVET_EVAL_SEED_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_048_576)
+    .max(2_147_483_648)
+    .default(268_435_456),
 });
 
 /** Every problem with the environment at once, rather than one per restart. */
@@ -516,6 +581,13 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
         parsed.data.GITHUB_APP_PRIVATE_KEY,
       ),
     },
+    eval: {
+      mode: parsed.data.RIVET_EVAL,
+      benchmarkRoot: parsed.data.RIVET_BENCHMARK_ROOT,
+      fixtureRoot: parsed.data.RIVET_BENCHMARK_FIXTURE_ROOT,
+      cloneTimeoutMs: parsed.data.RIVET_EVAL_CLONE_TIMEOUT_MS,
+      seedMaxBytes: parsed.data.RIVET_EVAL_SEED_MAX_BYTES,
+    },
   };
 
   assertLeaseInvariant(config.heartbeatSeconds, config.leaseSeconds);
@@ -527,6 +599,7 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
   assertRealSandboxInProduction(config.sandbox.mode, env.NODE_ENV);
   assertRealAgentInProduction(config.agent.mode, env.NODE_ENV);
   assertRealGitHubInProduction(config.github.mode, env.NODE_ENV);
+  assertEvaluationDisabledInProduction(config.eval.mode, env.NODE_ENV);
   assertModelKeyPresent(config.agent, parsed.data.OPENROUTER_API_KEY);
   return config;
 }
@@ -614,6 +687,27 @@ export function assertRealGitHubInProduction(mode: GitHubMode, nodeEnv?: string)
       "RIVET_GITHUB=off skips publication, which cannot be used with NODE_ENV=production: " +
         "every job would be validated and reviewed and then complete without opening a pull " +
         "request. Set RIVET_GITHUB=app, or run this worker outside production.",
+    ]);
+  }
+}
+
+/**
+ * A deployment may not run benchmark fixtures, and the argument is the reverse
+ * of its three siblings'.
+ *
+ * The others refuse a mode that does less work than it claims. This one refuses
+ * a mode that widens what a worker will clone: `on` makes `rivet-local:<case>`
+ * a repository the worker resolves below a configured root and seeds from the
+ * host. That is exactly what the evaluation harness needs and exactly what a
+ * production worker - which has no benchmarks on disk and runs jobs a customer
+ * pointed at their own repository - should not accept.
+ */
+export function assertEvaluationDisabledInProduction(mode: EvalMode, nodeEnv?: string): void {
+  if (mode === "on" && nodeEnv === "production") {
+    throw new WorkerConfigError([
+      "RIVET_EVAL=on lets a job clone a local benchmark fixture instead of a repository, which " +
+        "cannot be used with NODE_ENV=production: it widens what this worker will run against. " +
+        "Set RIVET_EVAL=off, or run the evaluation harness outside production.",
     ]);
   }
 }
@@ -739,6 +833,27 @@ function parseFault(phase: string | undefined, mode: FaultMode | undefined): Fau
     ]);
   }
   return { phase, mode };
+}
+
+/**
+ * The workspace root, found by the same walk `loadRootEnv` uses.
+ *
+ * The benchmark roots are configured relative to the repository, so something
+ * has to turn "benchmarks" into an absolute path - and it must not be
+ * `process.cwd()`, which is whatever directory the operator happened to run
+ * `pnpm` from. The marker file is the same one the env loader looks for, so the
+ * two cannot disagree about which directory is the repository.
+ */
+export function findRepositoryRoot(from: string = import.meta.dirname): string {
+  let directory = resolve(from);
+  for (;;) {
+    if (existsSync(join(directory, "pnpm-workspace.yaml"))) return directory;
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  // No marker: fall back to the position this file has always had in the tree.
+  return resolve(from, "../../..");
 }
 
 /**

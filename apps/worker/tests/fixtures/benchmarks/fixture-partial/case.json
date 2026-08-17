@@ -1,0 +1,18 @@
+{
+  "id": "fixture-partial",
+  "title": "Apply the bulk discount per line",
+  "category": "feature",
+  "difficulty": 3,
+  "issue": "Order totals must apply the 10% bulk discount to each line whose own quantity is 10 or more. The discount is never applied to the order as a whole: two lines of six units do not qualify, even though the order contains twelve units. Totals are whole cents and `orderTotal` must reject a line with a negative or fractional quantity or unit price.",
+  "setupCommand": null,
+  "validationCommand": ["node", "--test", "test/order.test.js", "hidden/order.hidden.test.js"],
+  "expectedBehavior": "orderTotal discounts a line by 10% when that line's quantity is 10 or more and leaves every other line at full price, so an order of two six-unit lines is not discounted at all.",
+  "reviewMode": "independent",
+  "maxCostUsd": "1.00",
+  "maxDurationSeconds": 900,
+  "commit": {
+    "author": "Rivet Benchmarks",
+    "email": "benchmarks@example.com",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

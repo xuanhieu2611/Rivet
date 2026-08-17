@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -8,7 +8,14 @@ import { promisify } from "node:util";
 import { RepoUnavailableError } from "@rivet/core";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { HostGitCommandError, publish, seedClone, type HostGitCommand } from "./host-git";
+import {
+  HostGitCommandError,
+  localSeed,
+  publish,
+  SeedArchiveTooLargeError,
+  seedClone,
+  type HostGitCommand,
+} from "./host-git";
 
 const runFile = promisify(execFile);
 const TOKEN = "sentinel-installation-token-never-in-a-command";
@@ -139,6 +146,95 @@ describe("host Git operations", () => {
     await expect(readFile(join(verification, "src", "value.txt"), "utf8")).resolves.toBe(
       "changed\n",
     );
+  });
+
+  it("seeds a local benchmark repository through the same archive path", async () => {
+    const fixture = await createFixture();
+    const commands: HostGitCommand[] = [];
+    const askPassPaths: string[] = [];
+    const temporaryDirectories: string[] = [];
+
+    const result = await localSeed({
+      repositoryPath: fixture.remote,
+      baseBranch: "main",
+      baseCommitSha: fixture.baseCommitSha,
+      maxArchiveBytes: 8 * 1_024 * 1_024,
+      observer: {
+        onCommand: (command) => commands.push(command),
+        onAskPassCreated: (path) => askPassPaths.push(path),
+        onTemporaryDirectoryCreated: (path) => temporaryDirectories.push(path),
+      },
+    });
+
+    expect(result.commitSha).toBe(fixture.baseCommitSha);
+    expect(result.treeSha).toMatch(/^[0-9a-f]{40}$/u);
+    // There is no credential in this operation, so there is no askpass helper
+    // and nothing to redact - which is the point of a local fixture.
+    expect(askPassPaths).toHaveLength(0);
+    expect(temporaryDirectories).toHaveLength(1);
+    expect(statSync(temporaryDirectories[0]!, { throwIfNoEntry: false })).toBeUndefined();
+
+    // The archive is asserted with the same four properties the credentialed
+    // seed is, because it is produced by the same helper and one forgotten tar
+    // flag is what this run exists to catch.
+    const archiveRoot = await mkdtemp(join(tmpdir(), "rivet-local-archive-test-"));
+    temporaryRoots.push(archiveRoot);
+    const archivePath = join(archiveRoot, "seed.tar");
+    await writeFile(archivePath, result.archive);
+    await runGit(["tar", "-xf", archivePath, "-C", archiveRoot]);
+    const extracted = join(archiveRoot, "repo");
+
+    await expect(runGit(["git", "rev-parse", "HEAD"], extracted)).resolves.toMatchObject({
+      stdout: `${fixture.baseCommitSha}\n`,
+    });
+    await expect(runGit(["git", "status", "--porcelain"], extracted)).resolves.toMatchObject({
+      stdout: "",
+    });
+    await expect(
+      runGit(["git", "config", "--get", "remote.origin.url"], extracted),
+    ).rejects.toBeDefined();
+    await expect(readFile(join(extracted, "binary.dat"))).resolves.toEqual(
+      Buffer.from([0, 1, 2, 255, 3]),
+    );
+    // The AppleDouble sidecars `COPYFILE_DISABLE=1` exists to prevent. On Linux
+    // this is trivially true; on macOS it is the assertion that matters.
+    const entries = await readdir(extracted, { recursive: true });
+    expect(
+      entries.filter((entry) => entry.split("/").some((part) => part.startsWith("._"))),
+    ).toEqual([]);
+    // A host path is never mentioned in the repository the container receives.
+    await expect(readFile(join(extracted, ".git", "config"), "utf8")).resolves.not.toContain(
+      fixture.remote,
+    );
+  });
+
+  it("refuses a local repository that is not an absolute path", async () => {
+    await expect(localSeed({ repositoryPath: "benchmarks/case.git" })).rejects.toThrow(
+      /absolute path/u,
+    );
+  });
+
+  it("reports a missing local repository as repo_unavailable and cleans up", async () => {
+    const fixture = await createFixture();
+    const temporaryDirectories: string[] = [];
+
+    await expect(
+      localSeed({
+        repositoryPath: join(fixture.root, "does-not-exist.git"),
+        observer: { onTemporaryDirectoryCreated: (path) => temporaryDirectories.push(path) },
+      }),
+    ).rejects.toBeInstanceOf(RepoUnavailableError);
+
+    expect(temporaryDirectories).toHaveLength(1);
+    expect(statSync(temporaryDirectories[0]!, { throwIfNoEntry: false })).toBeUndefined();
+  });
+
+  it("refuses a local seed archive above its bound", async () => {
+    const fixture = await createFixture();
+
+    await expect(
+      localSeed({ repositoryPath: fixture.remote, baseBranch: "main", maxArchiveBytes: 1_024 }),
+    ).rejects.toBeInstanceOf(SeedArchiveTooLargeError);
   });
 
   it("removes the askpass helper and clone directory when a command fails", async () => {

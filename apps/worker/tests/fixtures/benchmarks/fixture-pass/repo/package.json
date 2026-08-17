@@ -1,0 +1,11 @@
+{
+  "name": "rivet-benchmark-fixture-pass",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/shipping.test.js",
+    "typecheck": "node --check src/shipping.js && node --check test/shipping.test.js",
+    "lint": "node --check src/shipping.js && node --check test/shipping.test.js"
+  }
+}

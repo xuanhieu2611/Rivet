@@ -1,3 +1,5 @@
+import { isLocalRepoUrl } from "@rivet/contracts";
+
 import type { JobCheckpoint } from "../checkpoints/checkpoint-store";
 import { sha256CheckpointPatch } from "../checkpoints/checkpoint-store";
 import { GitHubNotInstalledError, GitHubPermissionDeniedError } from "../github/errors";
@@ -96,6 +98,63 @@ export function provisioningPhase(
 }
 
 /**
+ * Chooses this job's seed source, and it is the only place that choice is made.
+ *
+ * Three sources in a fixed order, and the ordering is the whole design. An
+ * installation binding takes the authenticated host seed. Otherwise a
+ * `rivet-local:` repository takes the evaluation harness's local seed.
+ * Otherwise there is no seed at all and the caller runs the unauthenticated
+ * in-container clone, exactly as it did before M9.
+ *
+ * Everything downstream reads a `SeedCloneResult` and cannot tell which branch
+ * produced it, which is what keeps an evaluation job's provisioning
+ * indistinguishable from a production job's.
+ */
+async function seedRepository(
+  ctx: PhaseContext,
+  options: PipelineOptions,
+  input: { target?: string },
+): Promise<SeedCloneResult | null> {
+  const seeded = await seedFromGitHub(ctx, options, input);
+  if (seeded) return seeded;
+  return seedFromBenchmark(ctx, options, input);
+}
+
+/**
+ * Seeds a local benchmark repository on the worker host.
+ *
+ * A job whose `repoUrl` uses the scheme and a worker with no local seed source
+ * is a configuration error, not a repository problem, and it fails here saying
+ * so. The alternative - falling through to `git clone rivet-local:fixture-pass`
+ * inside the container - reports `repo_unavailable` on a Git error message
+ * about an unknown transport, which blames the case for the worker's setting.
+ */
+async function seedFromBenchmark(
+  ctx: PhaseContext,
+  options: PipelineOptions,
+  input: { target?: string },
+): Promise<SeedCloneResult | null> {
+  if (!isLocalRepoUrl(ctx.job.repoUrl)) return null;
+
+  const local = options.localSeed;
+  if (!local) {
+    throw new RepoUnavailableError(
+      `Job ${ctx.job.id} names the local benchmark repository ${ctx.job.repoUrl}, but this ` +
+        "worker has no local seed source. Set RIVET_EVAL=on to run evaluation jobs.",
+    );
+  }
+
+  return local.seed({
+    repoUrl: ctx.job.repoUrl,
+    baseBranch: ctx.job.baseBranch,
+    ...(input.target === undefined ? {} : { baseCommitSha: input.target }),
+    timeoutMs: local.cloneTimeoutMs,
+    maxArchiveBytes: local.seedMaxBytes,
+    signal: ctx.signal,
+  });
+}
+
+/**
  * Seeds an installation-bound repository on the worker host.
  *
  * The host clone is deliberately complete before a container exists. A private
@@ -103,7 +162,7 @@ export function provisioningPhase(
  * container that can never be populated, and the short-lived read token never
  * crosses the sandbox boundary.
  */
-async function seedRepository(
+async function seedFromGitHub(
   ctx: PhaseContext,
   options: PipelineOptions,
   input: { target?: string },

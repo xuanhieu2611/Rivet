@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { PushRejectedError, RepoUnavailableError, type GitHubToken } from "@rivet/core";
 
@@ -33,8 +33,8 @@ export interface HostGitObserver {
 /** The smallest credential shape needed by host Git. */
 export type GitCredential = Pick<GitHubToken, "value">;
 
-interface HostGitOperationInput {
-  token: GitCredential;
+/** What every host Git operation needs, credential or not. */
+interface HostGitCommonInput {
   /** Per-command timeout. The caller may use the same value for the operation's commands. */
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -44,8 +44,21 @@ interface HostGitOperationInput {
   onCommand?: (command: HostGitCommand) => void;
 }
 
+interface HostGitOperationInput extends HostGitCommonInput {
+  token: GitCredential;
+}
+
+/** The archive bound, accepted under any of the three names callers use. */
+interface ArchiveBoundInput {
+  /** Complete archive bound. A truncated repository is never a valid seed. */
+  maxArchiveBytes?: number;
+  /** Alias retained for callers that use the shorter name. */
+  archiveMaxBytes?: number;
+  maxBytes?: number;
+}
+
 /** Input for cloning a private repository into an archive safe to upload to a sandbox. */
-export interface SeedCloneInput extends HostGitOperationInput {
+export interface SeedCloneInput extends HostGitOperationInput, ArchiveBoundInput {
   /** `repoUrl` is accepted as an alias because it is the job column's name. */
   remoteUrl?: string;
   repoUrl?: string;
@@ -54,11 +67,22 @@ export interface SeedCloneInput extends HostGitOperationInput {
   baseCommitSha?: string;
   /** Alias for callers that already call this value `commitSha`. */
   commitSha?: string;
-  /** Complete archive bound. A truncated repository is never a valid seed. */
-  maxArchiveBytes?: number;
-  /** Alias retained for callers that use the shorter name. */
-  archiveMaxBytes?: number;
-  maxBytes?: number;
+}
+
+/**
+ * Input for seeding a sandbox from a local benchmark repository.
+ *
+ * Deliberately has no token field. The evaluation harness's repositories are
+ * bare directories on the worker host that the fixture builder wrote, so there
+ * is no credential to supply and therefore none to leak - which is half the
+ * reason M10's fixtures are local rather than hosted.
+ */
+export interface LocalSeedInput extends HostGitCommonInput, ArchiveBoundInput {
+  /** An absolute path to a bare repository, already resolved below the fixture root. */
+  repositoryPath: string;
+  baseBranch?: string;
+  /** The exact commit the sandbox must start from, when the case pins one. */
+  baseCommitSha?: string;
 }
 
 /** The host-produced repository archive and the commit it contains. */
@@ -224,54 +248,7 @@ export async function seedClone(input: SeedCloneInput): Promise<SeedCloneResult>
           cwd: repositoryDir,
         });
 
-        let archive: Buffer;
-        try {
-          const tar = await runHostCommand(
-            [
-              "tar",
-              "--uid",
-              "1000",
-              "--gid",
-              "1000",
-              "--numeric-owner",
-              // Not decoration, and macOS is why. bsdtar records extended
-              // attributes, and on this platform every file carries
-              // `com.apple.provenance`; Docker's archive extraction then fails
-              // the whole upload with `lsetxattr ... operation not supported`,
-              // which surfaces as `sandbox_create_failed` on a repository that
-              // is perfectly fine. The seed needs contents, modes and
-              // ownership - never a host's extended attributes. GNU tar has
-              // accepted the flag since 1.27, so CI reads it the same way.
-              "--no-xattrs",
-              "-C",
-              root,
-              "-cf",
-              "-",
-              "repo",
-            ],
-            {
-              ...command,
-              cwd: root,
-              // The other half of the macOS story: without this, bsdtar writes
-              // an AppleDouble `._name` sidecar next to every entry, and the
-              // container ends up with a repository whose `git status` is a
-              // page of untracked files Rivet invented. GNU tar ignores the
-              // variable, so this costs nothing on Linux.
-              env: { ...command.env, COPYFILE_DISABLE: "1" },
-              maxStdoutBytes: maxArchiveBytes,
-            },
-          );
-          archive = tar.stdout;
-        } catch (error) {
-          if (error instanceof HostGitCommandError && error.reason === "output_limit") {
-            throw new SeedArchiveTooLargeError(maxArchiveBytes + 1, maxArchiveBytes);
-          }
-          throw error;
-        }
-
-        if (archive.byteLength > maxArchiveBytes) {
-          throw new SeedArchiveTooLargeError(archive.byteLength, maxArchiveBytes);
-        }
+        const archive = await archiveRepository({ root, command, maxArchiveBytes });
 
         return { archive, commitSha, treeSha };
       } catch (error) {
@@ -283,6 +260,108 @@ export async function seedClone(input: SeedCloneInput): Promise<SeedCloneResult>
         );
       } finally {
         await removeQuietly(askPassPath);
+      }
+    },
+  );
+}
+
+/**
+ * Clones a local benchmark repository and returns the same archive shape.
+ *
+ * The evaluation harness's second seed source, and it shares every step that
+ * matters with `seedClone` above: the same temporary directory discipline, the
+ * same exact-commit checkout, the same removal of the remote, and - the part
+ * this milestone's acceptance run actually checks - the same `archiveRepository`
+ * helper, flags and all. A second tar invocation that forgot `--no-xattrs` or
+ * `COPYFILE_DISABLE` would fail on macOS as `sandbox_create_failed` on a
+ * repository that is perfectly fine, or silently deliver a container full of
+ * AppleDouble sidecars Rivet invented. There is one archive path here on
+ * purpose.
+ *
+ * What it does not share is the credential machinery, because there is none:
+ * the remote is a directory this host owns, and there is no askpass helper, no
+ * token in an environment, and nothing to redact out of a transcript.
+ */
+export async function localSeed(input: LocalSeedInput): Promise<SeedCloneResult> {
+  const repositoryPath = input.repositoryPath;
+  const expectedCommit = resolveOptionalCommit(input.baseCommitSha, undefined);
+  const baseBranch = input.baseBranch ?? "main";
+  const timeoutMs = resolveTimeout(input.timeoutMs);
+  const maxArchiveBytes = resolveArchiveMaxBytes(input);
+  const signal = input.signal ?? new AbortController().signal;
+  const observer = resolveObserver(input);
+
+  assertNonEmpty("repositoryPath", repositoryPath);
+  assertNonEmpty("baseBranch", baseBranch);
+  if (!isAbsolute(repositoryPath)) {
+    // The caller resolves the case id against the fixture root and hands over a
+    // realpath; a relative path here means that step was skipped.
+    throw new Error("A local benchmark repository must be an absolute path.");
+  }
+
+  return withTemporaryDirectory(
+    "rivet-local-seed-",
+    input.temporaryDirectory,
+    observer,
+    async (root) => {
+      try {
+        const command = commandInput({
+          cwd: root,
+          env: await createIsolatedGitEnvironment(root),
+          signal,
+          timeoutMs,
+          // No credential exists in this operation. The empty secret is what
+          // says so, and `assertNoSecret` and `redactText` both treat it as
+          // "there is nothing to look for" rather than "everything matches".
+          token: "",
+          observer,
+        });
+        const repositoryDir = join(root, "repo");
+
+        // `--no-hardlinks` because a local clone otherwise hardlinks the object
+        // store, and the archive would then carry link entries into a directory
+        // the container never receives. A benchmark repository is one commit,
+        // so copying it costs nothing.
+        await runHostCommand(
+          [
+            "git",
+            "clone",
+            "--no-hardlinks",
+            "--branch",
+            baseBranch,
+            "--single-branch",
+            repositoryPath,
+            repositoryDir,
+          ],
+          command,
+        );
+
+        const commitSha = await checkoutExactCommit({
+          repositoryDir,
+          baseCommitSha: expectedCommit,
+          baseBranch,
+          command,
+        });
+        const treeSha = await revParse(repositoryDir, "HEAD^{tree}", command);
+
+        // The container has no business learning a host path, and the seeded
+        // repository must look identical whichever source produced it.
+        await runHostCommand(["git", "remote", "remove", "origin"], {
+          ...command,
+          cwd: repositoryDir,
+        });
+
+        const archive = await archiveRepository({ root, command, maxArchiveBytes });
+
+        return { archive, commitSha, treeSha };
+      } catch (error) {
+        rethrowIfAborted(signal);
+        if (error instanceof SeedArchiveTooLargeError) throw error;
+        throw new RepoUnavailableError(
+          `Could not seed the local benchmark repository ${repositoryPath}: ` +
+            `${describeHostGitError(error)}.`,
+          { cause: error },
+        );
       }
     },
   );
@@ -459,6 +538,94 @@ function commandInput(input: CommandInput): CommandInput {
     ...input,
     maxStdoutBytes: COMMAND_STDOUT_MAX_BYTES,
     maxStderrBytes: COMMAND_STDERR_MAX_BYTES,
+  };
+}
+
+/**
+ * The one place a repository becomes an archive, for every seed source.
+ *
+ * Extracted rather than copied when the local seed source arrived, because the
+ * two flags below are the ones AGENTS.md records the cost of forgetting, and
+ * "there is only one tar invocation" is a cheaper guarantee than two tests
+ * asserting that two invocations agree.
+ */
+async function archiveRepository(input: {
+  root: string;
+  command: CommandInput;
+  maxArchiveBytes: number;
+}): Promise<Buffer> {
+  const { root, command, maxArchiveBytes } = input;
+
+  let archive: Buffer;
+  try {
+    const tar = await runHostCommand(
+      [
+        "tar",
+        "--uid",
+        "1000",
+        "--gid",
+        "1000",
+        "--numeric-owner",
+        // Not decoration, and macOS is why. bsdtar records extended
+        // attributes, and on this platform every file carries
+        // `com.apple.provenance`; Docker's archive extraction then fails
+        // the whole upload with `lsetxattr ... operation not supported`,
+        // which surfaces as `sandbox_create_failed` on a repository that
+        // is perfectly fine. The seed needs contents, modes and
+        // ownership - never a host's extended attributes. GNU tar has
+        // accepted the flag since 1.27, so CI reads it the same way.
+        "--no-xattrs",
+        "-C",
+        root,
+        "-cf",
+        "-",
+        "repo",
+      ],
+      {
+        ...command,
+        cwd: root,
+        // The other half of the macOS story: without this, bsdtar writes
+        // an AppleDouble `._name` sidecar next to every entry, and the
+        // container ends up with a repository whose `git status` is a
+        // page of untracked files Rivet invented. GNU tar ignores the
+        // variable, so this costs nothing on Linux.
+        env: { ...command.env, COPYFILE_DISABLE: "1" },
+        maxStdoutBytes: maxArchiveBytes,
+      },
+    );
+    archive = tar.stdout;
+  } catch (error) {
+    if (error instanceof HostGitCommandError && error.reason === "output_limit") {
+      throw new SeedArchiveTooLargeError(maxArchiveBytes + 1, maxArchiveBytes);
+    }
+    throw error;
+  }
+
+  if (archive.byteLength > maxArchiveBytes) {
+    throw new SeedArchiveTooLargeError(archive.byteLength, maxArchiveBytes);
+  }
+
+  return archive;
+}
+
+/**
+ * A Git environment with no host configuration and no terminal in it.
+ *
+ * The credentialed path gets this from `createAskPass`, which builds the same
+ * isolation around the askpass helper. The local path needs the isolation
+ * without the credential: a developer's `~/.gitconfig` must not be able to
+ * change what a benchmark fixture clones into.
+ */
+async function createIsolatedGitEnvironment(root: string): Promise<Record<string, string>> {
+  const home = join(root, "home");
+  const configHome = join(root, "config");
+  await mkdir(home, { recursive: true });
+  await mkdir(configHome, { recursive: true });
+  return {
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_NOSYSTEM: "1",
+    HOME: home,
+    XDG_CONFIG_HOME: configHome,
   };
 }
 
@@ -761,7 +928,7 @@ function resolveOptionalCommit(
   return value;
 }
 
-function resolveArchiveMaxBytes(input: SeedCloneInput): number {
+function resolveArchiveMaxBytes(input: ArchiveBoundInput): number {
   const values = [input.maxArchiveBytes, input.archiveMaxBytes, input.maxBytes].filter(
     (value): value is number => value !== undefined,
   );
@@ -783,7 +950,7 @@ function resolveTimeout(value: number | undefined): number {
   return timeoutMs;
 }
 
-function resolveObserver(input: HostGitOperationInput): HostGitObserver {
+function resolveObserver(input: HostGitCommonInput): HostGitObserver {
   return {
     ...input.observer,
     ...(input.onCommand === undefined ? {} : { onCommand: input.onCommand }),
@@ -853,6 +1020,10 @@ function assertNonEmpty(field: string, value: string | undefined): asserts value
 }
 
 function assertNoSecret(values: readonly string[], secret: string): void {
+  // An empty secret means the operation has no credential at all - the local
+  // benchmark seed. Without this guard every string "contains" it and every
+  // credential-free command would be refused.
+  if (secret.length === 0) return;
   if (values.some((value) => value.includes(secret))) {
     throw new Error("The installation token may not be included in a host command.");
   }

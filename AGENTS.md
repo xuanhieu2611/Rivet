@@ -565,6 +565,39 @@ pure function of an env object.
 - `RIVET_APP_URL` - absolute base URL of the web app, reaching `PipelineOptions.appBaseUrl` and used
   for the run link in a published pull-request body. Unset, the body falls back to a relative
   `/jobs/<id>`, which resolves against github.com.
+- `RIVET_EVAL` - `on` or `off`, `off` by default and **refused under `NODE_ENV=production`**, the
+  fourth member of the switch family and the only one that _widens_ what a worker will run against.
+  `on` gives `PipelineOptions.localSeed` a value, and a job whose `repoUrl` is
+  `rivet-local:<case-id>` is then seeded from a bare repository this host built rather than from a
+  remote. Nothing a browser can submit reaches it: `createJobSchema.repoUrl` is https-only and stays
+  that way, which is why the surface is opened in exactly one place.
+- `RIVET_BENCHMARK_ROOT` / `RIVET_BENCHMARK_FIXTURE_ROOT` - the git-tracked cases (`benchmarks`) and
+  the built `<case-id>.git` repositories `pnpm eval:build` writes (`.rivet/benchmarks`, gitignored).
+  Relative paths resolve against the repository root found by `findRepositoryRoot()`, never against
+  `process.cwd()`, so the builder and the worker cannot disagree about which directories these are.
+- `RIVET_EVAL_CLONE_TIMEOUT_MS` / `RIVET_EVAL_SEED_MAX_BYTES` - the local seed's host budgets,
+  mirroring the `GITHUB_*` pair and deliberately separate from it.
+
+**The `rivet-local:` scheme is opaque on purpose, and that is the whole security argument.** A
+path-carrying scheme (`file:///...`) would make every acceptor one crafted request away from cloning
+`/etc`, and the refusal would have to be written correctly in each of them. `rivet-local:<case-id>`
+carries an identifier `benchmarkIdSchema` already constrains to lowercase kebab-case, which cannot
+express a separator, a parent segment or an absolute root - so `../../etc`, `/etc/passwd` and
+`a/../../b` are all rejected by the parser, with no filesystem involved.
+`resolveBenchmarkRepositoryPath()` then resolves the id below the fixture root and compares
+`realpath`s, which is the check that still holds when the attacker controls the fixture directory
+rather than the URL. A case that resolves outside is refused as `repo_unavailable`.
+
+**There is one archive path, and `localSeed()` shares it with `seedClone()`.** Both go through
+`archiveRepository()`, `--no-xattrs` and `COPYFILE_DISABLE=1` included, for the reason recorded
+above: a second tar invocation that forgot either flag fails on macOS as `sandbox_create_failed` on
+a repository that is perfectly fine, or quietly delivers a container full of AppleDouble sidecars
+Rivet invented. What the local path does _not_ share is the credential machinery, because it has
+none - no askpass helper, no token in an environment, nothing to redact. `provisioningPhase()`
+chooses between the two seed sources and the unauthenticated in-container clone in exactly one
+place, and everything downstream reads a `SeedCloneResult` that cannot say which one produced it.
+That is what makes an evaluation job's timeline identical to an ordinary job's, which the sandbox
+suite asserts by running both and comparing the projected event lists.
 
 Schema changes go: edit `packages/database/src/schema/`, run `pnpm db:generate`, **commit the
 generated SQL** under `packages/database/drizzle/`, then `pnpm db:migrate`. Migrations are applied

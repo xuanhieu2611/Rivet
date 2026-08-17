@@ -1,0 +1,23 @@
+{
+  "id": "fixture-pass",
+  "title": "Fix the shipping weight boundary",
+  "category": "bug_fix",
+  "difficulty": 1,
+  "issue": "The shipping table says a parcel of 5kg or more costs 12, but `shippingCost` uses a strict greater-than comparison, so a parcel of exactly 5kg is charged the light rate. Fix the boundary. Weights remain non-negative finite numbers and anything else must still raise a TypeError.",
+  "setupCommand": null,
+  "validationCommand": [
+    "node",
+    "--test",
+    "test/shipping.test.js",
+    "hidden/shipping.hidden.test.js"
+  ],
+  "expectedBehavior": "shippingCost charges 12 for every weight of 5kg and above and 5 below it, and still raises TypeError for negative, non-finite and non-numeric weights.",
+  "reviewMode": "independent",
+  "maxCostUsd": "1.00",
+  "maxDurationSeconds": 900,
+  "commit": {
+    "author": "Rivet Benchmarks",
+    "email": "benchmarks@example.com",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

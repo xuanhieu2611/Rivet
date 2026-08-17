@@ -111,6 +111,16 @@ export const TEST_CONFIG: WorkerConfig = {
     pushTimeoutMs: 5_000,
     seedMaxBytes: 64 * 1_024 * 1_024,
   },
+  // `off` for the fourth time. Nothing in this suite creates a job against a
+  // `rivet-local:` repository, and a case that wants one supplies its own
+  // `localSeed` to the pipeline it builds - the same shape as the three above.
+  eval: {
+    mode: "off",
+    benchmarkRoot: "benchmarks",
+    fixtureRoot: ".rivet/benchmarks",
+    cloneTimeoutMs: 5_000,
+    seedMaxBytes: 64 * 1_024 * 1_024,
+  },
 };
 
 export function uniqueQueueName(suite: string): string {

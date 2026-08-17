@@ -18,7 +18,8 @@ import {
 import { dockerConnectionTarget, DockerSandboxProvider } from "@rivet/sandbox";
 import { Worker } from "bullmq";
 
-import { loadRootEnv, parseWorkerConfig, WorkerConfigError } from "./config";
+import { findRepositoryRoot, loadRootEnv, parseWorkerConfig, WorkerConfigError } from "./config";
+import { createLocalSeedOptions } from "./eval";
 import { createFaultInjection, type FaultInjection } from "./faults";
 import { createGitHubOptions } from "./github";
 import { createWorkerId } from "./identity";
@@ -73,6 +74,24 @@ const runs = new RunRegistry();
 const github = createGitHubOptions(config.github, secrets);
 if (!github) {
   log.warn("RIVET_GITHUB=off: no pull request will be opened, jobs end at the validated diff");
+}
+
+/**
+ * The evaluation harness's seed source, or the absence of it.
+ *
+ * Under `RIVET_EVAL=off` - which is the default, what CI runs, and what
+ * `parseWorkerConfig` requires in production - this is undefined and a job that
+ * names a `rivet-local:` repository fails saying so. Nothing else changes:
+ * there is no phase, no status and no event behind this switch, because an
+ * evaluation job has to be an ordinary job or the harness is measuring
+ * something nobody deploys.
+ */
+const localSeed = createLocalSeedOptions(config.eval, { repositoryRoot: findRepositoryRoot() });
+if (localSeed) {
+  log.warn(
+    { fixtureRoot: config.eval.fixtureRoot },
+    "RIVET_EVAL=on: this worker will seed jobs from local benchmark fixtures",
+  );
 }
 
 /**
@@ -170,6 +189,7 @@ const { phases, phaseFactory, sandbox } = ((): {
   const pipelineOptions = {
     ...(agent ? { agent } : {}),
     ...(github ? { github } : {}),
+    ...(localSeed ? { localSeed } : {}),
     ...(config.github.appBaseUrl ? { appBaseUrl: config.github.appBaseUrl } : {}),
     image: config.sandbox.image,
     workdir: config.sandbox.workdir,

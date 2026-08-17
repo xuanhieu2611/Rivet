@@ -30,6 +30,7 @@ export * from "./events/review-log";
 export * from "./events/validation-log";
 export * from "./evaluation/case-loader";
 export * from "./evaluation/case-store";
+export * from "./evaluation/local-seed";
 export * from "./evaluation/run-store";
 export * from "./evaluation/suite-store";
 export * from "./github/branch-name";
