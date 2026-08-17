@@ -1,0 +1,23 @@
+{
+  "id": "bulk-discount-boundary",
+  "title": "Fix the bulk discount boundary",
+  "category": "bug_fix",
+  "difficulty": 1,
+  "issue": "The pricing module says that 10 items or more qualify for the bulk discount, but `qualifiesForBulkDiscount` uses a strict greater-than comparison. Fix the boundary without weakening the existing tests. Quantities must remain non-negative integers.",
+  "setupCommand": null,
+  "validationCommand": [
+    "node",
+    "--test",
+    "test/discount.test.js",
+    "hidden/discount.hidden.test.js"
+  ],
+  "expectedBehavior": "qualifiesForBulkDiscount returns false below 10 items and true for 10 items or more, while rejecting negative, fractional, and non-numeric quantities with TypeError.",
+  "reviewMode": "independent",
+  "maxCostUsd": "1.00",
+  "maxDurationSeconds": 900,
+  "commit": {
+    "author": "Rivet Benchmarks",
+    "email": "benchmarks@example.com",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "multi-line-order",
+  "title": "Price a multi-line order",
+  "category": "feature",
+  "difficulty": 3,
+  "issue": "Orders can arrive as several lines, and `src/discount.js` can only price one. Add and export `orderTotalCents(lines)`, where a line is `{ quantity, unitPriceCents }` and an order is an array of lines. Qualification uses the total item count across all lines, including exactly 10 items. Apply the 10 percent discount once to the whole subtotal and round to the nearest cent once at the end. An empty order totals 0. Negative quantities and fractional unit prices remain TypeError inputs, and existing exports and tests must keep working.",
+  "setupCommand": null,
+  "validationCommand": [
+    "node",
+    "--test",
+    "test/discount.test.js",
+    "hidden/discount.hidden.test.js"
+  ],
+  "expectedBehavior": "orderTotalCents sums every line, qualifies an order when its total quantity is at least 10, applies one whole-order 10 percent discount with one final rounding step, returns 0 for an empty order, and preserves strict TypeError validation.",
+  "reviewMode": "independent",
+  "maxCostUsd": "2.00",
+  "maxDurationSeconds": 900,
+  "commit": {
+    "author": "Rivet Benchmarks",
+    "email": "benchmarks@example.com",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

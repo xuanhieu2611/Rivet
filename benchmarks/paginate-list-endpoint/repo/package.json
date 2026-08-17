@@ -1,0 +1,11 @@
+{
+  "name": "rivet-benchmark-paginate-list-endpoint",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/server.test.js",
+    "typecheck": "node --check src/list-endpoint.js && node --check src/server.js && node --check test/server.test.js",
+    "lint": "node --check src/list-endpoint.js && node --check src/server.js && node --check test/server.test.js"
+  }
+}

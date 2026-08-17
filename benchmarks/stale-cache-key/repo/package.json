@@ -1,0 +1,11 @@
+{
+  "name": "rivet-benchmark-stale-cache-key",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/catalog.test.js",
+    "typecheck": "node --check src/cache.js && node --check src/catalog.js && node --check test/catalog.test.js",
+    "lint": "node --check src/cache.js && node --check src/catalog.js && node --check test/catalog.test.js"
+  }
+}

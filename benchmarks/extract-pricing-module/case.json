@@ -1,0 +1,18 @@
+{
+  "id": "extract-pricing-module",
+  "title": "Extract the invoice pricing module",
+  "category": "refactor",
+  "difficulty": 3,
+  "issue": "`src/invoice.js` has become responsible for line validation, subtotals, bulk discounts, tax, and invoice totals. Extract those pricing calculations into a new `src/pricing.js` module. Keep `src/invoice.js`'s existing named exports and behavior unchanged: callers must not need to change imports, discounting must still happen at the same threshold, and monetary values must keep their existing integer-cent rounding and validation rules.",
+  "setupCommand": null,
+  "validationCommand": ["node", "--test", "test/invoice.test.js", "hidden/pricing.hidden.test.js"],
+  "expectedBehavior": "The pricing calculations live in src/pricing.js, src/invoice.js preserves its public API, and invoice subtotals, discounts, tax, totals, empty inputs, rounding, and validation behave exactly as before.",
+  "reviewMode": "independent",
+  "maxCostUsd": "2.00",
+  "maxDurationSeconds": 900,
+  "commit": {
+    "author": "Rivet Benchmarks",
+    "email": "benchmarks@example.com",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

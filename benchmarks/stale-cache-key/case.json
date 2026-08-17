@@ -1,0 +1,18 @@
+{
+  "id": "stale-cache-key",
+  "title": "Include every request dimension in the cache key",
+  "category": "bug_fix",
+  "difficulty": 2,
+  "issue": "Product summaries are served from a shared in-memory cache. A request can be for a tenant, locale, and currency, but the cache key helper in `src/cache.js` does not include every one of those dimensions. The symptom appears in `src/catalog.js` as a stale summary after a request changes locale or currency. Make the cache identity include tenant, product, locale, and currency without weakening cache reuse for identical requests.",
+  "setupCommand": null,
+  "validationCommand": ["node", "--test", "test/catalog.test.js", "hidden/catalog.hidden.test.js"],
+  "expectedBehavior": "A cached product summary is reused only for the same tenant, product, locale, and currency; changing any one of those values returns the matching catalog entry instead of stale data.",
+  "reviewMode": "independent",
+  "maxCostUsd": "1.50",
+  "maxDurationSeconds": 900,
+  "commit": {
+    "author": "Rivet Benchmarks",
+    "email": "benchmarks@example.com",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

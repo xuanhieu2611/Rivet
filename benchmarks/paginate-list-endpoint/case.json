@@ -1,0 +1,18 @@
+{
+  "id": "paginate-list-endpoint",
+  "title": "Paginate the widget list endpoint",
+  "category": "api_change",
+  "difficulty": 4,
+  "issue": "Add deterministic pagination to `GET /widgets`. `page` is a one-based positive integer that defaults to 1. `limit` is a positive integer that defaults to 2 and may not exceed 3. Return only that page and the metadata `{ items, page, limit, totalItems, totalPages, hasNext }`, preserving the existing item order. A page beyond the final page is valid and returns an empty item list with `hasNext: false`; malformed, non-integer, non-positive, or over-limit query values must receive HTTP 400 instead of silently falling back to defaults.",
+  "setupCommand": null,
+  "validationCommand": ["node", "--test", "test/server.test.js", "hidden/server.hidden.test.js"],
+  "expectedBehavior": "The widget endpoint returns stable one-based pages with defaults, a maximum page size of three, complete pagination metadata, an empty response for pages beyond the end, and a 400 response for invalid query values.",
+  "reviewMode": "independent",
+  "maxCostUsd": "2.50",
+  "maxDurationSeconds": 900,
+  "commit": {
+    "author": "Rivet Benchmarks",
+    "email": "benchmarks@example.com",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

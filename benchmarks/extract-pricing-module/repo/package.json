@@ -1,0 +1,11 @@
+{
+  "name": "rivet-benchmark-extract-pricing-module",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/invoice.test.js",
+    "typecheck": "node --check src/invoice.js && node --check test/invoice.test.js",
+    "lint": "node --check src/invoice.js && node --check test/invoice.test.js"
+  }
+}

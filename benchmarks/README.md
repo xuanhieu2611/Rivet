@@ -6,3 +6,11 @@ hashes, write their lockfiles, and build the local bare repositories under `.riv
 
 The fixture builder intentionally ignores files at this directory's root, so this README does not
 become part of a case.
+
+The first five cases deliberately stay small and dependency-free:
+
+- `bulk-discount-boundary` is a level-1 boundary bug with a named public test.
+- `stale-cache-key` is a level-2 search task whose defect lives in a shared key helper.
+- `multi-line-order` is a level-3 feature with hidden rounding and empty-input cases.
+- `extract-pricing-module` is a level-3 behavior-preserving refactor.
+- `paginate-list-endpoint` is a level-4 multi-file API change with hidden contract edges.

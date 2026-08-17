@@ -1,0 +1,11 @@
+{
+  "name": "rivet-benchmark-multi-line-order",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/discount.test.js",
+    "typecheck": "node --check src/discount.js && node --check test/discount.test.js",
+    "lint": "node --check src/discount.js && node --check test/discount.test.js"
+  }
+}
