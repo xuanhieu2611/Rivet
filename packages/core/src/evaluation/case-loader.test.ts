@@ -11,6 +11,7 @@ import {
   BenchmarkLockfileMismatchError,
   buildBenchmarkFixtures,
   loadBenchmarkCases,
+  loadHiddenTestFiles,
 } from "./case-loader";
 
 const execFileAsync = promisify(execFile);
@@ -183,6 +184,28 @@ describe("benchmark fixture loader and builder", () => {
     );
 
     await expect(loadBenchmarkCases(root)).rejects.toBeInstanceOf(BenchmarkCaseError);
+  });
+
+  it("loads the hidden tests the grader copies into its own container", async () => {
+    const root = await createBenchmarkRoot();
+    const hiddenRoot = join(root, CASE.id, "hidden");
+    await mkdir(join(hiddenRoot, "support"), { recursive: true });
+    await writeFile(join(hiddenRoot, "support", "run.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const files = await loadHiddenTestFiles(hiddenRoot);
+
+    expect(files.map((file) => file.path)).toEqual(["secret.test.js", "support/run.sh"]);
+    expect(files[0]?.content).toContain("RIVET_HIDDEN_SENTINEL");
+    expect(files[0]?.executable).toBe(false);
+    expect(files[1]?.executable).toBe(true);
+  });
+
+  it("refuses a hidden test that is not UTF-8 text", async () => {
+    const root = await createBenchmarkRoot();
+    const hiddenRoot = join(root, CASE.id, "hidden");
+    await writeFile(join(hiddenRoot, "blob.bin"), Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+
+    await expect(loadHiddenTestFiles(hiddenRoot)).rejects.toBeInstanceOf(BenchmarkCaseError);
   });
 });
 

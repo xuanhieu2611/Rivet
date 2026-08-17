@@ -374,6 +374,48 @@ export async function buildBenchmarkCase(
   }
 }
 
+/** One hidden test file, ready to be written into a grading container. */
+export interface HiddenTestFile {
+  /** Posix path relative to the case's `hidden/` directory. */
+  path: string;
+  content: string;
+  executable: boolean;
+}
+
+/**
+ * Reads a case's hidden tests as text, for the grader to copy into a container.
+ *
+ * Text rather than bytes because the sandbox port's file writer is text - and
+ * because a hidden test that is not UTF-8 source is a hidden test whose author
+ * meant something else. A binary or symlinked entry is refused here rather
+ * than silently mangled on the way into a container, since the whole point of
+ * this directory is that what runs is exactly what the case says runs.
+ */
+export async function loadHiddenTestFiles(hiddenDirectory: string): Promise<HiddenTestFile[]> {
+  const root = await requireDirectory(hiddenDirectory, "hidden directory");
+  const entries = await collectFixtureTree(root, "hidden", { rejectGitMetadata: true });
+  if (entries.length === 0) {
+    throw new BenchmarkCaseError(`The hidden directory ${hiddenDirectory} contains no tests.`);
+  }
+
+  return entries.map((entry) => {
+    if (entry.kind !== "file") {
+      throw new BenchmarkCaseError(
+        `Hidden test ${entry.relativePath} is a symlink, which cannot be graded.`,
+      );
+    }
+    const content = entry.content.toString("utf8");
+    if (!Buffer.from(content, "utf8").equals(entry.content)) {
+      throw new BenchmarkCaseError(`Hidden test ${entry.relativePath} is not valid UTF-8 text.`);
+    }
+    return {
+      path: entry.relativePath,
+      content,
+      executable: (entry.mode & 0o111) !== 0,
+    };
+  });
+}
+
 /** Returns the output path for a validated benchmark id without touching disk. */
 export function benchmarkBareRepositoryPath(outputRoot: string, id: string): string {
   const parsedId = benchmarkIdSchema.safeParse(id);

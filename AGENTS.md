@@ -599,6 +599,30 @@ place, and everything downstream reads a `SeedCloneResult` that cannot say which
 That is what makes an evaluation job's timeline identical to an ordinary job's, which the sandbox
 suite asserts by running both and comparing the projected event lists.
 
+**Grading is a second container, after the job is over, and it writes nothing about the job.**
+`gradeEvaluationRun()` in `packages/core/src/evaluation/grader.ts` takes the `SandboxProvider` port
+rather than a live container - a job that ended in an infrastructure failure is `errored` from its
+row alone and never costs a container, which matters because infrastructure failures arrive in
+bursts. Everything else provisions at the checkpoint's base commit, applies the patch, re-derives it
+and compares SHA-256 **before** `hidden/` is copied in, then runs the case's `setupCommand` and
+`validationCommand` and destroys the container in a `finally`. The whole value of a hidden test is
+that the model could not read it, so it never enters the job's own container, diff, checkpoint or
+pull request. Add it to the single-writer list from the other side: the grader is not a writer of
+anything. `evaluation_runs` is the evaluation harness's only writable surface on a completed job,
+and a grading failure is the runner's problem rather than a second opinion about a job that already
+finished.
+
+**A grading failure is `ungraded`, and `ungraded` is not `errored`.** `errored` is decided from the
+job row before grading is attempted - `EVALUATION_FAILURE_CLASSES` in
+`evaluation/run-classification.ts` is a total `Record` over `FAILURE_CATEGORIES`, so a category
+added in a later milestone fails typecheck until somebody decides which side of the success rate it
+belongs on. `ungraded` is reserved for a job that could have been graded and whose grading broke: a
+patch that will not apply, a re-derived checksum that disagrees, a seed that resolved to another
+case's commit, a `setupCommand` that failed. Scoring a solution zero because the harness could not
+set up is the same category of lie as grading a tree the job did not produce. Success rate is
+computed over `passed + failed` only; `errored` and `ungraded` are counted, reported and excluded
+from the denominator.
+
 Schema changes go: edit `packages/database/src/schema/`, run `pnpm db:generate`, **commit the
 generated SQL** under `packages/database/drizzle/`, then `pnpm db:migrate`. Migrations are applied
 by `src/migrate.ts` (a plain Node process) rather than the drizzle-kit CLI.
