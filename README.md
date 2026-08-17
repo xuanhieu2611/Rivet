@@ -67,7 +67,9 @@ See [docs/architecture.md](docs/architecture.md) for how the pieces fit together
 contract, [docs/milestone-9-guide.md](docs/milestone-9-guide.md) for an educational walkthrough of
 GitHub publication, [docs/milestone-9-setup.md](docs/milestone-9-setup.md) for the one-time GitHub
 App setup, and [docs/milestone-8-guide.md](docs/milestone-8-guide.md) for the preceding review
-guide.
+guide. The M10 reviewer-value experiment is documented in
+[docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md), including its raw suite id
+and per-case results.
 
 ## Prerequisites
 
