@@ -28,6 +28,7 @@ export * from "./events/event-service";
 export * from "./events/session-log";
 export * from "./events/review-log";
 export * from "./events/validation-log";
+export * from "./evaluation/aggregate";
 export * from "./evaluation/case-loader";
 export * from "./evaluation/case-store";
 export * from "./evaluation/grader";

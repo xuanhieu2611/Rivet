@@ -15,7 +15,7 @@ import {
   type Executor,
   type NewEvaluationRunRow,
 } from "@rivet/database";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 const evaluationRunIdSchema = z
@@ -230,6 +230,29 @@ export async function listEvaluationRuns(
     .from(evaluationRuns)
     .where(eq(evaluationRuns.suiteId, parsedSuiteId.data))
     .orderBy(asc(evaluationRuns.createdAt));
+  return rows.map(toEvaluationRun);
+}
+
+/**
+ * Lists every run of one benchmark case, across every suite, newest first.
+ *
+ * This is the read behind `GET /api/benchmarks/:id/results`: a case's history
+ * is the interesting view when a hidden test is under suspicion, and it spans
+ * suites by definition. `case_version_hash` travels on each row, so a caller
+ * can tell which results predate a rebuild of the case.
+ */
+export async function listEvaluationRunsByBenchmark(
+  benchmarkId: string,
+  executor: Executor = db,
+): Promise<EvaluationRunRecord[]> {
+  const parsedId = benchmarkIdSchema.safeParse(benchmarkId);
+  if (!parsedId.success) return [];
+
+  const rows = await executor
+    .select()
+    .from(evaluationRuns)
+    .where(eq(evaluationRuns.benchmarkId, parsedId.data))
+    .orderBy(desc(evaluationRuns.createdAt));
   return rows.map(toEvaluationRun);
 }
 

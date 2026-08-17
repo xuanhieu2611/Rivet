@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   createEvaluationRun,
   labelEvaluationRun,
+  listEvaluationRunsByBenchmark,
   toEvaluationRun,
   updateEvaluationRunGrade,
 } from "./run-store";
@@ -73,7 +74,10 @@ function capturingExecutor(initial?: EvaluationRunRow) {
     }),
     select: () => ({
       from: () => ({
-        where: () => ({ limit: () => Promise.resolve(current ? [current] : []) }),
+        where: () => ({
+          limit: () => Promise.resolve(current ? [current] : []),
+          orderBy: () => Promise.resolve(current ? [current] : []),
+        }),
         orderBy: () => Promise.resolve(current ? [current] : []),
       }),
     }),
@@ -261,5 +265,37 @@ describe("toEvaluationRun", () => {
         }),
       ),
     ).toThrow();
+  });
+});
+
+describe("listEvaluationRunsByBenchmark", () => {
+  it("returns a case's runs across suites", async () => {
+    const capture = capturingExecutor(
+      rowFrom({
+        suiteId: SUITE_ID,
+        benchmarkId: RUN.benchmarkId,
+        caseVersionHash: VERSION_HASH,
+        arm: RUN.arm,
+        repetition: RUN.repetition,
+        jobId: JOB_ID,
+        result: "passed",
+        score: "1",
+        failureCategory: null,
+        failureLabelSource: null,
+        metricsJson: METRICS,
+        gradedAt: new Date(0),
+      }),
+    );
+
+    const runs = await listEvaluationRunsByBenchmark(RUN.benchmarkId, capture.executor);
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ benchmarkId: RUN.benchmarkId, suiteId: SUITE_ID });
+  });
+
+  it("refuses an id the benchmark scheme cannot express instead of querying", async () => {
+    const capture = capturingExecutor();
+
+    expect(await listEvaluationRunsByBenchmark("../../etc", capture.executor)).toEqual([]);
   });
 });

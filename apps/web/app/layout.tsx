@@ -40,6 +40,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </Link>
               <nav className="flex items-center gap-4">
                 <Link
+                  href="/evaluations"
+                  className="text-muted-foreground hover:text-foreground text-xs"
+                >
+                  Evaluations
+                </Link>
+                <Link
                   href="/settings/github"
                   className="text-muted-foreground hover:text-foreground text-xs"
                 >
