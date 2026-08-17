@@ -120,9 +120,9 @@ export function toJobDetail(row: Job): JobDetail {
  * deliberately NOT part of this: it cannot join the transaction, and pretending
  * otherwise would hide the dual-write gap that `requestJobRun` documents.
  *
- * The column defaults supply status, priority and every budget value except the
- * review loop bound, which `createJobSchema` defaults on the way in so a caller
- * can set it per run.
+ * The column defaults supply status, priority and any execution budget a caller
+ * does not pin. The review loop bound is schema-defaulted so a caller can set it
+ * per run as well.
  */
 export async function createJob(input: CreateJob, database: Database = db): Promise<JobDetail> {
   return database.transaction(async (tx) => {
@@ -142,6 +142,12 @@ export async function createJob(input: CreateJob, database: Database = db): Prom
         ...(input.issueUrl === undefined ? {} : { issueUrl: input.issueUrl }),
         reviewMode: input.reviewMode,
         maxReviewLoops: input.maxReviewLoops,
+        ...(input.maxDurationSeconds === undefined
+          ? {}
+          : { maxDurationSeconds: input.maxDurationSeconds }),
+        ...(input.maxCostUsd === undefined ? {} : { maxCostUsd: input.maxCostUsd }),
+        ...(input.maxModelCalls === undefined ? {} : { maxModelCalls: input.maxModelCalls }),
+        ...(input.maxToolCalls === undefined ? {} : { maxToolCalls: input.maxToolCalls }),
       })
       .returning();
 

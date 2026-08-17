@@ -249,6 +249,8 @@ export interface EvalConfig {
   cloneTimeoutMs: number;
   /** Bound on the complete seed archive, applied before it enters the sandbox. */
   seedMaxBytes: number;
+  /** Maximum number of evaluation jobs the runner keeps in flight. */
+  concurrency: number;
 }
 
 /**
@@ -474,6 +476,7 @@ const schema = z.object({
     .min(1_048_576)
     .max(2_147_483_648)
     .default(268_435_456),
+  RIVET_EVAL_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(1),
 });
 
 /** Every problem with the environment at once, rather than one per restart. */
@@ -587,6 +590,7 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
       fixtureRoot: parsed.data.RIVET_BENCHMARK_FIXTURE_ROOT,
       cloneTimeoutMs: parsed.data.RIVET_EVAL_CLONE_TIMEOUT_MS,
       seedMaxBytes: parsed.data.RIVET_EVAL_SEED_MAX_BYTES,
+      concurrency: parsed.data.RIVET_EVAL_CONCURRENCY,
     },
   };
 

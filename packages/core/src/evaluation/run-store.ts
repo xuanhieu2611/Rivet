@@ -84,6 +84,83 @@ const labelEvaluationRunInputSchema = z
 
 export type LabelEvaluationRunInput = z.input<typeof labelEvaluationRunInputSchema>;
 
+const updateEvaluationRunGradeInputSchema = z
+  .object({
+    id: evaluationRunIdSchema,
+    caseVersionHash: caseVersionHashSchema,
+    result: runResultSchema,
+    score: z.number().finite().min(0).max(1).nullable(),
+    failureCategory: evaluationFailureCategorySchema.nullable(),
+    failureLabelSource: failureLabelSourceSchema.nullable(),
+    metrics: runMetricsSchema,
+    gradedAt: z.date(),
+  })
+  .strict();
+
+export type UpdateEvaluationRunGradeInput = z.input<typeof updateEvaluationRunGradeInputSchema>;
+
+/**
+ * Writes a re-grade back onto an existing matrix cell.
+ *
+ * Re-grading changes only the grade snapshot. The job reference and matrix
+ * identity stay fixed, so the command cannot accidentally create a second job
+ * or rewrite the job's own history.
+ */
+export async function updateEvaluationRunGrade(
+  input: UpdateEvaluationRunGradeInput,
+  executor: Executor = db,
+): Promise<EvaluationRunRecord | null> {
+  const parsed = updateEvaluationRunGradeInputSchema.parse(input);
+  const run = evaluationRunSchema.parse({
+    benchmarkId: "placeholder",
+    caseVersionHash: parsed.caseVersionHash,
+    arm: "placeholder",
+    repetition: 1,
+    result: parsed.result,
+    score: parsed.score,
+    failureCategory: parsed.failureCategory,
+    failureLabelSource: parsed.failureLabelSource,
+    metrics: parsed.metrics,
+  });
+
+  const [row] = await executor
+    .update(evaluationRuns)
+    .set({
+      caseVersionHash: parsed.caseVersionHash,
+      result: run.result,
+      score: run.score === null ? null : String(run.score),
+      failureCategory: run.failureCategory,
+      failureLabelSource: run.failureLabelSource,
+      metricsJson: run.metrics,
+      gradedAt: parsed.gradedAt,
+    })
+    .where(eq(evaluationRuns.id, parsed.id))
+    .returning();
+
+  return row ? toEvaluationRun(row) : null;
+}
+
+/** Alias used by the re-grading CLI. */
+export const recordEvaluationGrade = updateEvaluationRunGrade;
+
+/**
+ * Lists task failures that still need a human §24.5 label.
+ *
+ * Infrastructure outcomes and grading failures are normally labelled by the
+ * grader. Only failed task outcomes belong in the manual queue; keeping that
+ * filter here prevents the CLI from asking a person to label an environment
+ * outage as an implementation mistake.
+ */
+export async function listUnlabeledEvaluationRuns(
+  executor: Executor = db,
+): Promise<EvaluationRunRecord[]> {
+  const rows = await executor.select().from(evaluationRuns).orderBy(asc(evaluationRuns.createdAt));
+
+  return rows
+    .filter((row) => row.result === "failed" && row.failureCategory === null)
+    .map(toEvaluationRun);
+}
+
 /**
  * Writes the result for one case/arm/repetition cell.
  *

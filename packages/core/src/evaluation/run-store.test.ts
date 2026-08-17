@@ -1,7 +1,12 @@
 import type { EvaluationRunRow, Executor, NewEvaluationRunRow } from "@rivet/database";
 import { describe, expect, it } from "vitest";
 
-import { createEvaluationRun, labelEvaluationRun, toEvaluationRun } from "./run-store";
+import {
+  createEvaluationRun,
+  labelEvaluationRun,
+  toEvaluationRun,
+  updateEvaluationRunGrade,
+} from "./run-store";
 
 const SUITE_ID = "11111111-2222-3333-4444-555555555555";
 const JOB_ID = "22222222-3333-4444-5555-666666666666";
@@ -137,6 +142,55 @@ describe("createEvaluationRun", () => {
       ),
     ).rejects.toThrow(/cannot have a score/);
     expect(capture.inserted).toHaveLength(0);
+  });
+});
+
+describe("updateEvaluationRunGrade", () => {
+  it("updates the grade snapshot without touching the job reference", async () => {
+    const initial = rowFrom({
+      suiteId: SUITE_ID,
+      benchmarkId: RUN.benchmarkId,
+      caseVersionHash: VERSION_HASH,
+      arm: RUN.arm,
+      repetition: RUN.repetition,
+      jobId: JOB_ID,
+      result: "failed",
+      score: "0.5000",
+      failureCategory: null,
+      failureLabelSource: null,
+      metricsJson: METRICS,
+      gradedAt: new Date(0),
+    });
+    const capture = capturingExecutor(initial);
+    const nextMetrics = { ...METRICS, hiddenTestsPassed: 2 };
+
+    const updated = await updateEvaluationRunGrade(
+      {
+        id: RUN_ID,
+        caseVersionHash: "b".repeat(64),
+        result: "passed",
+        score: 1,
+        failureCategory: null,
+        failureLabelSource: null,
+        metrics: nextMetrics,
+        gradedAt: new Date("2026-01-01T00:00:00Z"),
+      },
+      capture.executor,
+    );
+
+    expect(capture.updates).toEqual([
+      {
+        caseVersionHash: "b".repeat(64),
+        result: "passed",
+        score: "1",
+        failureCategory: null,
+        failureLabelSource: null,
+        metricsJson: nextMetrics,
+        gradedAt: new Date("2026-01-01T00:00:00Z"),
+      },
+    ]);
+    expect(updated?.jobId).toBe(JOB_ID);
+    expect(updated?.result).toBe("passed");
   });
 });
 

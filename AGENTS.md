@@ -577,6 +577,9 @@ pure function of an env object.
   `process.cwd()`, so the builder and the worker cannot disagree about which directories these are.
 - `RIVET_EVAL_CLONE_TIMEOUT_MS` / `RIVET_EVAL_SEED_MAX_BYTES` - the local seed's host budgets,
   mirroring the `GITHUB_*` pair and deliberately separate from it.
+- `RIVET_EVAL_CONCURRENCY` - the evaluation runner's in-flight matrix bound, `1` by default;
+  `pnpm eval:run --dry-run` resolves the case x arm x repetition matrix without opening any
+  database, Redis or Docker connection.
 
 **The `rivet-local:` scheme is opaque on purpose, and that is the whole security argument.** A
 path-carrying scheme (`file:///...`) would make every acceptor one crafted request away from cloning

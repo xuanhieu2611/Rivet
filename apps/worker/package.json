@@ -10,6 +10,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "eval:build": "tsx src/eval-build.ts",
+    "eval:run": "tsx src/eval-run.ts",
+    "eval:grade": "tsx src/eval-grade.ts",
+    "eval:label": "tsx src/eval-label.ts",
+    "demo:eval": "tsx src/eval-run.ts --demo --cases bulk-discount-boundary,multi-line-order --repetitions 2 --label demo-eval",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:sandbox": "vitest run --config vitest.sandbox.config.ts"
   },

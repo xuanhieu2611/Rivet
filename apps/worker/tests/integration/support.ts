@@ -120,6 +120,7 @@ export const TEST_CONFIG: WorkerConfig = {
     fixtureRoot: ".rivet/benchmarks",
     cloneTimeoutMs: 5_000,
     seedMaxBytes: 64 * 1_024 * 1_024,
+    concurrency: 1,
   },
 };
 

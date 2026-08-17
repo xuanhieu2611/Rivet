@@ -94,6 +94,7 @@ describe("parseWorkerConfig", () => {
         fixtureRoot: DEFAULT_BENCHMARK_FIXTURE_ROOT,
         cloneTimeoutMs: 180_000,
         seedMaxBytes: 268_435_456,
+        concurrency: 1,
       },
     });
   });
@@ -545,12 +546,14 @@ describe("evaluation harness", () => {
       RIVET_BENCHMARK_FIXTURE_ROOT: "/srv/built",
       RIVET_EVAL_CLONE_TIMEOUT_MS: "60000",
       RIVET_EVAL_SEED_MAX_BYTES: "2097152",
+      RIVET_EVAL_CONCURRENCY: "4",
     });
 
     expect(config.eval.benchmarkRoot).toBe("/srv/benchmarks");
     expect(config.eval.fixtureRoot).toBe("/srv/built");
     expect(config.eval.cloneTimeoutMs).toBe(60_000);
     expect(config.eval.seedMaxBytes).toBe(2_097_152);
+    expect(config.eval.concurrency).toBe(4);
   });
 
   it("rejects a mode that is neither on nor off", () => {

@@ -137,6 +137,22 @@ describe("createJobSchema", () => {
     expect(result.maxReviewLoops).toBe(2);
   });
 
+  it("accepts explicit execution budgets for worker-side reproducible jobs", () => {
+    const result = createJobSchema.parse({
+      ...validInput,
+      maxDurationSeconds: 900,
+      maxCostUsd: "1.00",
+      maxModelCalls: 40,
+      maxToolCalls: 100,
+    });
+    expect(result).toMatchObject({
+      maxDurationSeconds: 900,
+      maxCostUsd: "1.00",
+      maxModelCalls: 40,
+      maxToolCalls: 100,
+    });
+  });
+
   it("accepts an explicit review mode and loop bound", () => {
     const result = createJobSchema.parse({
       ...validInput,

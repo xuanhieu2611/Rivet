@@ -204,6 +204,7 @@ function localSeedOptions(fixtureRoot: string): LocalSeedPipelineOptions {
       fixtureRoot,
       cloneTimeoutMs: 60_000,
       seedMaxBytes: 64 * 1_024 * 1_024,
+      concurrency: 1,
     },
     { repositoryRoot: fixtureRoot },
   );

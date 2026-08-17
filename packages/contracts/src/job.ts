@@ -2,6 +2,7 @@ import type { JobStatus as DrizzleJobStatus } from "@rivet/database";
 import { z } from "zod";
 
 import type { FailureCategory } from "./job-event";
+import { nonNegativeDecimalStringSchema } from "./benchmark-case";
 import { type ReviewDecision, type ReviewMode, reviewModeSchema } from "./review-report";
 
 /**
@@ -96,6 +97,11 @@ export const createJobSchema = z
       .min(0, "Maximum review loops must be 0 or more")
       .max(5, "Maximum review loops must be 5 or fewer")
       .default(2),
+    /** Worker-side callers may pin the execution budgets for reproducible runs. */
+    maxDurationSeconds: z.number().int().positive().optional(),
+    maxCostUsd: nonNegativeDecimalStringSchema.optional(),
+    maxModelCalls: z.number().int().positive().optional(),
+    maxToolCalls: z.number().int().positive().optional(),
   })
   .superRefine((job, ctx) => {
     const hasOwner = job.repoOwner !== undefined;
@@ -129,7 +135,7 @@ export const createJobSchema = z
 
 /** What a client sends - `baseBranch` may be omitted. */
 export type CreateJobInput = z.input<typeof createJobSchema>;
-/** What the server works with after parsing - every field is present. */
+/** What the server works with after parsing; worker budgets stay optional when not pinned. */
 export type CreateJob = z.output<typeof createJobSchema>;
 
 /**
