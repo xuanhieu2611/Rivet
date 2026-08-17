@@ -404,10 +404,12 @@ built before any agent behaviour.
       with results parsed and pre-existing failures told apart from new ones.
 - [x] **M8 - Independent review session.** A separate read-only review pass over the diff, with
       structured findings and a bounded revision loop.
-- [ ] **M9 - GitHub integration.** A GitHub App, repository and issue pickers, short-lived tokens,
+- [x] **M9 - GitHub integration.** A GitHub App, repository and issue pickers, short-lived tokens,
       and branch/commit/push/pull-request creation.
-- [ ] **M10 - Evaluation harness.** A benchmark schema, an evaluation runner, hidden tests, run
-      metrics and a results dashboard.
+- [x] **M10 - Evaluation harness.** A benchmark schema, an evaluation runner, hidden tests graded in
+      a separate container, run metrics and a results dashboard. Five cases; the PRD's "expand to
+      20" and "eventually 30-50" entries stay open as authoring work. The first experiment is
+      written up in [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md).
 - [ ] **M11 - Observability and hardening.** Structured logging, tracing, job and worker metrics,
       redaction, rate limiting, orphan cleanup, security review.
 - [ ] **M12 - Public demo polish.** Landing page, timeline animation, diff viewer, evaluation

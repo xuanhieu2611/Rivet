@@ -96,6 +96,40 @@ describe("benchmark fixture loader and builder", () => {
     });
   });
 
+  it("builds the same commit under a different timezone and git identity", async () => {
+    // Acceptance run A's environment assertion. A benchmark whose identity
+    // depends on the machine that built it is not a pin, and `TZ` is the one
+    // that will actually happen: a commit date rendered in local time would
+    // give the same case two SHAs on two laptops.
+    const root = await createBenchmarkRoot();
+    const output = join(root, ".rivet", "benchmarks");
+    const first = (await buildBenchmarkFixtures({ benchmarkRoot: root, outputRoot: output }))[0]!;
+
+    const restore = { ...process.env };
+    process.env.TZ = "Pacific/Kiritimati";
+    process.env.GIT_AUTHOR_NAME = "Someone Else";
+    process.env.GIT_AUTHOR_EMAIL = "someone@example.invalid";
+    process.env.GIT_COMMITTER_NAME = "Someone Else";
+    process.env.GIT_COMMITTER_EMAIL = "someone@example.invalid";
+    try {
+      const second = (
+        await buildBenchmarkFixtures({
+          benchmarkRoot: root,
+          outputRoot: join(root, ".rivet", "rebuilt"),
+        })
+      )[0]!;
+
+      expect(second.baseCommitSha).toBe(first.baseCommitSha);
+      expect(second.versionHash).toBe(first.versionHash);
+      expect(second.treeSha).toBe(first.treeSha);
+    } finally {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in restore)) delete process.env[key];
+      }
+      Object.assign(process.env, restore);
+    }
+  });
+
   it("includes hidden files in the version but not in the seed commit", async () => {
     const root = await createBenchmarkRoot();
     const output = join(root, ".rivet", "benchmarks");

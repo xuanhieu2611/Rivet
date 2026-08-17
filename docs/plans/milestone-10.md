@@ -8,16 +8,16 @@ from a platform, and the one an interviewer will actually ask.
 
 The PRD checklist (§2699):
 
-- [ ] Benchmark schema
-- [ ] First 5 tasks
-- [ ] Evaluation runner
-- [ ] Hidden test support
-- [ ] Store run metrics
-- [ ] Categorize failures
-- [ ] Evaluation dashboard
+- [x] Benchmark schema
+- [x] First 5 tasks
+- [x] Evaluation runner
+- [x] Hidden test support
+- [x] Store run metrics
+- [x] Categorize failures
+- [x] Evaluation dashboard
 - [ ] Expand to 20 tasks
 - [ ] Eventually 30-50 tasks
-- [ ] _Optional experiment:_ `reviewMode: "independent"` vs `"none"` over the same task set (§25
+- [x] _Optional experiment:_ `reviewMode: "independent"` vs `"none"` over the same task set (§25
       Experiment 1)
 
 Plus the standing constraints: §24.1 (the case fields), §24.2 (reproducibility: pinned commit,

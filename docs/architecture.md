@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, at the end of Milestone 8, and names the
+This document describes Rivet **as it exists today**, at the end of Milestone 10, and names the
 places where the current shape is a deliberate shortcut rather than the intended end state. It is
 updated as each milestone lands rather than describing a system that does not exist yet.
 
@@ -39,8 +39,12 @@ from where it stopped. Milestone 7 generalized the one-suite baseline into deter
 typecheck and lint checks, added diff-derived targeted tests, parsed Vitest and Jest reports for
 named failure attribution, and persisted canonical baseline and validation reports that the job page
 renders. Milestone 8 added an independent read-only reviewer, durable review reports and findings, a
-bounded revision and revalidation cycle, and recovery that preserves the review loop counter. The
-branch, commit and pull request belong to Milestone 9.
+bounded revision and revalidation cycle, and recovery that preserves the review loop counter.
+Milestone 9 gave a job an effect outside Rivet: a GitHub App, an authenticated host clone, and a
+branch, commit and pull request landed exactly once through a durable receipt protocol. Milestone 10
+turned the system's own behaviour into numbers: git-tracked benchmark cases seeded from local bare
+repositories, hidden tests graded in a second container after the job is over, and a run store the
+`/evaluations` pages aggregate.
 
 ## What exists today
 
@@ -67,6 +71,16 @@ implementation summary, the baseline and validation reports, and the review repo
 read one fetch away for the same reason. `job_checkpoints` is the durable workflow cursor: one row
 per safe boundary, carrying the phase to resume at and a complete compressed workspace patch.
 Columns that only later milestones can fill remain nullable.
+
+Five more tables arrived with M9 and M10 and sit deliberately to the side of that core.
+`job_external_effects` is the append-only receipt ledger that makes publication idempotent, unique
+on `(job_id, kind)`. `github_installations` is a **cache** of what GitHub says the App can act on.
+`benchmark_cases` is the second cache in the system - a registry of the git-tracked benchmark
+corpus, where editing a row changes nothing and editing the files and rebuilding does.
+`evaluation_suites` and `evaluation_runs` hold the evaluation harness's results, and
+`evaluation_runs.job_id` is the only foreign key into `jobs` anywhere in the schema. The direction
+matters: a job stays a complete, self-contained record whether or not an evaluation ever referenced
+it.
 
 ## The two deployables and the package they share
 
@@ -782,6 +796,47 @@ That catches the class of schema bug that only shows up on apply - a non-nullabl
 table with rows, an enum value used before it exists - against a real copy of the database rather
 than a fresh empty container.
 
+## The evaluation harness
+
+M10 measures the system without changing it, and the shape of that is one sentence: **an evaluation
+run is an ordinary job**. The runner in `apps/worker/src/eval-run.ts` calls `createJob()` and
+`requestJobRun()` exactly as the web app does, a real worker claims the row under a real lease, and
+the pipeline that runs is the one production runs. Nothing about the pipeline knows an evaluation is
+happening: M10 adds no job status, no job event type and no failure category.
+
+Three pieces sit around that unchanged core.
+
+**A benchmark case is git-tracked files.** `benchmarks/<case-id>/` holds `case.json`, the seed tree
+under `repo/`, hidden tests under `hidden/`, and a git-tracked `case.lock.json`. `pnpm eval:build`
+turns each into a local bare repository under `.rivet/benchmarks/<case-id>.git` whose single commit
+carries fixed author, email and dates, so its SHA is a pure function of the tree - and the builder
+fails loudly when a rebuild disagrees with the lockfile. A SHA-256 version hash over the case JSON,
+the seed tree and the hidden tests is copied onto every run row, so a rebuilt case cannot
+retroactively relabel old results.
+
+**A local seed is a seed source, not a GitHub special case.** `PipelineOptions.localSeed` has the
+same result type as M9's authenticated `seedClone` and no token field, and `provisioningPhase()`
+chooses between the two and the unauthenticated in-container clone in exactly one place. Everything
+downstream reads a `SeedCloneResult` that cannot say which source produced it, which is what makes
+an evaluation job's timeline identical to an ordinary job's. The job's URL is
+`rivet-local:<case-id>` - an opaque scheme that cannot carry a path, resolved below a configured
+fixture root through `realpath`, refused entirely unless `RIVET_EVAL=on`, and never accepted by the
+browser-facing `createJobSchema`.
+
+**Grading is a second container, after the job is over.** `gradeEvaluationRun()` takes the
+`SandboxProvider` port rather than a live container, so a job that ended in an infrastructure
+failure is classified `errored` from its row alone and costs nothing. Everything else provisions at
+the checkpoint's base commit, applies the job's last checkpoint patch, re-derives it, compares
+SHA-256, and only then copies `hidden/` in and runs the case's commands, destroying the container in
+a `finally`. The hidden tests therefore never enter the job's container, diff, checkpoint or pull
+request, and grading is re-runnable from stored patches with no model calls. The grader writes
+nothing: `evaluation_runs` is the harness's only writable surface on a completed job.
+
+Results are `passed`, `failed`, `errored` or `ungraded`; success rate is computed over
+`passed + failed` only, with the other two counted, shown and excluded. `/evaluations/:id` renders
+success by case, arm and category, the efficiency and quality aggregates, the failure histogram
+including its unlabelled bucket, and a link from every run to `/jobs/:id`.
+
 ## How this is tested
 
 Four suites, and the split is deliberate rather than administrative.
@@ -833,7 +888,18 @@ trip to Postgres, which is where the clock that matters actually lives. And ever
 run against a host that is not plainly local, because its cases truncate `jobs` and `job_events`
 while `.env.local` on every dev machine points at the real Neon database.
 
-Two demos sit outside CI and need credentials or a daemon, which is why they are commands rather
+The M10 acceptance runs are spread across those same suites rather than given a fifth one, because
+each belongs where its evidence lives. The builder's determinism and the corpus's lockfiles are unit
+tests (`packages/core/src/evaluation/case-loader.test.ts`, `apps/worker/src/eval-corpus.test.ts`).
+Classification, the metric snapshot and re-grading from stored patches are integration tests
+(`apps/worker/tests/integration/evaluation.int.test.ts`), because they are assertions about Postgres
+rows and the runner's control flow. Everything about bytes in a container - a seeded tree that
+matches the case byte for byte, a sentinel that appears nowhere, a grader that tells a correct
+solution from one that only satisfies the public suite, and three ways a tampered workspace lands on
+`ungraded` - is in the sandbox suite (`local-seed.sbx.test.ts`, `evaluation.sbx.test.ts`), because
+asserting those against a fake would be asserting the fake. None of them needs a model key.
+
+Three demos sit outside CI and need credentials or a daemon, which is why they are commands rather
 than tests. `pnpm demo:job` runs one real Pi session against the public fixture end to end.
 `pnpm demo:recovery` runs the Milestone 6 definition of done: worker A is killed with `SIGKILL` the
 instant its first implementation turn is durable, worker B restores the patch into a different
@@ -841,7 +907,9 @@ container and finishes, and the harness checks the plan, the generation, the two
 patch checksum, the un-rerun phases, the cumulative budgets and the full acceptance trace before it
 exits. Its agent is scripted on purpose - the replacement session makes no edit of its own, so the
 job can only reach `completed` if the killed worker's bytes really were restored - and a model
-sampling differently twice cannot make a recovery demo fail.
+sampling differently twice cannot make a recovery demo fail. `pnpm demo:eval` is the evaluation
+harness's equivalent: two cases, two arms and two repetitions against Docker and a real model,
+ending in a suite page whose aggregates can be checked by hand.
 
 ## What is deliberately absent
 

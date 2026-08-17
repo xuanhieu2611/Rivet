@@ -12,10 +12,27 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 9 is complete.** Jobs execute, survive their worker, deterministically
-validate what the coding session changed, run an independent read-only review, and **end in a pull
-request on GitHub**. Creating one enqueues it, a worker claims it under a Postgres lease, provisions
-a sandbox - seeded from an authenticated host clone when the job carries an installation binding -
+**Current state: Milestone 10 is complete.** Rivet now measures itself. A benchmark case is
+git-tracked files that build into a lock-pinned local bare repository; an evaluation run **is** an
+ordinary job, created through `createJob()` and executed by a real worker under a real lease; and a
+second container grades the job's last checkpoint against hidden tests the job never saw.
+`evaluation_suites`, `evaluation_runs` and the `benchmark_cases` registry hold the results,
+`/evaluations/:id` renders them, and `docs/experiments/reviewer-value.md` is the first experiment
+run over them. **M10 adds no job status, no job event type and no job failure category**, which is
+the milestone's central claim: a job under evaluation must be indistinguishable from one created in
+the web form, or the harness is measuring a different system than production runs. Its acceptance
+runs are A-G (`packages/core/src/evaluation/case-loader.test.ts` and
+`apps/worker/src/eval-corpus.test.ts` for the builder and the corpus,
+`apps/worker/tests/integration/evaluation.int.test.ts` for classification and metrics,
+`apps/worker/tests/sandbox/local-seed.sbx.test.ts` and
+`apps/worker/tests/sandbox/evaluation.sbx.test.ts` for the container-level ones) plus run H,
+`pnpm demo:eval`. `docs/plans/milestone-10-acceptance.md` is the contract they implement and
+`docs/milestone-10-guide.md` is the tour.
+
+**Milestone 9 is complete.** Jobs execute, survive their worker, deterministically validate what the
+coding session changed, run an independent read-only review, and **end in a pull request on
+GitHub**. Creating one enqueues it, a worker claims it under a Postgres lease, provisions a
+sandbox - seeded from an authenticated host clone when the job carries an installation binding -
 records per-check baselines, plans, runs a Pi coding session, heartbeats while it runs, compares
 targeted tests plus the full test, typecheck and lint checks, reviews the result, publishes the
 validated tree from the worker host, and lands it in a terminal status. Retries, cancellation,
@@ -193,6 +210,12 @@ pnpm demo:agent          # one real Pi session against a disposable Docker fixtu
 pnpm demo:job            # full job against rivet-fixture-node with Pi, Postgres, Redis and Docker
 pnpm demo:recovery       # kill a worker mid-job and prove the replacement resumes; no model key
 pnpm demo:pr             # one real job against the throwaway GitHub repo, ending in a real PR
+pnpm eval:build          # build every benchmark case into .rivet/benchmarks, verifying its lockfile
+pnpm eval:run --dry-run  # print the case x arm x repetition matrix; no Postgres, Redis, Docker or spend
+pnpm eval:run            # execute the matrix against real workers; costs model calls
+pnpm eval:grade <suite>  # re-score a completed suite from stored patches, with no model calls
+pnpm eval:label          # record a human §24.5 label on an unlabelled failure
+pnpm demo:eval           # run H: 2 cases x 2 arms x 2 repetitions with Docker and a real model
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 
@@ -625,6 +648,21 @@ case's commit, a `setupCommand` that failed. Scoring a solution zero because the
 set up is the same category of lie as grading a tree the job did not produce. Success rate is
 computed over `passed + failed` only; `errored` and `ungraded` are counted, reported and excluded
 from the denominator.
+
+**`metrics_json` is written once, from named sources, and never re-read from them.** The snapshot is
+denormalized at grade time so a later change to how a metric is computed cannot silently rewrite
+history: change a job's `total_cost_usd` after grading and the run row does not move. `totalCostUsd`
+stays a **string** the whole way through, because the column is `numeric(10,4)` and the one thing an
+evaluation harness must not do is report a cost that a float rounded; and `reviewDecision` is null
+when review was skipped, because "no reviewer looked at this" and "a reviewer had nothing to say"
+are different facts and an arm labelled `none` reporting a decision would invalidate Experiment 1.
+
+**Run C's negative assertions need positive controls, and they have them.** A grep that silently
+fails returns the same nothing a clean container returns, so the sentinel search proves it can find
+a string the seed certainly contains before it is trusted to find none of the hidden one, and the
+checkpoint search plants a sentinel in the workspace, captures it through the production capture
+path, compresses and decompresses it, and finds it again. A patch is gzip in Postgres, so a grep
+over the stored column would pass whether the sentinel were there or not.
 
 Schema changes go: edit `packages/database/src/schema/`, run `pnpm db:generate`, **commit the
 generated SQL** under `packages/database/drizzle/`, then `pnpm db:migrate`. Migrations are applied

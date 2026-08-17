@@ -1,9 +1,28 @@
 # Milestone 10: the acceptance contract
 
-**Status: not yet implemented.** This document is written before any M10 code, the way M8's and M9's
-were, so the code is measured against it rather than the other way around.
-[`docs/plans/milestone-10.md`](milestone-10.md) is the plan; this document is the set of assertions
-the Stage 10 tests must make. Nothing below exists yet.
+**Status: implemented.** This document was written before any M10 code, the way M8's and M9's were,
+so the code was measured against it rather than the other way around.
+[`docs/plans/milestone-10.md`](milestone-10.md) is the plan and
+[`docs/milestone-10-guide.md`](../milestone-10-guide.md) is the tour of what was built. Runs A-G are
+now code and pass with no model key and no network; run H is `pnpm demo:eval`. Where a run landed:
+
+| run | where it lives                                                                                                                             |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| A   | `packages/core/src/evaluation/case-loader.test.ts` (the builder), `apps/worker/src/eval-corpus.test.ts` (the corpus against its lockfiles) |
+| B   | `apps/worker/tests/sandbox/local-seed.sbx.test.ts`                                                                                         |
+| C   | `apps/worker/tests/sandbox/evaluation.sbx.test.ts`                                                                                         |
+| D   | `apps/worker/tests/sandbox/evaluation.sbx.test.ts`                                                                                         |
+| E   | `apps/worker/tests/integration/evaluation.int.test.ts`                                                                                     |
+| F   | `apps/worker/tests/sandbox/evaluation.sbx.test.ts`                                                                                         |
+| G   | `apps/worker/tests/integration/evaluation.int.test.ts`                                                                                     |
+| H   | `pnpm demo:eval`                                                                                                                           |
+
+Two places where the code took a slightly different route to the same assertion, both noted where
+they occur. Run D's re-runnability is asserted in the integration suite against `eval:grade`'s
+stored-patch path rather than with a second Docker case, because the claim is that re-scoring needs
+no worker and no model - which is exactly what a suite with neither running proves. And run F's
+wrong-case variant is refused by the seed's commit comparison **before** the checksum is reached,
+which is the same refusal one step earlier and is asserted there.
 
 M9 was the first milestone whose phase produced an effect Rivet cannot roll back, and its contract
 spent its length on the runs where something went wrong at the worst moment. M10's risk is different
