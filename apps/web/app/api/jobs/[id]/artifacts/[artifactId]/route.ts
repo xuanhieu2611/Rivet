@@ -5,6 +5,7 @@ import { getArtifact, getJob } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { badRequest, notFound, serverError } from "@/lib/api/responses";
+import { requireSession } from "@/lib/auth/guard";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,10 @@ function parseArtifactId(raw: string): number | undefined {
 /** `GET /api/jobs/:id/artifacts/:artifactId` - one artifact with its content. */
 export const GET = withRoute(
   "/api/jobs/:id/artifacts/:artifactId",
-  async (_request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+  async (request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const auth = await requireSession(request);
+    if (auth) return auth;
+
     const { id, artifactId: rawArtifactId } = await context.params;
     const artifactId = parseArtifactId(rawArtifactId);
     if (artifactId === undefined) {

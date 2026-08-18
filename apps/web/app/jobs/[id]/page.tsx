@@ -18,6 +18,7 @@ import { ReviewPanel } from "@/components/review-panel";
 import { ValidationPanel } from "@/components/validation-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/format";
+import { requirePageSession } from "@/lib/auth/page-guard";
 import { FAILURE_CATEGORY_LABELS } from "@/lib/job-status";
 
 /** Reads Postgres per request; `next build` must not need a database. */
@@ -28,12 +29,14 @@ interface PageProps {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  await requirePageSession();
   const { id } = await params;
   const job = await getJob(id);
   return { title: job?.title ?? "Job not found" };
 }
 
 export default async function JobDetailPage({ params }: PageProps) {
+  await requirePageSession();
   const { id } = await params;
   const job = await getJob(id);
   if (!job) notFound();

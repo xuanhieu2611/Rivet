@@ -5,6 +5,8 @@ import { getJobQueue } from "@rivet/queue";
 import { NextResponse } from "next/server";
 
 import { conflict, notFound, serverError } from "@/lib/api/responses";
+import { csrfFailure } from "@/lib/auth/csrf";
+import { requireSession } from "@/lib/auth/guard";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +31,12 @@ interface RouteContext {
  */
 export const POST = withRoute(
   "/api/jobs/:id/cancel",
-  async (_request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+  async (request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const auth = await requireSession(request);
+    if (auth) return auth;
+    const csrf = csrfFailure(request);
+    if (csrf) return csrf;
+
     const { id } = await context.params;
 
     try {

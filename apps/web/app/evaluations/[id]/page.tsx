@@ -25,6 +25,7 @@ import {
   suiteStatusClassName,
 } from "@/lib/evaluation-presentation";
 import { formatDateTime } from "@/lib/format";
+import { requirePageSession } from "@/lib/auth/page-guard";
 import { cn } from "@/lib/utils";
 
 /** Reads Postgres on every request; `next build` has no database. */
@@ -37,6 +38,7 @@ interface PageProps {
 }
 
 export default async function EvaluationSuitePage({ params }: PageProps) {
+  await requirePageSession();
   const { id } = await params;
 
   const suite = await getEvaluationSuite(id);

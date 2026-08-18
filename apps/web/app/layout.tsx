@@ -39,6 +39,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </span>
               </Link>
               <nav className="flex items-center gap-4">
+                <form method="post" action="/api/auth/signout">
+                  <button
+                    type="submit"
+                    className="text-muted-foreground hover:text-foreground text-xs"
+                  >
+                    Sign out
+                  </button>
+                </form>
                 <Link
                   href="/evaluations"
                   className="text-muted-foreground hover:text-foreground text-xs"

@@ -13,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { requirePageSession } from "@/lib/auth/page-guard";
 import { formatDateTime, shortenRepoUrl } from "@/lib/format";
 
 /**
@@ -23,6 +24,7 @@ import { formatDateTime, shortenRepoUrl } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  await requirePageSession();
   const jobs = await listJobs({ limit: 50 });
 
   return (

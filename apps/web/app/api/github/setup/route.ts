@@ -3,11 +3,14 @@ import "server-only";
 import { syncGitHubInstallation } from "@rivet/core";
 import { NextResponse } from "next/server";
 
+import { csrfFailure } from "@/lib/auth/csrf";
 import { githubAccess, githubUnavailable } from "@/lib/github/client";
 import { parseInstallationId } from "@/lib/github/params";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
+
+// Public GitHub App callback: GitHub reaches this URL before a Rivet session exists.
 
 /**
  * `GET /api/github/setup` - the App's post-install landing URL.
@@ -24,6 +27,9 @@ export const dynamic = "force-dynamic";
 export const GET = withRoute(
   "/api/github/setup",
   async (request: Request, telemetry: RouteTelemetry) => {
+    const csrf = csrfFailure(request);
+    if (csrf) return csrf;
+
     const url = new URL(request.url);
     const settings = (status: string) =>
       NextResponse.redirect(new URL(`/settings/github?setup=${status}`, url), 303);

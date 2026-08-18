@@ -5,6 +5,7 @@ import { getCommand, getJob } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { badRequest, notFound, serverError } from "@/lib/api/responses";
+import { requireSession } from "@/lib/auth/guard";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,10 @@ function parseCommandId(raw: string): number | undefined {
 /** `GET /api/jobs/:id/commands/:commandId` - one command with its transcript. */
 export const GET = withRoute(
   "/api/jobs/:id/commands/:commandId",
-  async (_request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+  async (request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const auth = await requireSession(request);
+    if (auth) return auth;
+
     const { id, commandId: rawCommandId } = await context.params;
     const commandId = parseCommandId(rawCommandId);
     if (commandId === undefined) {

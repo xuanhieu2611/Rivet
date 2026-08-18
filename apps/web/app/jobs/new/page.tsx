@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { NewJobForm } from "@/components/new-job-form";
+import { requirePageSession } from "@/lib/auth/page-guard";
 import { resolveGitHubWebConfig } from "@/lib/github/config";
 
 export const metadata: Metadata = { title: "New job" };
@@ -12,7 +13,8 @@ export const metadata: Metadata = { title: "New job" };
  */
 export const dynamic = "force-dynamic";
 
-export default function NewJobPage() {
+export default async function NewJobPage() {
+  await requirePageSession();
   const github = resolveGitHubWebConfig();
 
   return (

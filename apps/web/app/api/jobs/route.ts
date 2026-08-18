@@ -6,6 +6,8 @@ import { getJobQueue } from "@rivet/queue";
 import { NextResponse } from "next/server";
 
 import { badRequest, readJsonBody, serverError, validationFailed } from "@/lib/api/responses";
+import { csrfFailure } from "@/lib/auth/csrf";
+import { requireSession } from "@/lib/auth/guard";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 import { currentTraceContext } from "@/lib/telemetry/telemetry";
 
@@ -18,6 +20,9 @@ export const dynamic = "force-dynamic";
 
 /** `GET /api/jobs` - newest first, capped by `?limit=`. */
 export const GET = withRoute("/api/jobs", async (request: Request, telemetry: RouteTelemetry) => {
+  const auth = await requireSession(request);
+  if (auth) return auth;
+
   try {
     const limit = resolveListLimit(new URL(request.url).searchParams.get("limit"));
     const jobs = await listJobs({ limit });
@@ -29,6 +34,11 @@ export const GET = withRoute("/api/jobs", async (request: Request, telemetry: Ro
 
 /** `POST /api/jobs` - validate, persist, enqueue, return 201 with the created job. */
 export const POST = withRoute("/api/jobs", async (request: Request, telemetry: RouteTelemetry) => {
+  const auth = await requireSession(request);
+  if (auth) return auth;
+  const csrf = csrfFailure(request);
+  if (csrf) return csrf;
+
   const body = await readJsonBody(request);
   if (!body) {
     return badRequest("Request body must be valid JSON.");

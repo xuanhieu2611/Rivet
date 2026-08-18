@@ -19,6 +19,7 @@ import {
   suiteStatusClassName,
 } from "@/lib/evaluation-presentation";
 import { formatDateTime } from "@/lib/format";
+import { requirePageSession } from "@/lib/auth/page-guard";
 import { cn } from "@/lib/utils";
 
 /** Reads Postgres on every request; `next build` has no database. */
@@ -27,6 +28,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Evaluations" };
 
 export default async function EvaluationsPage() {
+  await requirePageSession();
   const suites = await listEvaluationSuites();
 
   // One run query per suite rather than a grouped aggregate: suites are created

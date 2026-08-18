@@ -4,6 +4,7 @@ import type { Repository } from "@rivet/contracts";
 import { NextResponse } from "next/server";
 
 import { badRequest, serverError } from "@/lib/api/responses";
+import { requireSession } from "@/lib/auth/guard";
 import { githubAccess, githubErrorResponse, githubUnavailable } from "@/lib/github/client";
 import { parseInstallationId } from "@/lib/github/params";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
@@ -18,6 +19,9 @@ interface RepositoriesResponse {
 export const GET = withRoute(
   "/api/github/repositories",
   async (request: Request, telemetry: RouteTelemetry) => {
+    const auth = await requireSession(request);
+    if (auth) return auth;
+
     const access = githubAccess();
     if (!access.enabled) return githubUnavailable(access.reason);
 

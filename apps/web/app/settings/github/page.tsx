@@ -8,6 +8,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { requirePageSession } from "@/lib/auth/page-guard";
 import { githubAccess } from "@/lib/github/client";
 import {
   GITHUB_DISABLED_MESSAGE,
@@ -48,6 +49,7 @@ interface PageProps {
 }
 
 export default async function GitHubSettingsPage({ searchParams }: PageProps) {
+  await requirePageSession();
   const params = await searchParams;
   const setupParam = params.setup;
   const setup = typeof setupParam === "string" ? SETUP_MESSAGES[setupParam] : undefined;
@@ -146,8 +148,8 @@ export default async function GitHubSettingsPage({ searchParams }: PageProps) {
             timeline row.
           </p>
           <p className="text-amber-700 dark:text-amber-300">
-            Rivet has no login yet. Anybody who can reach this app can use these installations, so
-            do not expose it beyond your own machine.
+            GitHub sign-in identifies the single configured Rivet owner. The App installation, not
+            the sign-in token, controls repository permissions and GitHub operations.
           </p>
         </CardContent>
       </Card>

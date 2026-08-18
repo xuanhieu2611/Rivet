@@ -5,6 +5,7 @@ import { getJob, listArtifacts } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { badRequest, notFound, serverError } from "@/lib/api/responses";
+import { requireSession } from "@/lib/auth/guard";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,9 @@ function parseAfter(raw: string | null): number | null | undefined {
 export const GET = withRoute(
   "/api/jobs/:id/artifacts",
   async (request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const auth = await requireSession(request);
+    if (auth) return auth;
+
     const { id } = await context.params;
 
     const after = parseAfter(new URL(request.url).searchParams.get("after"));

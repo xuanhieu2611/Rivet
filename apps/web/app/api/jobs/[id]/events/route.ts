@@ -5,6 +5,7 @@ import { getJob, listEvents } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { badRequest, notFound, serverError } from "@/lib/api/responses";
+import { requireSession } from "@/lib/auth/guard";
 import { resolveEventCursor } from "@/lib/events/cursor";
 import {
   createJobEventStream,
@@ -38,6 +39,9 @@ function acceptsEventStream(request: Request): boolean {
 export const GET = withRoute(
   "/api/jobs/:id/events",
   async (request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const auth = await requireSession(request);
+    if (auth) return auth;
+
     const url = new URL(request.url);
     const after = resolveEventCursor(
       url.searchParams.get("after"),

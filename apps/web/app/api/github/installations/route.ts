@@ -5,6 +5,7 @@ import { syncGitHubInstallations } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { serverError } from "@/lib/api/responses";
+import { requireSession } from "@/lib/auth/guard";
 import { githubAccess, githubErrorResponse, githubUnavailable } from "@/lib/github/client";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
@@ -24,7 +25,10 @@ interface InstallationsResponse {
  */
 export const GET = withRoute(
   "/api/github/installations",
-  async (_request: Request, telemetry: RouteTelemetry) => {
+  async (request: Request, telemetry: RouteTelemetry) => {
+    const auth = await requireSession(request);
+    if (auth) return auth;
+
     const access = githubAccess();
     if (!access.enabled) return githubUnavailable(access.reason);
 

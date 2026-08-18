@@ -4,6 +4,7 @@ import { listBenchmarkCases } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { serverError } from "@/lib/api/responses";
+import { requireSession } from "@/lib/auth/guard";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,10 @@ export const dynamic = "force-dynamic";
  */
 export const GET = withRoute(
   "/api/benchmarks",
-  async (_request: Request, telemetry: RouteTelemetry) => {
+  async (request: Request, telemetry: RouteTelemetry) => {
+    const auth = await requireSession(request);
+    if (auth) return auth;
+
     try {
       const cases = await listBenchmarkCases();
       return NextResponse.json({
