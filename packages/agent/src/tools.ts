@@ -137,8 +137,20 @@ export function createToolOperations(options: ToolLayerOptions): ToolOperations 
    * would silently delete everything past the cut. A file too large to edit is
    * a tool error the model can work around with the shell; a truncated edit is
    * data loss nobody notices until the tests fail for an unrelated reason.
+   *
+   * `fence` splits on the same line and for a version of the same reason. The
+   * untrusted-content wrapper exists for text a MODEL reads; `edit`'s read is
+   * consumed by the harness, which changes one region of the buffer and writes
+   * the result straight back to disk. Fencing that one puts the wrapper in the
+   * repository file - and because the replacement still matches inside the
+   * wrapper, it does so silently, corrupting the diff rather than failing. The
+   * model has already seen this file's content through `read`, fenced, so
+   * nothing is unfenced that ever reaches it.
    */
-  async function readText(path: string, allowTruncated: boolean): Promise<Buffer> {
+  async function readText(
+    path: string,
+    { allowTruncated, fence }: { allowTruncated: boolean; fence: boolean },
+  ): Promise<Buffer> {
     const absolute = resolveInside(repoDir, path);
     const file = await guarded(() => toolbox.readFile(absolute, signal));
 
@@ -157,7 +169,7 @@ export function createToolOperations(options: ToolLayerOptions): ToolOperations 
     const content = file.truncated
       ? `${file.content}\n[rivet: this file was truncated; the rest was not read]`
       : file.content;
-    return Buffer.from(fenceUntrustedText("file", path, content), "utf8");
+    return Buffer.from(fence ? fenceUntrustedText("file", path, content) : content, "utf8");
   }
 
   /**
@@ -183,7 +195,7 @@ export function createToolOperations(options: ToolLayerOptions): ToolOperations 
 
   return {
     read: {
-      readFile: (path) => readText(path, true),
+      readFile: (path) => readText(path, { allowTruncated: true, fence: true }),
 
       /**
        * Containment, and deliberately nothing else.
@@ -231,7 +243,8 @@ export function createToolOperations(options: ToolLayerOptions): ToolOperations 
     },
 
     edit: {
-      readFile: (path) => readText(path, false),
+      // Unfenced: this buffer goes back to disk, not to the model.
+      readFile: (path) => readText(path, { allowTruncated: false, fence: false }),
       writeFile: (path, content) =>
         guarded(() => toolbox.writeFile(resolveInside(repoDir, path), content, signal)),
       // eslint-disable-next-line @typescript-eslint/require-await

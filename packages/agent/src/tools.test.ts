@@ -121,6 +121,14 @@ describe("read operations", () => {
     expect(fatals).toEqual([]);
   });
 
+  it("fences what it hands the model", async () => {
+    const { operations } = harness();
+
+    const buffer = await operations.read.readFile(`${REPO}/src/sum.ts`);
+
+    expect(buffer.toString("utf8")).toContain("</rivet-untrusted-content>");
+  });
+
   it("offers no image path, so every read is text", () => {
     const { operations } = harness();
     expect(operations.read.detectImageMimeType).toBeUndefined();
@@ -142,6 +150,30 @@ describe("edit operations", () => {
     await expect(operations.edit.readFile(`${REPO}/src/sum.ts`)).rejects.toThrow(
       /too large to edit/,
     );
+  });
+
+  it("does not fence, because the buffer goes back to disk rather than to the model", async () => {
+    const { operations } = harness();
+
+    const buffer = await operations.edit.readFile(`${REPO}/src/sum.ts`);
+
+    expect(buffer.toString("utf8")).not.toContain("rivet-untrusted-content");
+  });
+
+  it("round-trips an edit without writing the untrusted wrapper into the file", async () => {
+    // The harness's edit tool reads, changes one region, and writes the result
+    // straight back. Fencing that read put the wrapper in the repository file,
+    // and silently, because the replacement still matches inside it.
+    const { operations, files } = harness();
+
+    const current = await operations.edit.readFile(`${REPO}/src/sum.ts`);
+    await operations.edit.writeFile(
+      `${REPO}/src/sum.ts`,
+      current.toString("utf8").replace("export const sum", "export const total"),
+    );
+
+    expect(files.get(`${REPO}/src/sum.ts`)).toContain("export const total");
+    expect(files.get(`${REPO}/src/sum.ts`)).not.toContain("rivet-untrusted-content");
   });
 
   it("writes through to the sandbox", async () => {

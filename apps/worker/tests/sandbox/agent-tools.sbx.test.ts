@@ -104,9 +104,12 @@ describe("sandbox-backed coding-agent tools", () => {
     const test = toolLayer(sandbox);
     const output: Buffer[] = [];
 
-    await expect(test.operations.read.readFile(file)).resolves.toEqual(
-      Buffer.from("module.exports = 1;\n"),
-    );
+    // Fenced, because this one goes to the model. The edit read below is not,
+    // because that buffer goes back to disk - the assertion on the file's
+    // final contents is what holds the two apart.
+    const shown = (await test.operations.read.readFile(file)).toString("utf8");
+    expect(shown).toContain("module.exports = 1;\n");
+    expect(shown).toContain("</rivet-untrusted-content>");
     await test.operations.write.writeFile(file, "module.exports = 2;\n");
 
     const current = await test.operations.edit.readFile(file);
@@ -126,7 +129,9 @@ describe("sandbox-backed coding-agent tools", () => {
     await expect(
       sandbox.getFile(file, { maxBytes: 4_096 }, controller.signal),
     ).resolves.toMatchObject({ content: "module.exports = 3;\n", truncated: false });
-    expect(Buffer.concat(output).toString("utf8")).toBe("agent-shell");
+    const streamed = Buffer.concat(output).toString("utf8");
+    expect(streamed).toContain("agent-shell");
+    expect(streamed).toContain("</rivet-untrusted-content>");
     expect(test.commands).toHaveLength(1);
     expect(test.commands[0]).toMatchObject({
       argv: ["bash", "-lc", "printf agent-shell"],
