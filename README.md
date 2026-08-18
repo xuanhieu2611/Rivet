@@ -15,11 +15,26 @@ boundary is the point of the project, and it is what the architecture is organiz
 
 ## Status
 
-**Milestone 7 - deterministic validation - is complete.** `analyzing` establishes separate test,
-typecheck and lint baselines before the agent edits anything. `testing` deterministically selects a
-targeted test run from the diff, re-runs every full check, and compares each one with its own
-baseline. Vitest and Jest reports distinguish newly failing, pre-existing and fixed tests by name;
-the resulting baseline and validation reports are durable artifacts rendered on the job page.
+**Milestone 10 - the evaluation harness - is complete.** Rivet now measures itself. A benchmark case
+is git-tracked files that build into a lock-pinned local bare repository; an evaluation run **is**
+an ordinary job, created through `createJob()` and executed by a real worker under a real lease; and
+a second container grades the job's last checkpoint against hidden tests the job never saw. M10 adds
+no job status, no job event type and no job failure category, which is the milestone's central
+claim: a job under evaluation must be indistinguishable from one created in the web form.
+`pnpm eval:build`, `pnpm eval:run`, `pnpm eval:grade` and `/evaluations/:id` are its surface, and
+[docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md) is the first experiment run
+over it.
+
+Milestone 9 ends a job in a real pull request. A GitHub App, repository and issue pickers,
+short-lived installation tokens that never enter a container, an authenticated host clone, and
+branch, commit, push and pull-request creation guarded by an append-only receipt ledger that makes
+publication idempotent.
+
+Milestone 7 established deterministic validation. `analyzing` establishes separate test, typecheck
+and lint baselines before the agent edits anything. `testing` deterministically selects a targeted
+test run from the diff, re-runs every full check, and compares each one with its own baseline.
+Vitest and Jest reports distinguish newly failing, pre-existing and fixed tests by name; the
+resulting baseline and validation reports are durable artifacts rendered on the job page.
 
 Milestone 8 adds an independent reviewer after validation. The reviewer has only `list_files`,
 `read`, `search_text` and `submit_review`, and its bounded structured report is durable. An approval
@@ -49,7 +64,8 @@ same live SSE timeline and lazy command log as Rivet's own commands. Validation 
 events, parsed failure attribution and canonical report artifacts before finalization persists the
 session's own summary. Review adds durable decision, finding, report and loop events, and the
 closing `run.summarized` event carries the review decision and loop count. Branch, commit, push and
-pull request remain Milestone 9 work.
+pull-request creation record eight publication events of their own, the only rows in the log that
+link outward.
 
 The integration suite uses a scripted agent with real Postgres, Redis, BullMQ and the production
 worker, including a worker killed with `SIGKILL` in a process of its own; it covers approval,
@@ -59,10 +75,14 @@ as a patch captured in one container restoring byte for byte in another. `pnpm d
 real Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with a real session, and
 `pnpm demo:recovery` kills a worker mid-job and checks every fact the recovery claim rests on.
 `pnpm demo:pr` runs the Milestone 9 definition of done: a job created from a real GitHub issue that
-ends in a real pull request on a throwaway repository.
+ends in a real pull request on a throwaway repository. `pnpm demo:eval` runs Milestone 10's: two
+benchmark cases across two review arms and two repetitions, graded in containers of their own.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together,
-[docs/plans/milestone-9.md](docs/plans/milestone-9.md) for the committed M9 plan,
+[docs/plans/milestone-10.md](docs/plans/milestone-10.md) for the committed M10 plan,
+[docs/plans/milestone-10-acceptance.md](docs/plans/milestone-10-acceptance.md) for its acceptance
+contract, [docs/milestone-10-guide.md](docs/milestone-10-guide.md) for an educational walkthrough of
+the evaluation harness, [docs/plans/milestone-9.md](docs/plans/milestone-9.md) for the M9 plan,
 [docs/plans/milestone-9-acceptance.md](docs/plans/milestone-9-acceptance.md) for its acceptance
 contract, [docs/milestone-9-guide.md](docs/milestone-9-guide.md) for an educational walkthrough of
 GitHub publication, [docs/milestone-9-setup.md](docs/milestone-9-setup.md) for the one-time GitHub
