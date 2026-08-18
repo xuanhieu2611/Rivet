@@ -154,6 +154,14 @@ sidecar beside every entry, and the container gets a repository whose `git statu
 untracked files Rivet invented. GNU tar has accepted the flag since 1.27 and ignores the variable,
 so CI reads it identically. Run H in `publication.sbx.test.ts` is what catches both.
 
+**Ownership is set with `--owner=1000 --group=1000`, and the spelling is the same kind of trap
+pointing the other way.** `--uid`/`--gid` are bsdtar's, GNU tar has no such options at all, and it
+exits 64 with `unrecognized option` - so the bsdtar spelling passes on a Mac and fails every Linux
+runner. Both implementations accept `--owner=`/`--group=` and both write a numeric 1000/1000 owner
+alongside `--numeric-owner`. `host-git.test.ts` asserts the ownership out of the archive's ustar
+headers rather than out of the argv, because the flag spelling differs between the two and the
+property does not.
+
 **A red baseline is not a failed job.** The `analyzing` phase records
 `baseline: passed | failed | skipped` on a `baseline.recorded` event and lets the job continue
 whatever the exit code was: PRD §11 C wants to know whether the repository was already broken

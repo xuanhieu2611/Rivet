@@ -63,6 +63,12 @@ describe("host Git operations", () => {
 
     expect(result.commitSha).toBe(fixture.baseCommitSha);
     expect(result.archive.byteLength).toBeGreaterThan(0);
+    // Every entry belongs to the container's uid, whichever tar produced the
+    // archive. Asserted from the bytes rather than from the argv because the
+    // flag spelling differs between bsdtar and GNU tar and the property does
+    // not: an argv assertion would have gone green on the spelling that only
+    // one of the two accepts.
+    expect(archiveOwners(result.archive)).toEqual([{ uid: 1000, gid: 1000 }]);
     expect(JSON.stringify(commands)).not.toContain(TOKEN);
     expect(askPassPaths).toHaveLength(1);
     expect(temporaryDirectories).toHaveLength(1);
@@ -336,4 +342,43 @@ async function runGit(argv: string[], cwd?: string): Promise<{ stdout: string; s
     encoding: "utf8",
     maxBuffer: 16 * 1_024 * 1_024,
   });
+}
+
+/**
+ * The distinct (uid, gid) pairs in a tar archive, read straight from the ustar
+ * headers. Enough of a parser to assert ownership without a dependency.
+ *
+ * The field widths are not interchangeable: uid and gid are 8 bytes at 108 and
+ * 116, size is **12** at 124. Reading size as 8 truncates `000000005670` to
+ * `00000005` and the walk lands inside file data, which is a failure that hides
+ * on a fixture of small files and appears on a large one.
+ */
+function archiveOwners(archive: Buffer): { uid: number; gid: number }[] {
+  const seen = new Map<string, { uid: number; gid: number }>();
+
+  const octal = (offset: number, length: number): number =>
+    Number.parseInt(
+      archive
+        .subarray(offset, offset + length)
+        .toString("ascii")
+        .replace(/\0.*$/, "")
+        .trim() || "0",
+      8,
+    );
+
+  let offset = 0;
+  while (offset + 512 <= archive.byteLength) {
+    // A header whose name starts with NUL is the end-of-archive marker.
+    if (archive[offset] === 0) break;
+
+    seen.set(`${octal(offset + 108, 8)}:${octal(offset + 116, 8)}`, {
+      uid: octal(offset + 108, 8),
+      gid: octal(offset + 116, 8),
+    });
+
+    const size = octal(offset + 124, 12);
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+
+  return [...seen.values()];
 }

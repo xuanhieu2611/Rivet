@@ -649,10 +649,16 @@ async function archiveRepository(input: {
     const tar = await runHostCommand(
       [
         "tar",
-        "--uid",
-        "1000",
-        "--gid",
-        "1000",
+        // `--owner=`/`--group=` rather than bsdtar's `--uid`/`--gid`, and this
+        // is the second platform split in this one command. GNU tar does not
+        // have `--uid` at all - it exits 64 with `unrecognized option` - so the
+        // bsdtar spelling passes on a developer's Mac and fails every Linux
+        // runner, which is the worst way round for a flag to be wrong. Both
+        // implementations accept this pair and both write a numeric 1000/1000
+        // owner with `--numeric-owner` beside it. Verified against bsdtar 3.5.3
+        // and GNU tar 1.34.
+        "--owner=1000",
+        "--group=1000",
         "--numeric-owner",
         // Not decoration, and macOS is why. bsdtar records extended
         // attributes, and on this platform every file carries
