@@ -27,6 +27,9 @@ import {
   recordDuration,
   recordLevel,
   recordTerminalJobMetrics,
+  sandboxResourceReportEventData,
+  sandboxResourceReportMetadata,
+  serializeSandboxResourceReport,
   type Phase,
   type PhaseContext,
   type PhaseDirective,
@@ -37,6 +40,7 @@ import {
   type ResumePlan,
   runPipeline,
   SandboxHolder,
+  type SandboxResourceReport,
   SPAN_JOB_RUN,
   type Telemetry,
   simulatedPipeline,
@@ -317,6 +321,15 @@ export function createProcessor(deps: ProcessorDeps) {
     // a lost lease is; see `handleFailure`.
     let mayWrite = true;
 
+    // Resource evidence is collected by the processor's cleanup path, but the
+    // durable writes still go through a normal PhaseContext so they carry the
+    // active lease and the phase that owned the container. These are assigned
+    // once the pipeline is built and remain available to every exit path.
+    let contextForCleanup: ((phase: Phase) => PhaseContext) | undefined;
+    let cleanupPhase: Phase | undefined;
+    const resourceContext = (): PhaseContext | undefined =>
+      contextForCleanup && cleanupPhase ? contextForCleanup(cleanupPhase) : undefined;
+
     try {
       // Nothing was left of the budget by the time anyone was free to claim
       // this. Failing here rather than at the first phase boundary is deliberate
@@ -356,6 +369,7 @@ export function createProcessor(deps: ProcessorDeps) {
         repositoryDir: `${config.sandbox.workdir}/repo`,
         ...(deps.telemetry ? { telemetry: deps.telemetry } : {}),
       });
+      contextForCleanup = contextFor;
 
       const resume = await selectResumePlan({
         jobId,
@@ -392,6 +406,7 @@ export function createProcessor(deps: ProcessorDeps) {
         context: contextFor,
 
         onPhaseStart: async (phase) => {
+          cleanupPhase = phase;
           if (phase.status === currentStatus) {
             // The claim already moved the job into the first phase's status, so
             // there is nothing to transition - but the phase still happened and
@@ -493,7 +508,14 @@ export function createProcessor(deps: ProcessorDeps) {
       // before the terminal transition means the event can use the same fence
       // as every other phase write, rather than becoming a stale post-release
       // write in `finally`.
-      await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite: true, log });
+      await destroySandbox({
+        sandboxes,
+        jobId,
+        leaseOwner: workerId,
+        mayWrite: true,
+        log,
+        resourceContext: resourceContext(),
+      });
 
       const completed = await transitionJob({
         jobId,
@@ -525,7 +547,14 @@ export function createProcessor(deps: ProcessorDeps) {
       // Destroy the attempt before `handleFailure` can clear or hand back its
       // lease. A stale worker may still clean up its own container, but it may
       // not append the cleanup event after discovering that it lost ownership.
-      await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite, log });
+      await destroySandbox({
+        sandboxes,
+        jobId,
+        leaseOwner: workerId,
+        mayWrite,
+        log,
+        resourceContext: resourceContext(),
+      });
       await handleFailure(error, {
         job,
         token,
@@ -540,7 +569,14 @@ export function createProcessor(deps: ProcessorDeps) {
       // Fallback for failures that happen before the main try body reaches its
       // cleanup point. The holder is idempotent, so the normal path has nothing
       // left here to destroy.
-      await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite, log });
+      await destroySandbox({
+        sandboxes,
+        jobId,
+        leaseOwner: workerId,
+        mayWrite,
+        log,
+        resourceContext: resourceContext(),
+      });
       await stopHeartbeat();
       runs.release(jobId);
       recordLevel(
@@ -642,6 +678,8 @@ interface DestroyContext {
   leaseOwner: string;
   mayWrite: boolean;
   log: Logger;
+  /** The active phase context used for the fenced artifact and event writes. */
+  resourceContext: PhaseContext | undefined;
 }
 
 /**
@@ -663,14 +701,38 @@ interface DestroyContext {
  * the lease makes.
  */
 async function destroySandbox(context: DestroyContext): Promise<void> {
-  const { sandboxes, jobId, leaseOwner, mayWrite, log } = context;
+  const { sandboxes, jobId, leaseOwner, mayWrite, log, resourceContext } = context;
+  const sandbox = sandboxes.current;
+  if (!sandbox) return;
+
+  let report: SandboxResourceReport | null = null;
   try {
-    const containerId = await sandboxes.destroy();
-    if (!containerId) return;
+    // The adapter stops its sampler before the container is removed. This call
+    // is also what preserves Docker's sticky OOM state for the report.
+    report = (await sandbox.getResourceReport?.()) ?? null;
+  } catch (error) {
+    log.warn({ err: error, containerId: sandbox.id }, "could not collect sandbox resources");
+  }
 
-    log.info({ containerId }, "sandbox destroyed");
-    if (!mayWrite) return;
+  if (report && mayWrite && resourceContext) {
+    await recordResourceReport(resourceContext, report, sandbox.id, log);
+  }
 
+  let containerId: string | undefined;
+  try {
+    containerId = await sandboxes.destroy();
+  } catch (error) {
+    // SandboxHolder and the port both promise a non-throwing destroy. Keep the
+    // processor's cleanup guarantee even if a future adapter breaks that promise.
+    log.error({ err: error }, "could not clean up the sandbox; the reaper will get it");
+    return;
+  }
+  if (!containerId) return;
+
+  log.info({ containerId }, "sandbox destroyed");
+  if (!mayWrite) return;
+
+  try {
     await appendEvent({
       jobId,
       type: "sandbox.destroyed",
@@ -679,7 +741,44 @@ async function destroySandbox(context: DestroyContext): Promise<void> {
       leaseOwner,
     });
   } catch (error) {
-    log.error({ err: error }, "could not clean up the sandbox; the reaper will get it");
+    log.error({ err: error }, "could not record sandbox destruction");
+  }
+}
+
+/**
+ * Resource evidence is observability, not a new job outcome. A storage or lease
+ * error here is logged and cleanup continues, so a broken artifact write cannot
+ * turn a completed job into a failure or mask an OOM that already happened.
+ */
+async function recordResourceReport(
+  context: PhaseContext,
+  report: SandboxResourceReport,
+  containerId: string,
+  log: Logger,
+): Promise<void> {
+  const content = serializeSandboxResourceReport(report);
+  try {
+    const artifactId = await context.artifact({
+      type: "resource_report",
+      content,
+      metadata: sandboxResourceReportMetadata(report),
+      requireComplete: true,
+      message: `Recorded sandbox resource report (${report.sampleCount} samples).`,
+    });
+    await context.event({
+      type: "sandbox.resources_recorded",
+      message: report.oomKilled
+        ? "Sandbox resources recorded; the container reported an OOM kill."
+        : "Sandbox resources recorded.",
+      data: sandboxResourceReportEventData(
+        report,
+        artifactId,
+        Buffer.byteLength(content, "utf8"),
+        containerId,
+      ),
+    });
+  } catch (error) {
+    log.warn({ err: error }, "could not record sandbox resource report");
   }
 }
 

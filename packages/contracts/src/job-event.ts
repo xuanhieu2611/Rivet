@@ -64,6 +64,8 @@ export const JOB_EVENT_TYPES = [
   /** A container exists and the job now owns something that has to be destroyed. */
   "sandbox.created",
   "sandbox.destroyed",
+  /** One bounded resource snapshot was recorded before the container vanished. */
+  "sandbox.resources_recorded",
   "repo.cloned",
   "deps.installed",
   /** A command is about to run inside the sandbox. */
@@ -402,6 +404,22 @@ export type JobEventData = {
   // --- sandbox execution (M2) ------------------------------------------
   /** The container id, on `sandbox.created` / `sandbox.destroyed`. */
   containerId?: string;
+  /** Resource report facts, on `sandbox.resources_recorded`. */
+  resourceReportVersion?: number;
+  samplingIntervalMs?: number;
+  sampleCount?: number;
+  samplingErrors?: number;
+  inspectionErrors?: number;
+  memoryPeakBytes?: number | null;
+  memoryLimitBytes?: number;
+  memoryPeakAtMs?: number | null;
+  cpuPeakPercent?: number | null;
+  cpuLimitNanoCpus?: number;
+  cpuPeakAtMs?: number | null;
+  pidsPeak?: number | null;
+  pidsLimit?: number;
+  pidsPeakAtMs?: number | null;
+  oomKilled?: boolean;
   /** Null when the command was killed before it could exit. */
   exitCode?: number | null;
   /** Points at the `job_commands` row holding the transcript. */
@@ -629,6 +647,21 @@ const jobEventDataSchema = z
     error: z.string().optional(),
     leaseOwner: z.string().optional(),
     containerId: z.string().optional(),
+    resourceReportVersion: z.number().int().positive().optional(),
+    samplingIntervalMs: z.number().int().positive().optional(),
+    sampleCount: z.number().int().nonnegative().optional(),
+    samplingErrors: z.number().int().nonnegative().optional(),
+    inspectionErrors: z.number().int().nonnegative().optional(),
+    memoryPeakBytes: z.number().nonnegative().nullable().optional(),
+    memoryLimitBytes: z.number().nonnegative().optional(),
+    memoryPeakAtMs: z.number().nonnegative().nullable().optional(),
+    cpuPeakPercent: z.number().nonnegative().nullable().optional(),
+    cpuLimitNanoCpus: z.number().nonnegative().optional(),
+    cpuPeakAtMs: z.number().nonnegative().nullable().optional(),
+    pidsPeak: z.number().nonnegative().nullable().optional(),
+    pidsLimit: z.number().nonnegative().optional(),
+    pidsPeakAtMs: z.number().nonnegative().nullable().optional(),
+    oomKilled: z.boolean().optional(),
     exitCode: z.number().int().nullable().optional(),
     commandId: safeEventIdSchema.optional(),
     argv: z.array(z.string()).optional(),
@@ -762,6 +795,25 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.error === undefined ? {} : { error: value.error }),
     ...(value.leaseOwner === undefined ? {} : { leaseOwner: value.leaseOwner }),
     ...(value.containerId === undefined ? {} : { containerId: value.containerId }),
+    ...(value.resourceReportVersion === undefined
+      ? {}
+      : { resourceReportVersion: value.resourceReportVersion }),
+    ...(value.samplingIntervalMs === undefined
+      ? {}
+      : { samplingIntervalMs: value.samplingIntervalMs }),
+    ...(value.sampleCount === undefined ? {} : { sampleCount: value.sampleCount }),
+    ...(value.samplingErrors === undefined ? {} : { samplingErrors: value.samplingErrors }),
+    ...(value.inspectionErrors === undefined ? {} : { inspectionErrors: value.inspectionErrors }),
+    ...(value.memoryPeakBytes === undefined ? {} : { memoryPeakBytes: value.memoryPeakBytes }),
+    ...(value.memoryLimitBytes === undefined ? {} : { memoryLimitBytes: value.memoryLimitBytes }),
+    ...(value.memoryPeakAtMs === undefined ? {} : { memoryPeakAtMs: value.memoryPeakAtMs }),
+    ...(value.cpuPeakPercent === undefined ? {} : { cpuPeakPercent: value.cpuPeakPercent }),
+    ...(value.cpuLimitNanoCpus === undefined ? {} : { cpuLimitNanoCpus: value.cpuLimitNanoCpus }),
+    ...(value.cpuPeakAtMs === undefined ? {} : { cpuPeakAtMs: value.cpuPeakAtMs }),
+    ...(value.pidsPeak === undefined ? {} : { pidsPeak: value.pidsPeak }),
+    ...(value.pidsLimit === undefined ? {} : { pidsLimit: value.pidsLimit }),
+    ...(value.pidsPeakAtMs === undefined ? {} : { pidsPeakAtMs: value.pidsPeakAtMs }),
+    ...(value.oomKilled === undefined ? {} : { oomKilled: value.oomKilled }),
     ...(value.exitCode === undefined ? {} : { exitCode: value.exitCode }),
     ...(value.commandId === undefined ? {} : { commandId: value.commandId }),
     ...(value.argv === undefined ? {} : { argv: value.argv }),

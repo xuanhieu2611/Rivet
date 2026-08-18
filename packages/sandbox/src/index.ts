@@ -31,6 +31,7 @@ export {
   type ScriptedCommand,
 } from "./fake-sandbox";
 export { CappedOutput, DockerStreamDemuxer, encodeFrame } from "./stream";
+export { SandboxResourceMonitor, type SandboxResourceMonitorOptions } from "./resource-monitor";
 export {
   packFile,
   TAR_BLOCK_BYTES,

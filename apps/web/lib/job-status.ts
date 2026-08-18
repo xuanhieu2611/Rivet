@@ -147,6 +147,7 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "job.completed": "bg-emerald-500",
   "sandbox.created": "bg-violet-500",
   "sandbox.destroyed": "bg-muted-foreground/40",
+  "sandbox.resources_recorded": "bg-violet-500",
   "repo.cloned": "bg-sky-500",
   "deps.installed": "bg-sky-500",
   "command.started": "bg-sky-500",

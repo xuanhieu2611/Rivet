@@ -8,6 +8,7 @@ import {
   type Sandbox,
   SandboxFileError,
   type SandboxProvider,
+  type SandboxResourceReport,
   type SandboxSpec,
 } from "@rivet/core";
 
@@ -59,6 +60,8 @@ export interface FakeSandboxOptions {
   script?: ScriptedCommand[];
   /** Files every sandbox starts with, keyed by absolute path. */
   files?: Record<string, string>;
+  /** Optional final resource snapshot for processor tests. */
+  resourceReport?: SandboxResourceReport;
 }
 
 export class FakeSandboxProvider implements SandboxProvider {
@@ -88,9 +91,13 @@ export class FakeSandboxProvider implements SandboxProvider {
     if (this.options.createFails) return Promise.reject(this.options.createFails);
 
     this.created.push(spec);
-    const sandbox = new FakeSandbox(`fake-sandbox-${this.nextId++}`, spec, this.script, {
-      ...this.options.files,
-    });
+    const sandbox = new FakeSandbox(
+      `fake-sandbox-${this.nextId++}`,
+      spec,
+      this.script,
+      { ...this.options.files },
+      this.options.resourceReport ?? null,
+    );
     this.sandboxes.push(sandbox);
     return Promise.resolve(sandbox);
   }
@@ -140,6 +147,7 @@ export class FakeSandbox implements Sandbox {
      * about Docker; nothing asserted against this map is.
      */
     files: Record<string, string> = {},
+    private readonly resourceReport: SandboxResourceReport | null = null,
   ) {
     for (const [path, content] of Object.entries(files)) {
       this.files.set(path, Buffer.from(content, "utf8"));
@@ -221,6 +229,10 @@ export class FakeSandbox implements Sandbox {
     }
     this.files.set(path, Buffer.from(content, "utf8"));
     return Promise.resolve();
+  }
+
+  getResourceReport(): Promise<SandboxResourceReport | null> {
+    return Promise.resolve(this.resourceReport);
   }
 
   putArchive(path: string, archive: Uint8Array, signal: AbortSignal): Promise<void> {

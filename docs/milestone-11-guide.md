@@ -1,9 +1,10 @@
 # Milestone 11: the local observability stack
 
-This guide is the Stage 5 tour for Milestone 11. Stages 1 through 4 added the telemetry port, the
-OTLP adapter, traces, and the metric instruments. Stage 5 gives those signals somewhere useful to go
-on a laptop: an OpenTelemetry Collector, Prometheus, Tempo and Grafana, all provisioned from the
-repository.
+This guide is the Stage 5 and Stage 6 tour for Milestone 11. Stages 1 through 4 added the telemetry
+port, the OTLP adapter, traces, and the metric instruments. Stage 5 gives those signals somewhere
+useful to go on a laptop: an OpenTelemetry Collector, Prometheus, Tempo and Grafana, all provisioned
+from the repository. Stage 6 adds the container resource evidence that explains an OOM after
+cleanup.
 
 The stack is deliberately local and self-hosted. It needs Docker, but it needs no vendor account,
 API token, database, Redis instance or model key.
@@ -188,7 +189,33 @@ docker compose -f ops/observability/docker-compose.yml down -v --remove-orphans
 The second command deletes local traces, metric history and Grafana state. Use it when a clean
 observability session is intentional.
 
-## Part 7. When the stack is quiet
+## Part 7. Inspect container resources
+
+Stage 6 samples each Docker sandbox once per second while it is alive. Samples stay in the telemetry
+backend as current usage gauges; the worker does not append one timeline row per sample. At cleanup,
+the adapter stops the sampler before removing the container, reads the container's OOM state, and
+returns one bounded report containing the memory, CPU and process-count peaks plus the elapsed time
+at each peak.
+
+The processor stores that report as a `resource_report` artifact and adds one
+`sandbox.resources_recorded` event pointing at it. The artifact is complete JSON, so it remains
+useful after the container and its Docker state are gone. An OOM event therefore carries both the
+existing command-level `oomKilled` verdict and the peak memory evidence that explains it.
+
+The resource instruments are:
+
+- `rivet.sandbox.memory.usage`, `rivet.sandbox.cpu.usage` and `rivet.sandbox.pids.usage` gauges for
+  samples
+- `rivet.sandbox.memory.peak`, `rivet.sandbox.cpu.peak` and `rivet.sandbox.pids.peak` gauges for the
+  final peaks
+- matching `.distribution` histograms for one peak observation per container
+
+A missing Docker stats sample is counted in the report rather than failing the job. Resource
+monitoring is observability and must not introduce a new job failure path. The monitor also caches
+its final report, so the processor can collect it before `destroy()` and the adapter can safely
+finalize it again from its cleanup fallback.
+
+## Part 8. When the stack is quiet
 
 | Symptom                                           | Check                                                                                                                                              |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |

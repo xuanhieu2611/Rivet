@@ -8,9 +8,11 @@ import {
   type FileReadOptions,
   type Sandbox,
   type SandboxProvider,
+  type SandboxResourceReport,
   SandboxCreateFailedError,
   SandboxFileError,
   type SandboxSpec,
+  type Telemetry,
   SandboxUnavailableError,
 } from "@rivet/core";
 import type Docker from "dockerode";
@@ -20,6 +22,7 @@ import { getDocker } from "./connection";
 import { namesAFile } from "./paths";
 import { CappedOutput, DockerStreamDemuxer } from "./stream";
 import { packFile, TarFileReader } from "./tar";
+import { SandboxResourceMonitor } from "./resource-monitor";
 
 /**
  * The Docker implementation of the sandbox port.
@@ -68,6 +71,10 @@ export interface DockerSandboxOptions {
   log?: SandboxLogger;
   /** Containers younger than this are never reaped. Defaults to two minutes. */
   reapGraceMs?: number;
+  /** Where resource samples and peaks are emitted, when telemetry is enabled. */
+  telemetry?: Telemetry;
+  /** Injectable adapter setting; production samples once per second. */
+  resourceSampleIntervalMs?: number;
 }
 
 /** The slice of a pino logger this package uses. Structured first, message second. */
@@ -157,9 +164,10 @@ export class DockerSandboxProvider implements SandboxProvider {
     }
 
     // From here on the container exists, so every failure path must destroy it.
-    const sandbox = new DockerSandbox(container, spec, this.log);
+    const sandbox = new DockerSandbox(container, spec, this.options, this.log);
     try {
       await container.start();
+      sandbox.startResourceMonitoring();
       signal.throwIfAborted();
       await ensureWorkdir(sandbox, spec.workdir, signal);
     } catch (cause) {
@@ -289,12 +297,27 @@ export class DockerSandboxProvider implements SandboxProvider {
 
 class DockerSandbox implements Sandbox {
   private destroyed = false;
+  private readonly resources: SandboxResourceMonitor;
 
   constructor(
     private readonly container: Container,
     private readonly spec: SandboxSpec,
+    options: DockerSandboxOptions,
     private readonly log: SandboxLogger,
-  ) {}
+  ) {
+    this.resources = new SandboxResourceMonitor({
+      container,
+      spec,
+      workerId: options.workerId,
+      ...(options.telemetry ? { telemetry: options.telemetry } : {}),
+      ...(options.resourceSampleIntervalMs === undefined
+        ? {}
+        : { sampleIntervalMs: options.resourceSampleIntervalMs }),
+      onSampleError: (error) => {
+        this.log.warn({ err: error, containerId: container.id }, "sandbox resource sample failed");
+      },
+    });
+  }
 
   get id(): string {
     return this.container.id;
@@ -530,6 +553,14 @@ class DockerSandbox implements Sandbox {
    * string. The abort listener destroys the upload stream; a cancelled seed
    * must not leave an in-flight Docker request holding the worker open.
    */
+  getResourceReport(): Promise<SandboxResourceReport> {
+    return this.resources.report();
+  }
+
+  startResourceMonitoring(): void {
+    this.resources.start();
+  }
+
   async putArchive(path: string, archive: Uint8Array, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     const stream = Readable.from([Buffer.from(archive)]);
@@ -559,6 +590,12 @@ class DockerSandbox implements Sandbox {
   async destroy(): Promise<void> {
     if (this.destroyed) return;
     this.destroyed = true;
+    // Finalize the monitor before removal. Docker's OOM state disappears with
+    // the container, and a cleanup path that removes first cannot explain a
+    // later `oom_killed` verdict. The monitor is deliberately non-throwing.
+    await this.resources.report().catch((error: unknown) => {
+      this.log.warn({ err: error, containerId: this.id }, "could not finalize sandbox resources");
+    });
     try {
       await this.container.remove({ force: true, v: true });
     } catch (cause) {

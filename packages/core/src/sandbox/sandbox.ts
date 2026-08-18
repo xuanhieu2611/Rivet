@@ -142,6 +142,41 @@ export interface FileRead {
   truncated: boolean;
 }
 
+/**
+ * The bounded resource evidence collected while a sandbox was running.
+ *
+ * This is deliberately a snapshot rather than a stream. Prometheus gets the
+ * per-sample gauges; the job gets one small artifact that can explain an
+ * `oom_killed` after the container is gone. Peak timestamps are elapsed time
+ * from container start, so the report stays useful without exposing wall-clock
+ * details from the worker host.
+ */
+export interface SandboxResourceReport {
+  version: 1;
+  samplingIntervalMs: number;
+  sampleCount: number;
+  samplingErrors: number;
+  inspectionErrors: number;
+  durationMs: number;
+  memory: {
+    peakBytes: number | null;
+    limitBytes: number;
+    peakAtMs: number | null;
+  };
+  cpu: {
+    peakPercent: number | null;
+    limitNanoCpus: number;
+    peakAtMs: number | null;
+  };
+  pids: {
+    peak: number | null;
+    limit: number;
+    peakAtMs: number | null;
+  };
+  oomKilled: boolean;
+  collectedAt: string;
+}
+
 /** One job's live environment. Created once per attempt, never shared. */
 export interface Sandbox {
   /** The implementation's identifier for it. A container id, for the Docker adapter. */
@@ -189,6 +224,16 @@ export interface Sandbox {
    * in the container.
    */
   putArchive(path: string, archive: Uint8Array, signal: AbortSignal): Promise<void>;
+
+  /**
+   * Stops sampling and returns the final resource snapshot, if this adapter
+   * monitors resources. Optional so a focused fake or a future adapter can
+   * adopt the sandbox port without having to invent Docker statistics.
+   *
+   * The call is idempotent. `destroy()` also finalizes sampling, so callers
+   * that do not need the durable report cannot leak an interval.
+   */
+  getResourceReport?(): Promise<SandboxResourceReport | null>;
 
   /**
    * Tears the environment down. Idempotent, and **never throws**.

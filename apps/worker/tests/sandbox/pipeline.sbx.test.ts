@@ -304,6 +304,20 @@ describe("real sandbox pipeline", () => {
       ),
     ).toBe(true);
 
+    const resourceArtifact = (await listArtifacts(job.id)).find(
+      (artifact) => artifact.type === "resource_report",
+    );
+    expect(resourceArtifact).toBeDefined();
+    const resourceBody = resourceArtifact ? await getArtifact(job.id, resourceArtifact.id) : null;
+    expect(resourceBody?.content).toContain('"memory"');
+    const resourceEvent = events.find((event) => event.type === "sandbox.resources_recorded");
+    expect(resourceEvent?.data).toMatchObject({
+      artifactId: resourceArtifact?.id,
+      artifactType: "resource_report",
+      memoryLimitBytes: 512 * 1_024 * 1_024,
+      oomKilled: false,
+    });
+
     const started = events.filter((event) => event.type === "command.started");
     const completedCommands = events.filter((event) => event.type === "command.completed");
     expect(started).toHaveLength(commands.length);

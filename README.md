@@ -25,10 +25,10 @@ claim: a job under evaluation must be indistinguishable from one created in the 
 [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md) is the first experiment run
 over it.
 
-Milestone 11 is in progress. Its first five stages add the telemetry port, OTLP export, traces,
-metrics, and a local OpenTelemetry Collector, Prometheus, Tempo and Grafana stack. Run `pnpm obs:up`
-and follow [docs/milestone-11-guide.md](docs/milestone-11-guide.md) to explore the provisioned
-dashboards.
+Milestone 11 is in progress. Its first six stages add the telemetry port, OTLP export, traces,
+metrics, a local OpenTelemetry Collector, Prometheus, Tempo and Grafana stack, and container
+resource monitoring. Run `pnpm obs:up` and follow
+[docs/milestone-11-guide.md](docs/milestone-11-guide.md) to explore the provisioned dashboards.
 
 Milestone 9 ends a job in a real pull request. A GitHub App, repository and issue pickers,
 short-lived installation tokens that never enter a container, an authenticated host clone, and

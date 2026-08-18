@@ -19,6 +19,7 @@ const controller = new AbortController();
 const provider = new DockerSandboxProvider({
   workerId: `sandbox-suite-${process.pid}`,
   reapGraceMs: 0,
+  resourceSampleIntervalMs: 50,
 });
 const owned = new Set<Sandbox>();
 
@@ -81,6 +82,22 @@ describe("Docker sandbox adapter", () => {
 
     await expect(sandbox.destroy()).resolves.toBeUndefined();
     await expect(sandbox.destroy()).resolves.toBeUndefined();
+  });
+
+  it("records a bounded resource snapshot before the container is removed", async () => {
+    const sandbox = await create();
+    await exec(sandbox, ["node", "-e", "setTimeout(() => {}, 150)"]);
+
+    const report = await sandbox.getResourceReport?.();
+    expect(report).not.toBeNull();
+    expect(report?.sampleCount).toBeGreaterThan(0);
+    expect(report?.memory.limitBytes).toBe(256 * 1_024 * 1_024);
+    expect(report?.memory.peakBytes).toBeGreaterThan(0);
+    expect(report?.pids.peak).toBeGreaterThan(0);
+    expect(report?.oomKilled).toBe(false);
+
+    // The snapshot is cached, so cleanup does not sample or inspect twice.
+    expect(await sandbox.getResourceReport?.()).toBe(report);
   });
 
   it("keeps output head and tail and states the exact elided byte count", async () => {

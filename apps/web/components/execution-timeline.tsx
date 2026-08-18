@@ -228,6 +228,9 @@ function EventContent({ event }: { event: JobEvent }): ReactNode {
     case "artifact.recorded":
       return <ArtifactEventContent event={event} />;
 
+    case "sandbox.resources_recorded":
+      return <ResourceEventContent event={event} />;
+
     case "baseline.check_recorded":
     case "validation.check_recorded":
       return <CheckEventContent event={event} />;
@@ -407,6 +410,35 @@ function ArtifactEventContent({ event }: { event: JobEvent }) {
   );
 }
 
+function ResourceEventContent({ event }: { event: JobEvent }) {
+  const data = event.data;
+  const memory = data?.memoryPeakBytes;
+  const memoryLimit = data?.memoryLimitBytes;
+  const cpu = data?.cpuPeakPercent;
+  const pids = data?.pidsPeak;
+  const pidsLimit = data?.pidsLimit;
+  const facts = [
+    memory === undefined || memory === null
+      ? null
+      : `memory ${formatBytes(memory)}${memoryLimit === undefined ? "" : ` / ${formatBytes(memoryLimit)}`}`,
+    cpu === undefined || cpu === null ? null : `CPU ${cpu.toFixed(1)}%`,
+    pids === undefined || pids === null
+      ? null
+      : `pids ${String(pids)}${pidsLimit === undefined ? "" : ` / ${String(pidsLimit)}`}`,
+    data?.sampleCount === undefined ? null : `${String(data.sampleCount)} samples`,
+    data?.oomKilled === true ? "OOM kill detected" : null,
+  ].filter((fact): fact is string => fact !== null);
+
+  return (
+    <div className="space-y-1">
+      <p className="text-sm leading-snug">{event.message}</p>
+      {facts.length > 0 ? (
+        <p className="text-muted-foreground text-xs break-words">{facts.join(" · ")}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function ValidationEventContent({ event }: { event: JobEvent }) {
   const outcome = event.data?.validation;
   const presentation = outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome] : null;
@@ -508,6 +540,7 @@ function describeEventData(event: JobEvent): string | null {
     event.type === "agent.tool_started" ||
     event.type === "plan.deferred" ||
     event.type === "artifact.recorded" ||
+    event.type === "sandbox.resources_recorded" ||
     event.type === "baseline.check_recorded" ||
     event.type === "validation.check_recorded" ||
     event.type === "validation.recorded" ||

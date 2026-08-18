@@ -9,7 +9,14 @@ import {
   type PipelineDeps,
   type Phase,
 } from "@rivet/core";
-import type { ExecRequest, ExecResult, Sandbox, SandboxProvider, SandboxSpec } from "@rivet/core";
+import type {
+  ExecRequest,
+  ExecResult,
+  Sandbox,
+  SandboxProvider,
+  SandboxResourceReport,
+  SandboxSpec,
+} from "@rivet/core";
 
 import type { FaultConfig, FaultMode } from "./config";
 import type { Logger } from "./logger";
@@ -271,6 +278,10 @@ class FaultSandbox implements Sandbox {
 
   putArchive(...args: Parameters<Sandbox["putArchive"]>): ReturnType<Sandbox["putArchive"]> {
     return this.inner.putArchive(...args);
+  }
+
+  getResourceReport(): Promise<SandboxResourceReport | null> {
+    return this.inner.getResourceReport?.() ?? Promise.resolve(null);
   }
 
   destroy(): Promise<void> {

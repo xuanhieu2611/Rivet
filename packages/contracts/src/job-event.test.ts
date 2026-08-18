@@ -128,6 +128,45 @@ describe("coding agent events", () => {
   });
 });
 
+describe("sandbox resource events", () => {
+  it("round-trips resource peaks and an unknown peak", () => {
+    const event: JobEvent = {
+      ...EVENT,
+      type: "sandbox.resources_recorded",
+      message: "Sandbox resources recorded.",
+      data: {
+        artifactId: 42,
+        artifactType: "resource_report",
+        byteSize: 900,
+        resourceReportVersion: 1,
+        sampleCount: 4,
+        memoryPeakBytes: 123_456,
+        memoryLimitBytes: 1_000_000,
+        memoryPeakAtMs: 800,
+        cpuPeakPercent: null,
+        pidsPeak: 12,
+        pidsLimit: 64,
+        oomKilled: false,
+      },
+    };
+
+    expect(parseSerializedJobEvent(serializeJobEvent(event))).toEqual(event);
+  });
+
+  it("rejects negative resource facts", () => {
+    expect(() =>
+      parseSerializedJobEvent(
+        serializeJobEvent({
+          ...EVENT,
+          type: "sandbox.resources_recorded",
+          message: "Invalid resources.",
+          data: { memoryPeakBytes: -1 },
+        }),
+      ),
+    ).toThrow();
+  });
+});
+
 describe("validation and artifact events", () => {
   it("round-trips both M7 per-check event types and their fields", () => {
     const baseline: JobEvent = {

@@ -24,6 +24,8 @@ import { jobStatusSchema, type JobStatus } from "./job";
  * - `review_report` - the canonical structured verdict submitted by an
  *   independent review session. One row per review loop, and it stays readable
  *   on a job that the reviewer rejected.
+ * - `resource_report` - the complete resource snapshot collected when the
+ *   sandbox was torn down, including peak memory, CPU, pids and OOM state.
  * - `pull_request_body` - the complete body Rivet was about to publish, kept
  *   before the GitHub request so a publication failure remains diagnosable.
  */
@@ -35,6 +37,7 @@ export const ARTIFACT_TYPES = [
   "baseline_report",
   "validation_report",
   "review_report",
+  "resource_report",
   "pull_request_body",
 ] as const;
 

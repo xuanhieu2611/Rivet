@@ -227,6 +227,7 @@ const { phases, phaseFactory, sandbox } = ((): {
     workerId,
     log,
     reapGraceMs: config.sandbox.reapGraceMs,
+    ...(telemetry ? { telemetry: telemetry.telemetry } : {}),
   });
   const pipelineOptions = {
     ...(agent ? { agent } : {}),

@@ -82,6 +82,7 @@ export * from "./pipeline/targeted-tests";
 export * from "./sandbox/command-log";
 export * from "./sandbox/errors";
 export * from "./sandbox/sandbox-holder";
+export * from "./sandbox/resource-report";
 export * from "./telemetry/attributes";
 export * from "./telemetry/metrics";
 export * from "./telemetry/noop-telemetry";
