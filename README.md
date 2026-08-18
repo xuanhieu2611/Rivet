@@ -25,10 +25,11 @@ claim: a job under evaluation must be indistinguishable from one created in the 
 [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md) is the first experiment run
 over it.
 
-Milestone 11 is in progress. Its first six stages add the telemetry port, OTLP export, traces,
-metrics, a local OpenTelemetry Collector, Prometheus, Tempo and Grafana stack, and container
-resource monitoring. Run `pnpm obs:up` and follow
-[docs/milestone-11-guide.md](docs/milestone-11-guide.md) to explore the provisioned dashboards.
+Milestone 11 is in progress. Its first eleven stages add the telemetry port, OTLP export, traces,
+metrics, a local OpenTelemetry Collector, Prometheus, Tempo and Grafana stack, container resource
+monitoring, control-plane hardening, and prompt-injection fencing and detection. Run `pnpm obs:up`
+and follow [docs/milestone-11-guide.md](docs/milestone-11-guide.md) to explore the provisioned
+dashboards.
 
 Milestone 9 ends a job in a real pull request. A GitHub App, repository and issue pickers,
 short-lived installation tokens that never enter a container, an authenticated host clone, and
@@ -279,6 +280,31 @@ allowlist; isolate each job's network; and provide only per-job credentials with
 Control-plane database, Redis and provider credentials should never enter that environment. Docker
 remains appropriate for this local milestone because the limits, lifecycle and adapter boundary
 carry forward when the isolation backend changes.
+
+## Repository prompt-injection threat model
+
+Repository files, README text, package manifests, command output, diffs, and GitHub issue titles and
+bodies are untrusted input. They can contain text such as "ignore previous instructions", requests
+to reveal credentials, or commands intended to make the agent change files outside its workspace.
+Rivet therefore treats all of these values as data rather than as system instructions:
+
+- Planner, implementer, and reviewer prompts place repository-derived text and issue text in
+  labelled untrusted blocks with an explicit trust preamble.
+- Tool results for file reads, repository searches, tracked-file listings, and shell output use the
+  same labelled fencing before they reach the model.
+- A bounded heuristic scanner checks each source independently at its prompt or tool boundary. It
+  records at most one `security.injection_suspected` event per source boundary, including only the
+  source, location, and matched pattern classes. It never stores the matched text and never fails,
+  blocks, or changes a job. Its documented pattern classes are `instruction_override`,
+  `secret_exfiltration`, `unsafe_tool_use`, `external_exfiltration`, and `filesystem_escape`.
+- The scanner is observability, not a security boundary. The actual defenses are the exact
+  role-specific tool allowlists, read-only planner and reviewer capabilities, unprivileged sandbox,
+  absent provider credential, and restricted host-facing sandbox configuration.
+
+The scanner can miss new wording and can produce false positives, including in documentation that
+legitimately discusses prompt injection. A future egress allowlist or proxy is still required to
+stop a malicious repository from sending its own contents to the public internet; that accepted risk
+is not disguised as a prompt-scanning success.
 
 ## Repository validation configuration
 

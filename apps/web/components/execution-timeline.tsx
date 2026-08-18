@@ -231,6 +231,9 @@ function EventContent({ event }: { event: JobEvent }): ReactNode {
     case "sandbox.resources_recorded":
       return <ResourceEventContent event={event} />;
 
+    case "security.injection_suspected":
+      return <SecurityEventContent event={event} />;
+
     case "baseline.check_recorded":
     case "validation.check_recorded":
       return <CheckEventContent event={event} />;
@@ -439,6 +442,23 @@ function ResourceEventContent({ event }: { event: JobEvent }) {
   );
 }
 
+function SecurityEventContent({ event }: { event: JobEvent }) {
+  const data = event.data;
+  const classes = data?.patternClasses?.join(", ") ?? "heuristic match";
+  const source = data?.source ?? "untrusted input";
+  const location = data?.location;
+
+  return (
+    <div className="space-y-1">
+      <p className="text-sm leading-snug">{event.message}</p>
+      <p className="text-muted-foreground text-xs break-words">
+        {source}
+        {location ? ` at ${location}` : ""} · {classes}
+      </p>
+    </div>
+  );
+}
+
 function ValidationEventContent({ event }: { event: JobEvent }) {
   const outcome = event.data?.validation;
   const presentation = outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome] : null;
@@ -541,6 +561,7 @@ function describeEventData(event: JobEvent): string | null {
     event.type === "plan.deferred" ||
     event.type === "artifact.recorded" ||
     event.type === "sandbox.resources_recorded" ||
+    event.type === "security.injection_suspected" ||
     event.type === "baseline.check_recorded" ||
     event.type === "validation.check_recorded" ||
     event.type === "validation.recorded" ||

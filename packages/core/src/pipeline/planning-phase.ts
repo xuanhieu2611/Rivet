@@ -9,6 +9,7 @@ import type { PlannerAgentToolbox, CodingAgentSpec } from "../agent/coding-agent
 import { commandKilledError } from "../sandbox/errors";
 import { buildAgentContext, parseCostCeiling } from "./implementing-phase";
 import { runAgentSession } from "./agent-session";
+import { scanAndRecordUntrusted } from "./prompt-security";
 import type { PhaseContext } from "./phase-context";
 import type { AgentOptions, PipelineOptions } from "./phases";
 import { REPO_DIRNAME } from "./project";
@@ -37,8 +38,26 @@ export function planningPhase(
     const toolbox: PlannerAgentToolbox = {
       role: "planner",
       listFiles: (signal) =>
-        runReadOnlyCommand(ctx, options, repoDir, ["git", "ls-files"], signal, agent.fileMaxBytes),
-      readFile: (path, signal) => sandbox.getFile(path, { maxBytes: agent.fileMaxBytes }, signal),
+        runReadOnlyCommand(
+          ctx,
+          options,
+          repoDir,
+          ["git", "ls-files"],
+          signal,
+          agent.fileMaxBytes,
+          "list_files",
+        ),
+      readFile: async (path, signal) => {
+        const file = await sandbox.getFile(path, { maxBytes: agent.fileMaxBytes }, signal);
+        await scanAndRecordUntrusted(ctx, {
+          source: "file",
+          location: path,
+          text: file.content,
+          boundary: "tool",
+          agentRole: "planner",
+        });
+        return file;
+      },
       searchText: (query, signal) => {
         if (query.trim().length === 0) {
           return Promise.reject(new Error("search_text requires a non-empty query."));
@@ -50,6 +69,7 @@ export function planningPhase(
           ["git", "grep", "-n", "--no-color", "-e", query, "--", "."],
           signal,
           agent.fileMaxBytes,
+          "search_text",
         );
       },
       submitPlan: (value, signal) => {
@@ -120,6 +140,7 @@ async function runReadOnlyCommand(
   argv: string[],
   signal: AbortSignal,
   maxOutputBytes: number,
+  location: string,
 ): Promise<string> {
   signal.throwIfAborted();
   const result = await ctx.exec({
@@ -131,5 +152,12 @@ async function runReadOnlyCommand(
   ctx.signal.throwIfAborted();
   const killed = commandKilledError(result);
   if (killed) throw killed;
+  await scanAndRecordUntrusted(ctx, {
+    source: "command_output",
+    location,
+    text: `${result.stdout}\n${result.stderr}`,
+    boundary: "tool",
+    agentRole: "planner",
+  });
   return result.stdout;
 }

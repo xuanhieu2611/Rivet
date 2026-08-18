@@ -239,7 +239,7 @@ describe("bash operations", () => {
 
     const shown = chunks.join("");
     expect(shown).toContain("showing the last 16 bytes");
-    expect(shown.endsWith("6789")).toBe(true);
+    expect(shown).toContain("6789\n</rivet-untrusted-content>");
   });
 
   it("treats a killed command as fatal, because the container went with it", async () => {

@@ -70,6 +70,8 @@ export * from "./pipeline/phases";
 export * from "./pipeline/planning-phase";
 export * from "./pipeline/project";
 export * from "./pipeline/project-probe";
+export * from "./pipeline/prompt-injection";
+export * from "./pipeline/prompt-security";
 export * from "./pipeline/provisioning-phase";
 export * from "./pipeline/revising-phase";
 export * from "./pipeline/reviewing-phase";

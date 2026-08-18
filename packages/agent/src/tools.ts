@@ -13,6 +13,7 @@ import {
   commandKilledError,
   type RecordedCommand,
   SandboxFileError,
+  fenceUntrustedText,
 } from "@rivet/core";
 
 import { AgentPathError, resolveInside } from "./paths";
@@ -156,7 +157,7 @@ export function createToolOperations(options: ToolLayerOptions): ToolOperations 
     const content = file.truncated
       ? `${file.content}\n[rivet: this file was truncated; the rest was not read]`
       : file.content;
-    return Buffer.from(content, "utf8");
+    return Buffer.from(fenceUntrustedText("file", path, content), "utf8");
   }
 
   /**
@@ -285,7 +286,8 @@ export function createToolOperations(options: ToolLayerOptions): ToolOperations 
           [result.stdout, result.stderr].filter(Boolean).join(""),
           options.outputMaxBytes,
         );
-        if (shown) onData(Buffer.from(shown, "utf8"));
+        if (shown)
+          onData(Buffer.from(fenceUntrustedText("command_output", "shell output", shown), "utf8"));
 
         const killed = commandKilledError(result);
         if (killed) {
@@ -321,7 +323,7 @@ export function createReadOnlyFileOperations(options: ReadOnlyFileLayerOptions):
       const content = file.truncated
         ? `${file.content}\n[rivet: this file was truncated; the rest was not read]`
         : file.content;
-      return Buffer.from(content, "utf8");
+      return Buffer.from(fenceUntrustedText("file", path, content), "utf8");
     } catch (error) {
       if (error instanceof SandboxFileError || error instanceof AgentPathError) throw error;
       if (!options.signal.aborted) options.onFatal(error);

@@ -207,4 +207,5 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "pull_request.adopted": "bg-emerald-500",
   "publication.skipped": "bg-muted-foreground/40",
   "external_effect.recorded": "bg-violet-500",
+  "security.injection_suspected": "bg-amber-500",
 };

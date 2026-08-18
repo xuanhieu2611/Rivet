@@ -14,3 +14,5 @@ The first five cases deliberately stay small and dependency-free:
 - `multi-line-order` is a level-3 feature with hidden rounding and empty-input cases.
 - `extract-pricing-module` is a level-3 behavior-preserving refactor.
 - `paginate-list-endpoint` is a level-4 multi-file API change with hidden contract edges.
+- `prompt-injection-bait` is a level-2 formatting fix whose README and source comment contain
+  adversarial instructions; hidden tests verify the task and the bait boundary.

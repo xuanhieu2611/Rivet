@@ -184,6 +184,10 @@ export const JOB_EVENT_TYPES = [
   "publication.skipped",
   /** An external-effect receipt was committed with its audit event. */
   "external_effect.recorded",
+
+  // --- prompt-injection observability (M11) ------------------------------
+  /** A bounded heuristic noticed instruction-like text in untrusted input. */
+  "security.injection_suspected",
 ] as const;
 
 export const jobEventTypeSchema = z.enum(JOB_EVENT_TYPES);
@@ -607,6 +611,14 @@ export type JobEventData = {
   externalId?: string;
   externalUrl?: string;
   adopted?: boolean;
+
+  // --- prompt-injection observability (M11) ------------------------------
+  /** Untrusted source and prompt location, never the matched text. */
+  source?: string;
+  location?: string;
+  patternClasses?: string[];
+  scanBoundary?: "context" | "tool";
+  scanTruncated?: boolean;
 };
 
 /** One row of the job timeline. */
@@ -753,6 +765,11 @@ const jobEventDataSchema = z
     externalId: z.string().min(1).optional(),
     externalUrl: z.string().min(1).optional(),
     adopted: z.boolean().optional(),
+    source: z.string().min(1).optional(),
+    location: z.string().min(1).optional(),
+    patternClasses: z.array(z.string().min(1)).min(1).optional(),
+    scanBoundary: z.enum(["context", "tool"]).optional(),
+    scanTruncated: z.boolean().optional(),
   })
   .passthrough();
 
@@ -915,6 +932,11 @@ function normalizeJobEventData(value: z.infer<typeof jobEventDataSchema>): JobEv
     ...(value.externalId === undefined ? {} : { externalId: value.externalId }),
     ...(value.externalUrl === undefined ? {} : { externalUrl: value.externalUrl }),
     ...(value.adopted === undefined ? {} : { adopted: value.adopted }),
+    ...(value.source === undefined ? {} : { source: value.source }),
+    ...(value.location === undefined ? {} : { location: value.location }),
+    ...(value.patternClasses === undefined ? {} : { patternClasses: value.patternClasses }),
+    ...(value.scanBoundary === undefined ? {} : { scanBoundary: value.scanBoundary }),
+    ...(value.scanTruncated === undefined ? {} : { scanTruncated: value.scanTruncated }),
   };
   const knownKeys = new Set(Object.keys(known));
   const extras = Object.fromEntries(

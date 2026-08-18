@@ -21,6 +21,8 @@ import { runAgentSession, type SessionAccounting } from "./agent-session";
 import type { PhaseContext } from "./phase-context";
 import type { AgentOptions, PipelineOptions } from "./phases";
 import { detectPackageManager, type ProjectPlan, REPO_DIRNAME } from "./project";
+import { fenceUntrustedText } from "./prompt-injection";
+import { scanAndRecordUntrusted, scanTaskInputs } from "./prompt-security";
 import type { PhaseDirective } from "./run-pipeline";
 
 /**
@@ -153,9 +155,33 @@ export async function runImplementerSession(
    */
   const toolbox: AgentToolbox = {
     role: "implementer",
-    readFile: (path, signal) => sandbox.getFile(path, { maxBytes: agent.fileMaxBytes }, signal),
+    readFile: async (path, signal) => {
+      const file = await sandbox.getFile(path, { maxBytes: agent.fileMaxBytes }, signal);
+      await scanAndRecordUntrusted(ctx, {
+        source: "file",
+        location: path,
+        text: file.content,
+        boundary: "tool",
+        agentRole: "implementer",
+      });
+      return file;
+    },
     writeFile: (path, content, signal) => sandbox.putFile(path, content, signal),
-    exec: (input) => ctx.exec({ argv: input.argv, cwd: input.cwd, timeoutMs: input.timeoutMs }),
+    exec: async (input) => {
+      const result = await ctx.exec({
+        argv: input.argv,
+        cwd: input.cwd,
+        timeoutMs: input.timeoutMs,
+      });
+      await scanAndRecordUntrusted(ctx, {
+        source: "command_output",
+        location: input.argv[0] ?? "shell",
+        text: `${result.stdout}\n${result.stderr}`,
+        boundary: "tool",
+        agentRole: "implementer",
+      });
+      return result;
+    },
   };
 
   const state = await runAgentSession(agent, spec, toolbox, ctx);
@@ -201,12 +227,21 @@ export async function buildAgentContext(
   role: AgentContextRole = "implementer",
   agent?: AgentOptions,
 ): Promise<string> {
+  await scanTaskInputs(ctx, role);
+
   const listing = await ctx.exec({
     argv: ["ls", "-1", "-a", repoDir],
     cwd: repoDir,
     timeoutMs: options.commandTimeoutMs,
   });
   ctx.signal.throwIfAborted();
+  await scanAndRecordUntrusted(ctx, {
+    source: "command_output",
+    location: "context: list repository root",
+    text: `${listing.stdout}\n${listing.stderr}`,
+    boundary: "context",
+    agentRole: role,
+  });
   const plan = listing.exitCode === 0 ? detectPackageManager(splitLines(listing.stdout)) : null;
 
   const files = await ctx.exec({
@@ -215,6 +250,13 @@ export async function buildAgentContext(
     timeoutMs: options.commandTimeoutMs,
   });
   ctx.signal.throwIfAborted();
+  await scanAndRecordUntrusted(ctx, {
+    source: "repository",
+    location: "tracked file list",
+    text: `${files.stdout}\n${files.stderr}`,
+    boundary: "context",
+    agentRole: role,
+  });
   const tracked = files.exitCode === 0 ? splitLines(files.stdout) : [];
 
   const rootEntries = listing.exitCode === 0 ? splitLines(listing.stdout) : [];
@@ -224,6 +266,26 @@ export async function buildAgentContext(
   const implementationPlan = role === "planner" ? null : await readImplementationPlan(ctx);
   const recovery = role === "implementer" ? await readRecovery(ctx) : null;
   const reviewInputs = role === "reviewer" ? await readReviewInputs(ctx) : null;
+
+  if (implementationPlan) {
+    await scanAndRecordUntrusted(ctx, {
+      source: "agent_artifact",
+      location: "implementation_plan",
+      text: JSON.stringify(implementationPlan),
+      boundary: "context",
+      agentRole: role,
+    });
+  }
+  if (reviewInputs) await scanReviewInputs(ctx, reviewInputs, role);
+  if (recovery?.previousMessage) {
+    await scanAndRecordUntrusted(ctx, {
+      source: "agent_artifact",
+      location: "recovery.previous_message",
+      text: recovery.previousMessage,
+      boundary: "context",
+      agentRole: role,
+    });
+  }
 
   return [
     `# The repository you are working in`,
@@ -443,6 +505,37 @@ async function readPreviousReview(ctx: PhaseContext): Promise<ReviewReport | nul
   }
 }
 
+async function scanReviewInputs(
+  ctx: PhaseContext,
+  inputs: ReviewInputs,
+  role: AgentContextRole,
+): Promise<void> {
+  const values: readonly [string, string | null][] = [
+    ["review.diff", inputs.diff],
+    ["review.diff_stat", inputs.diffStat],
+    [
+      "review.validation_report",
+      inputs.validationReport === null ? null : serializeValidationReport(inputs.validationReport),
+    ],
+    ["review.implementation_summary", inputs.implementationSummary],
+    [
+      "review.previous_review",
+      inputs.previousReview === null ? null : JSON.stringify(inputs.previousReview),
+    ],
+  ];
+
+  for (const [location, text] of values) {
+    if (text === null) continue;
+    await scanAndRecordUntrusted(ctx, {
+      source: "agent_artifact",
+      location,
+      text,
+      boundary: "context",
+      agentRole: role,
+    });
+  }
+}
+
 function describeReviewInputs(inputs: ReviewInputs | null): string[] {
   if (!inputs) return [];
 
@@ -454,29 +547,27 @@ function describeReviewInputs(inputs: ReviewInputs | null): string[] {
     `the implementation summary as proof: it is the implementer's claim, while the diff and`,
     `validation report are the observed outputs.`,
     ``,
-    ...describeReviewArtifact("Final diff", inputs.diff, "diff"),
-    ...describeReviewArtifact("Diff stat", inputs.diffStat, "text"),
+    ...describeReviewArtifact("Final diff", inputs.diff),
+    ...describeReviewArtifact("Diff stat", inputs.diffStat),
     ...describeReviewArtifact(
       "Validation report",
       inputs.validationReport === null ? null : serializeValidationReport(inputs.validationReport),
-      "json",
     ),
-    ...describeReviewArtifact("Implementation summary", inputs.implementationSummary, "text"),
+    ...describeReviewArtifact("Implementation summary", inputs.implementationSummary),
     ...describeReviewArtifact(
       "Previous review report",
       inputs.previousReview === null ? null : JSON.stringify(inputs.previousReview, null, 2),
-      "json",
     ),
   ];
 }
 
-function describeReviewArtifact(title: string, content: string | null, language: string): string[] {
+function describeReviewArtifact(title: string, content: string | null): string[] {
   return [
     `## ${title}`,
     ``,
     content === null
       ? `No durable ${title.toLowerCase()} was available.`
-      : ["```" + language, content, "```"].join("\\n"),
+      : fenceUntrustedText("agent_artifact", title, content),
     ``,
   ];
 }
@@ -491,7 +582,15 @@ function describeImplementationPlan(plan: ImplementationPlan | null): string[] {
     ];
   }
 
-  return [`# Persisted implementation plan`, ``, renderImplementationPlanMarkdown(plan)];
+  return [
+    `# Persisted implementation plan`,
+    ``,
+    fenceUntrustedText(
+      "agent_artifact",
+      "implementation_plan",
+      renderImplementationPlanMarkdown(plan),
+    ),
+  ];
 }
 
 /**
@@ -583,7 +682,11 @@ function describeRecovery(
       ? [
           `The last thing the interrupted session said was:`,
           ``,
-          ...quote(truncate(previousMessage, RECOVERY_MESSAGE_MAX_BYTES).text),
+          fenceUntrustedText(
+            "agent_artifact",
+            "recovery.previous_message",
+            truncate(previousMessage, RECOVERY_MESSAGE_MAX_BYTES).text,
+          ),
           ``,
         ]
       : [`The interrupted session was stopped before it described what it had done.`, ``]),
@@ -640,10 +743,6 @@ function describeRemainingBudget(ctx: PhaseContext, agent: AgentOptions | undefi
 /** What is left of a ceiling, never negative. */
 function remaining(spent: number, limit: number): number {
   return Math.max(0, limit - spent);
-}
-
-function quote(text: string): string[] {
-  return text.split(/\r?\n/).map((line) => `> ${line}`);
 }
 
 function plural(count: number, noun: string): string {
@@ -731,11 +830,18 @@ async function readReadme(
   ctx.signal.throwIfAborted();
   if (result.exitCode !== 0 || result.stdout.trim().length === 0) return [];
 
+  await scanAndRecordUntrusted(ctx, {
+    source: "repository",
+    location: name,
+    text: result.stdout,
+    boundary: "context",
+  });
+
   return [
     ``,
     `# ${name} (first ${README_MAX_BYTES} bytes)`,
     ``,
-    result.stdout.trimEnd(),
+    fenceUntrustedText("repository", name, result.stdout.trimEnd()),
     ...(result.stdout.length >= README_MAX_BYTES
       ? [`... truncated; read the rest with \`bash\`.`]
       : []),
@@ -768,15 +874,21 @@ async function readScripts(
   if (result.exitCode !== 0 || result.truncated) return [];
 
   const scripts = parseScripts(result.stdout);
+  await scanAndRecordUntrusted(ctx, {
+    source: "repository",
+    location: "package.json",
+    text: result.stdout,
+    boundary: "context",
+    agentRole: role,
+  });
+
   if (role === "planner") {
     const boundedManifest = truncate(result.stdout, MANIFEST_CONTEXT_MAX_BYTES);
     return [
       ``,
       `# package.json manifest (bounded)`,
       ``,
-      "```json",
-      boundedManifest.text,
-      "```",
+      fenceUntrustedText("repository", "package.json", boundedManifest.text),
       ...(boundedManifest.truncated
         ? [`... truncated; read package.json with \`read\` for the relevant sections.`]
         : []),
@@ -785,7 +897,12 @@ async function readScripts(
   if (!scripts) return [];
 
   const bounded = truncate(JSON.stringify(scripts, null, 2), SCRIPTS_MAX_BYTES);
-  return [``, `# package.json scripts`, ``, "```json", bounded.text, "```"];
+  return [
+    ``,
+    `# package.json scripts`,
+    ``,
+    fenceUntrustedText("repository", "package.json.scripts", bounded.text),
+  ];
 }
 
 /** The `scripts` object, or null for every shape that is not one. */
@@ -816,7 +933,7 @@ function describeFiles(tracked: string[]): string[] {
     ``,
     `# Tracked files`,
     ``,
-    ...shown,
+    fenceUntrustedText("repository", "tracked file list", shown.join("\\n")),
     ...(remainder > 0 ? [`... and ${remainder} more; use \`bash\` to list the rest.`] : []),
   ];
 }

@@ -5,6 +5,7 @@ import type { CodingAgentSpec, ReviewerAgentToolbox } from "../agent/coding-agen
 import { commandKilledError } from "../sandbox/errors";
 import { buildAgentContext, parseCostCeiling } from "./implementing-phase";
 import { runAgentSession } from "./agent-session";
+import { scanAndRecordUntrusted } from "./prompt-security";
 import type { PhaseContext } from "./phase-context";
 import type { AgentOptions, Phase, PipelineOptions } from "./phases";
 import type { PhaseDirective } from "./run-pipeline";
@@ -57,8 +58,26 @@ export function reviewingPhase(
     const toolbox: ReviewerAgentToolbox = {
       role: "reviewer",
       listFiles: (signal) =>
-        runReadOnlyCommand(ctx, options, repoDir, ["git", "ls-files"], signal, agent.fileMaxBytes),
-      readFile: (path, signal) => sandbox.getFile(path, { maxBytes: agent.fileMaxBytes }, signal),
+        runReadOnlyCommand(
+          ctx,
+          options,
+          repoDir,
+          ["git", "ls-files"],
+          signal,
+          agent.fileMaxBytes,
+          "list_files",
+        ),
+      readFile: async (path, signal) => {
+        const file = await sandbox.getFile(path, { maxBytes: agent.fileMaxBytes }, signal);
+        await scanAndRecordUntrusted(ctx, {
+          source: "file",
+          location: path,
+          text: file.content,
+          boundary: "tool",
+          agentRole: "reviewer",
+        });
+        return file;
+      },
       searchText: (query, signal) => {
         if (query.trim().length === 0) {
           return Promise.reject(new Error("search_text requires a non-empty query."));
@@ -70,6 +89,7 @@ export function reviewingPhase(
           ["git", "grep", "-n", "--no-color", "-e", query, "--", "."],
           signal,
           agent.fileMaxBytes,
+          "search_text",
         );
       },
       submitReview: (value, signal) => {
@@ -223,6 +243,7 @@ async function runReadOnlyCommand(
   argv: string[],
   signal: AbortSignal,
   maxOutputBytes: number,
+  location: string,
 ): Promise<string> {
   signal.throwIfAborted();
   const result = await ctx.exec({
@@ -234,6 +255,13 @@ async function runReadOnlyCommand(
   ctx.signal.throwIfAborted();
   const killed = commandKilledError(result);
   if (killed) throw killed;
+  await scanAndRecordUntrusted(ctx, {
+    source: "command_output",
+    location,
+    text: `${result.stdout}\n${result.stderr}`,
+    boundary: "tool",
+    agentRole: "reviewer",
+  });
   return result.stdout;
 }
 

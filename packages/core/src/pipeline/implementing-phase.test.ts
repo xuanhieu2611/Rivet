@@ -552,7 +552,8 @@ describe("implementingPhase", () => {
     // The size of the restored work, computed from the patch rather than trusted
     // from the event that announced it.
     expect(context).toContain("1 file changed, +1/-1");
-    expect(context).toContain("> Corrected the addition in sum.ts");
+    expect(context).toContain("Corrected the addition in sum.ts");
+    expect(context).toContain('<rivet-untrusted-content source="agent_artifact"');
     // Cumulative budgets: a crash does not hand the replacement a fresh one.
     expect(context).toContain("Turns already spent on this job: 3");
     expect(context).toContain("$1.2500 of the job's $5.00 ceiling");
