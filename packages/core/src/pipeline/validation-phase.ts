@@ -180,8 +180,35 @@ export function parseNumstat(text: string): DiffStat {
   return stat;
 }
 
+/**
+ * Expands git's `{old => new}` rename braces to the destination side.
+ *
+ * Scanned rather than matched with `/\{[^{}]* => ([^{}]*)\}/g`: the two
+ * unbounded brace-free runs around a literal arrow backtrack polynomially on a
+ * long run that never reaches the arrow, and this input is a path out of a
+ * repository's own `git diff --stat`. A single left-to-right pass cannot.
+ */
 function renameDestination(path: string): string {
-  const expanded = path.replace(/\{[^{}]* => ([^{}]*)\}/g, "$1");
+  let expanded = "";
+  let index = 0;
+  while (index < path.length) {
+    const open = path.indexOf("{", index);
+    if (open < 0) break;
+    const close = path.indexOf("}", open + 1);
+    if (close < 0) break;
+
+    const inner = path.slice(open + 1, close);
+    // A nested brace means this is not the rename form git writes; leave it be.
+    const arrow = inner.includes("{") ? -1 : inner.indexOf(" => ");
+    if (arrow < 0) {
+      expanded += path.slice(index, close + 1);
+    } else {
+      expanded += path.slice(index, open) + inner.slice(arrow + 4);
+    }
+    index = close + 1;
+  }
+  expanded += path.slice(index);
+
   const arrow = expanded.lastIndexOf(" => ");
   return arrow < 0 ? expanded : expanded.slice(arrow + 4);
 }

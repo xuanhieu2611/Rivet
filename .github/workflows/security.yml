@@ -56,6 +56,52 @@ jobs:
         with:
           category: /language:javascript-typescript
 
+      # `analyze` uploads results; on its own it does NOT fail on findings, so a
+      # green CodeQL job would otherwise mean "the scan ran", not "the scan was
+      # clean". This step is what makes the threshold real: any OPEN alert at
+      # high or critical security severity on this ref fails the run.
+      #
+      # Dismissing an alert is the escape hatch, and it is deliberately the
+      # visible one - a dismissal carries a reason and a comment in GitHub's own
+      # UI, where a code comment would not. docs/security-review.md §5 says what
+      # justifies one.
+      #
+      # Skipped for pull requests from forks, whose token cannot read the alerts
+      # API. GitHub's own "Code scanning results" check still gates those.
+      - name: Fail on high or critical alerts
+        if: github.event.pull_request.head.repo.fork != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REF: ${{ github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
+        run: |
+          set -euo pipefail
+
+          # Wait for this commit's analysis to be indexed. Reading the alert list
+          # before it lands would report zero alerts for the wrong reason, which
+          # is the failure mode a positive control exists to prevent.
+          for attempt in $(seq 1 18); do
+            if gh api "repos/$REPO/code-scanning/analyses?ref=$REF&per_page=100"                  --jq 'map(select(.commit_sha == env.SHA)) | length' 2>/dev/null | grep -qv '^0$'; then
+              break
+            fi
+            if [ "$attempt" -eq 18 ]; then
+              echo "::error::CodeQL analysis for $SHA was not indexed within 90s."
+              exit 1
+            fi
+            sleep 5
+          done
+
+          gh api "repos/$REPO/code-scanning/alerts?ref=$REF&state=open&per_page=100"             --jq '.[] | select(.rule.security_severity_level == "high" or .rule.security_severity_level == "critical")
+                  | "\(.rule.security_severity_level)\t\(.rule.id)\t\(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"'             > /tmp/codeql-alerts.txt
+
+          if [ -s /tmp/codeql-alerts.txt ]; then
+            echo "::error::CodeQL reported open high or critical alerts:"
+            cat /tmp/codeql-alerts.txt
+            exit 1
+          fi
+          echo "No open high or critical CodeQL alerts."
+
   dependencies:
     name: Dependency audit
     runs-on: ubuntu-latest

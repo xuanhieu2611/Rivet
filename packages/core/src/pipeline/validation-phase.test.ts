@@ -292,6 +292,34 @@ describe("parseNumstat", () => {
     });
   });
 
+  it("expands more than one brace group in a path", () => {
+    expect(parseNumstat("1\t1\t{src => lib}/deep/{old.js => new.js}\n")).toEqual({
+      filesChanged: 1,
+      insertions: 1,
+      deletions: 1,
+      paths: ["lib/deep/new.js"],
+    });
+  });
+
+  it("leaves a brace group that is not a rename alone", () => {
+    // A repository is allowed to have braces in a filename, and git only writes
+    // the arrow form for an actual rename.
+    expect(parseNumstat("1\t0\tsrc/{weird}.js\n")).toEqual({
+      filesChanged: 1,
+      insertions: 1,
+      deletions: 0,
+      paths: ["src/{weird}.js"],
+    });
+  });
+
+  it("does not hang on a long brace-free run that never reaches an arrow", () => {
+    const started = Date.now();
+    expect(parseNumstat(`1\t0\tsrc/{${"a".repeat(50_000)}\n`).paths).toEqual([
+      `src/{${"a".repeat(50_000)}`,
+    ]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
   it("returns the new path for a whole-path rename", () => {
     expect(parseNumstat("0\t0\tsrc/old.js => test/new.js\n")).toEqual({
       filesChanged: 1,

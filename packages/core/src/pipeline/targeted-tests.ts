@@ -81,8 +81,21 @@ function extensionOf(path: string): string | null {
   return dot <= 0 || dot === filename.length - 1 ? null : filename.slice(dot + 1).toLowerCase();
 }
 
+/**
+ * Written without `/\.(?:test|spec)\.[^/]+$/`, whose trailing unbounded run
+ * backtracks polynomially. Repository paths reach this on every changed and
+ * tracked file, so it is the one place in this pair where the input is
+ * genuinely attacker-influenced.
+ */
 function isTestPath(path: string): boolean {
-  return path.split("/").includes("__tests__") || /\.(?:test|spec)\.[^/]+$/.test(path);
+  if (path.split("/").includes("__tests__")) return true;
+
+  const filename = path.split("/").at(-1) ?? "";
+  return [".test.", ".spec."].some((marker) => {
+    const at = filename.lastIndexOf(marker);
+    // Something must follow the marker: `foo.test.` is not a test file.
+    return at >= 0 && at + marker.length < filename.length;
+  });
 }
 
 interface SourcePath {

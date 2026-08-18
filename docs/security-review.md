@@ -393,6 +393,53 @@ which of those it is. An entry with no comment is a bug.
 CodeQL needs `security-events: write` to upload its SARIF, which is the one permission any Rivet
 workflow holds beyond `contents: read`; it is scoped to that job alone rather than to the workflow.
 
+**`analyze` does not fail on findings, and that is worth saying out loud.** On its own it uploads
+results, so a green CodeQL job would mean "the scan ran" rather than "the scan was clean" - exactly
+the kind of check that reads as enforcement while enforcing nothing. The workflow therefore adds a
+step that queries the alerts API for this ref and fails on any **open** high or critical alert. It
+first waits for the commit's analysis to be indexed, because reading the alert list before it lands
+would report zero alerts for the wrong reason, which is the same positive-control problem run D and
+run G are built around. Fork pull requests skip the step, since their token cannot read the alerts
+API; GitHub's own "Code scanning results" check gates those.
+
+Dismissing an alert is the escape hatch and it is deliberately the visible one: a dismissal carries
+a reason and a comment in GitHub's own UI, where a code comment would not. A dismissal is justified
+only when the flagged path has no adversary - test code, or operator-controlled input whose
+compromise already implies a larger one.
+
+### 5.1 The first run's findings
+
+Running the workflow for the first time produced six high-severity alerts. All six were triaged in
+this stage; none were left open.
+
+**Four `js/polynomial-redos`, all fixed.** Two of them mattered and two did not, and the difference
+is whose text reaches the regex:
+
+- `packages/core/src/pipeline/targeted-tests.ts` - `isTestPath` ran `/\.(?:test|spec)\.[^/]+$/` over
+  **every changed and tracked repository path**. That is attacker-influenced input on the hot path
+  of targeted-test selection. Replaced with a scan of the final path segment.
+- `packages/core/src/pipeline/validation-phase.ts` - `renameDestination` ran
+  `/\{[^{}]* => ([^{}]*)\}/g` over paths from the repository's own `git diff --stat`. Two unbounded
+  brace-free runs around a literal arrow backtrack polynomially on a long run that never reaches the
+  arrow. Replaced with a single left-to-right pass, with a test that a 50,000-character brace-free
+  run completes in well under a second.
+- `packages/telemetry/src/provider.ts` and `packages/core/src/pipeline/finalizing-phase.ts` - both
+  stripped trailing slashes with `/\/+$/` from **operator configuration**
+  (`OTEL_EXPORTER_OTLP_ENDPOINT` and `RIVET_APP_URL`). Theoretical rather than reachable, and fixed
+  anyway: a four-line loop costs less than arguing about it, and an alert left open to be explained
+  every quarter is worse than a loop.
+
+**Two `js/file-system-race`, dismissed with reasons.**
+
+- `apps/worker/src/git/host-git.test.ts` - test code. The assertion stats a file the test itself
+  just created in its own temporary directory, to prove the askpass helper is mode `0700`. No
+  adversary exists on that path.
+- `packages/core/src/evaluation/case-loader.ts` - the `lstat`-then-`readFile` of a benchmark case
+  file. Benchmark cases are git-tracked files in Rivet's own repository, read by the operator's own
+  build step; winning this race needs local write access to the checkout, which is already a full
+  compromise. The adversarial check on that code path is `assertSafeSymlink`'s `realpath`
+  comparison, which is not a TOCTOU and is unaffected.
+
 ---
 
 ## 6. Accepted risks

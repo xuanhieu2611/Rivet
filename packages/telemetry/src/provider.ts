@@ -86,7 +86,20 @@ const SCOPE_NAME = "@rivet/telemetry";
 
 /** Appends a signal path to a base OTLP endpoint, tolerating a trailing slash. */
 export function signalUrl(endpoint: string, signal: "traces" | "metrics"): string {
-  return `${endpoint.replace(/\/+$/, "")}/v1/${signal}`;
+  return `${trimTrailingSlashes(endpoint)}/v1/${signal}`;
+}
+
+/**
+ * Written as a loop rather than `replace(/\/+$/, "")` because a trailing-run
+ * regex backtracks polynomially on a long run of slashes. This value is
+ * operator configuration rather than attacker input, so the finding is
+ * theoretical - and the loop costs nothing, which makes arguing about it more
+ * expensive than fixing it.
+ */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
 }
 
 export function startOtelTelemetry(options: TelemetryOptions): TelemetryHandle {

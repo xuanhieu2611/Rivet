@@ -424,8 +424,16 @@ function parseDiffCount(value: string | undefined): number | null | undefined {
  */
 function runUrlFor(options: PipelineOptions, jobId: string): string {
   const path = `/jobs/${jobId}`;
-  const base = options.appBaseUrl?.replace(/\/+$/u, "");
+  const base =
+    options.appBaseUrl === undefined ? undefined : trimTrailingSlashes(options.appBaseUrl);
   return base ? `${base}${path}` : path;
+}
+
+/** A loop rather than `/\/+$/`, which backtracks polynomially on a run of slashes. */
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
 }
 
 function branchUrlFor(repo: RepoRef, branch: string): string {

@@ -99,10 +99,12 @@ Stated so their absence reads as a decision. Reasons and remediation paths are i
 `.github/workflows/security.yml` runs on every pull request and every push to `main`, independently
 of the other CI jobs:
 
-- **CodeQL** over JavaScript/TypeScript with the `security-extended` queries.
+- **CodeQL** over JavaScript/TypeScript with the `security-extended` queries, failing on any open
+  alert at high or critical security severity. `analyze` alone only uploads results, so the workflow
+  adds the step that turns an upload into a gate.
 - **`pnpm audit`**, failing on `high` and `critical` advisories.
 - **gitleaks** over the full history and the diff, failing on any finding.
 
 Allowlist entries in `.gitleaks.toml` and audit ignores in the workflow must carry a comment saying
-why the finding is not a live credential or why the advisory is unreachable. An entry with no
-comment is a bug.
+why the finding is not a live credential or why the advisory is unreachable. A dismissed CodeQL
+alert must carry its reason in GitHub's dismissal comment. An entry with no reason is a bug.
