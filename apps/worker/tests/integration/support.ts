@@ -122,6 +122,19 @@ export const TEST_CONFIG: WorkerConfig = {
     seedMaxBytes: 64 * 1_024 * 1_024,
     concurrency: 1,
   },
+  // `off` for the fifth time, and the only one of the five that is not a
+  // safety decision: a suite that exported spans would need a collector to run
+  // at all. A case with something to assert about spans hands
+  // `RecordingTelemetry` to the pipeline it builds.
+  telemetry: {
+    mode: "off",
+    endpoint: "http://localhost:4318",
+    exportIntervalMs: 15_000,
+    exportTimeoutMs: 10_000,
+    serviceName: "rivet-worker",
+    serviceVersion: "0.0.0-test",
+    environment: "test",
+  },
 };
 
 export function uniqueQueueName(suite: string): string {

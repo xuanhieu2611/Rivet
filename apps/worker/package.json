@@ -25,6 +25,7 @@
     "@rivet/github": "workspace:*",
     "@rivet/queue": "workspace:*",
     "@rivet/sandbox": "workspace:*",
+    "@rivet/telemetry": "workspace:*",
     "bullmq": "6.1.0",
     "dotenv": "^17.4.2",
     "pino": "^10.3.1",

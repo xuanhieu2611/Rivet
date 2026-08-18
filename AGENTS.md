@@ -340,6 +340,7 @@ packages/core       All domain logic: agent/, jobs/, events/, pipeline/, queue/,
 packages/queue      BullMQ adapter for the port, an in-memory fake, the lazy ioredis connection.
 packages/sandbox    dockerode adapter for the sandbox port, a scripted fake, the lazy Docker client.
 packages/agent      Pi adapter for the coding-agent port, a scripted fake, the lazily-loaded SDK.
+packages/telemetry  OpenTelemetry adapter for the telemetry port, OTLP/HTTP exporters, the lazy SDK.
 packages/contracts  Zod schemas, the job status enum, JobSummary / JobDetail / JobEvent.
 packages/database   Drizzle schema, generated migrations, the pg Pool. Neon Postgres.
 packages/config     tsconfig + ESLint bases that every workspace extends.
@@ -611,6 +612,32 @@ pure function of an env object.
 - `RIVET_EVAL_CONCURRENCY` - the evaluation runner's in-flight matrix bound, `1` by default;
   `pnpm eval:run --dry-run` resolves the case x arm x repetition matrix without opening any
   database, Redis or Docker connection.
+- `RIVET_TELEMETRY` - `otlp` or `off`, `off` by default and **the one member of the switch family
+  that is legal under `NODE_ENV=production`**. The other four refuse their cheap variant because a
+  worker that skips real work looks perfectly healthy while lying about it; a worker with telemetry
+  off is degraded and honest, and refusing to boot over that would take a deployment down to protect
+  its dashboards. `index.ts` warns instead - at `warn` under production, `info` anywhere else.
+  `otlp` additionally reads `OTEL_EXPORTER_OTLP_ENDPOINT` (the standard variable, not a `RIVET_`
+  one, `http://localhost:4318` by default and validated as an `http(s)` URL rather than by
+  `z.url()`, which accepts `localhost:4318` as a URL whose scheme is `localhost:`),
+  `RIVET_TELEMETRY_EXPORT_INTERVAL_MS` (15,000) and `RIVET_TELEMETRY_EXPORT_TIMEOUT_MS` (10,000,
+  deliberately shorter than any phase, because that budget is spent inside a shutdown).
+  `RIVET_SERVICE_VERSION` becomes `service.version` on every span and metric and should be something
+  that changes when the code does.
+
+**`packages/telemetry` ships its own OTLP exporters, and that is not a preference.** The stock
+`@opentelemetry/exporter-*-otlp-http` exporters post through `http.request` with a keep-alive agent
+and a piped body, and on Node 24 an **unreachable** collector ends their retry sequence with an
+`ECONNREFUSED` that escapes as an uncaught exception and terminates the process - reproducible with
+the stock SDK alone, on more than one exporter version, in about ten lines. Since `otlp` defaults to
+`http://localhost:4318`, where usually nothing is listening, that would make turning telemetry on a
+way to kill the worker. `FetchOtlpTraceExporter` and `FetchOtlpMetricExporter` are one `fetch` POST
+per batch with every failure caught and handed to `onExportFailure`; serialization is still OTel's
+own `JsonTraceSerializer`/`JsonMetricsSerializer`, so what goes on the wire is ordinary OTLP. What
+it gives up is retry, gzip and protobuf. What it buys is that the worst a broken collector can do is
+drop spans and log a line, which is the correct failure mode for telemetry and the property
+acceptance run C asserts. `TelemetryHandle.shutdown()` never rejects for the same reason: a graceful
+shutdown must not fail because Grafana was down.
 
 **The `rivet-local:` scheme is opaque on purpose, and that is the whole security argument.** A
 path-carrying scheme (`file:///...`) would make every acceptor one crafted request away from cloning

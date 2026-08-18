@@ -28,6 +28,7 @@ import { createProcessor, RunRegistry } from "./processor";
 import { loadScriptedAgent } from "./scripted-agent";
 import { SecretRegistry } from "./secrets";
 import { createSweepRunner } from "./sweeper";
+import { createWorkerTelemetry } from "./telemetry";
 
 /**
  * The worker entrypoint: config, wiring, and a shutdown that hands work back.
@@ -60,6 +61,25 @@ const workerId = createWorkerId();
 const secrets = new SecretRegistry();
 const log = createLogger(config.logLevel, workerId, secrets);
 const runs = new RunRegistry();
+
+/**
+ * Traces and metrics, or the absence of them.
+ *
+ * The fifth member of the switch family and the only one whose `off` is legal
+ * in production, because it is the only one that does not make the worker lie
+ * about its work: every phase still runs, and all that is missing is the
+ * ability to watch. So this warns where the others refuse - loudly under
+ * production, where a system nobody can see is a real problem, and once
+ * anywhere else, where it is the default.
+ */
+const telemetry = createWorkerTelemetry(config.telemetry, workerId, log);
+if (!telemetry) {
+  const message =
+    "RIVET_TELEMETRY=off: this worker exports no traces and no metrics, so a run can only be " +
+    "reconstructed from its event log";
+  if (process.env.NODE_ENV === "production") log.warn(message);
+  else log.info(message);
+}
 
 /**
  * Publication, or the absence of it.
@@ -188,6 +208,7 @@ const { phases, phaseFactory, sandbox } = ((): {
   });
   const pipelineOptions = {
     ...(agent ? { agent } : {}),
+    ...(telemetry ? { telemetry: telemetry.telemetry } : {}),
     ...(github ? { github } : {}),
     ...(localSeed ? { localSeed } : {}),
     ...(config.github.appBaseUrl ? { appBaseUrl: config.github.appBaseUrl } : {}),
@@ -313,6 +334,8 @@ log.info(
     agent: config.agent.mode,
     model: agent ? `${config.agent.provider}/${config.agent.model}` : null,
     github: config.github.mode,
+    telemetry: config.telemetry.mode,
+    otlpEndpoint: telemetry ? config.telemetry.endpoint : null,
     // The App id identifies the App, not the credential, so it is safe to
     // print - and it is the first thing anyone checks when an installation
     // cannot see a repository.
@@ -359,6 +382,10 @@ async function shutdown(signal: string): Promise<void> {
     await closeJobQueue();
     await closeRedis();
     await closeDb();
+    // Last, and after the runs have wound up, so the spans they ended on the
+    // way out are in the final batch. It never rejects: a collector that is
+    // down must not turn a graceful shutdown into a failed one.
+    await telemetry?.shutdown();
     log.info("shutdown complete");
     clearTimeout(deadline);
     process.exit(0);

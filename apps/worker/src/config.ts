@@ -254,6 +254,57 @@ export interface EvalConfig {
 }
 
 /**
+ * Whether this worker exports traces and metrics, and where to.
+ *
+ * The fifth member of the `RIVET_SANDBOX`/`RIVET_AGENT`/`RIVET_GITHUB`/
+ * `RIVET_EVAL` family, and **the one that does not refuse its cheap variant in
+ * production**. The other four refuse because a worker that skips real work
+ * looks perfectly healthy - it lies about having done something. A worker with
+ * telemetry off is degraded and honest about it: every job still provisions,
+ * plans, implements, validates, reviews and publishes, and the only thing
+ * missing is the ability to watch it happen. Refusing to boot over that would
+ * take down a deployment to protect its dashboards. `index.ts` logs a startup
+ * warning under production instead.
+ */
+export const TELEMETRY_MODES = ["otlp", "off"] as const;
+export type TelemetryMode = (typeof TELEMETRY_MODES)[number];
+
+/** The `service.name` every span and metric from this process carries. */
+export const WORKER_SERVICE_NAME = "rivet-worker";
+
+/**
+ * The collector's default base URL: the OTLP/HTTP port on this machine.
+ *
+ * `ops/observability`'s stack binds it there from Stage 5, so `otlp` with no
+ * other configuration is the local stack. Nothing listens on it by default, and
+ * that is a supported state - exports fail, the failure is logged once per
+ * batch, and the worker carries on.
+ */
+export const DEFAULT_OTLP_ENDPOINT = "http://localhost:4318";
+
+export interface TelemetryConfig {
+  mode: TelemetryMode;
+  /** Base URL, not a signal path. The adapter appends `/v1/traces`. */
+  endpoint: string;
+  /** How often metrics are pushed to the collector. */
+  exportIntervalMs: number;
+  /** Per-request budget for one OTLP POST. */
+  exportTimeoutMs: number;
+  serviceName: string;
+  /**
+   * What this build calls itself.
+   *
+   * A deployment should set it to something that changes when the code does -
+   * a commit sha - because the first question after a regression is which
+   * version the slow spans came from. Defaulted rather than required, so a
+   * laptop needs no extra environment.
+   */
+  serviceVersion: string;
+  /** `deployment.environment.name`, taken from `NODE_ENV`. */
+  environment: string;
+}
+
+/**
  * Whether `implementing` runs a real coding session or the Milestone 1 sleep.
  *
  * Exactly the `RIVET_SANDBOX` rule, for exactly the same reason. `off` is what
@@ -369,6 +420,8 @@ export interface WorkerConfig {
   github: GitHubConfig;
   /** Whether this worker will seed a job from a local benchmark fixture. */
   eval: EvalConfig;
+  /** Where spans and metrics go, when this worker has anywhere to send them. */
+  telemetry: TelemetryConfig;
   /** How long to wait for in-flight jobs on SIGTERM before forcing an exit. */
   shutdownGraceMs: number;
   logLevel: LogLevel;
@@ -477,7 +530,44 @@ const schema = z.object({
     .max(2_147_483_648)
     .default(268_435_456),
   RIVET_EVAL_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(1),
+
+  // --- telemetry (M11) --------------------------------------------------
+  RIVET_TELEMETRY: z.enum(TELEMETRY_MODES).default("off"),
+  // The standard OTel variable rather than a `RIVET_` one, because every
+  // collector's documentation, every sidecar and every example already uses
+  // this name - and an operator who exports it for one process expects the
+  // next one to read it too.
+  // `refine` rather than `z.url()`, which accepts `localhost:4318` - a URL
+  // whose scheme is `localhost:`. That parses, reaches the exporter, and fails
+  // on a background timer where nobody is looking.
+  OTEL_EXPORTER_OTLP_ENDPOINT: z
+    .string()
+    .refine(isHttpUrl, {
+      error: "OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL, e.g. http://localhost:4318",
+    })
+    .default(DEFAULT_OTLP_ENDPOINT),
+  RIVET_TELEMETRY_EXPORT_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(300_000)
+    .default(15_000),
+  // Short, and deliberately shorter than any phase. This budget is spent inside
+  // a shutdown, and a collector that has stopped answering must not be able to
+  // hold a worker's exit open past its grace period.
+  RIVET_TELEMETRY_EXPORT_TIMEOUT_MS: z.coerce.number().int().min(500).max(60_000).default(10_000),
+  RIVET_SERVICE_VERSION: z.string().min(1).default("0.0.0-dev"),
 });
+
+/** Whether a string is an absolute `http:` or `https:` URL. */
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 /** Every problem with the environment at once, rather than one per restart. */
 export class WorkerConfigError extends Error {
@@ -583,6 +673,18 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
         parsed.data.GITHUB_APP_ID,
         parsed.data.GITHUB_APP_PRIVATE_KEY,
       ),
+    },
+    telemetry: {
+      mode: parsed.data.RIVET_TELEMETRY,
+      endpoint: parsed.data.OTEL_EXPORTER_OTLP_ENDPOINT.replace(/\/+$/, ""),
+      exportIntervalMs: parsed.data.RIVET_TELEMETRY_EXPORT_INTERVAL_MS,
+      exportTimeoutMs: parsed.data.RIVET_TELEMETRY_EXPORT_TIMEOUT_MS,
+      serviceName: WORKER_SERVICE_NAME,
+      serviceVersion: parsed.data.RIVET_SERVICE_VERSION,
+      // `NODE_ENV` rather than a variable of its own: a third answer to "which
+      // environment is this" is a third thing that can disagree with the other
+      // two, and the two that exist already gate half the switch family.
+      environment: env.NODE_ENV ?? "development",
     },
     eval: {
       mode: parsed.data.RIVET_EVAL,

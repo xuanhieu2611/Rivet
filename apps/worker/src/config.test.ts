@@ -10,9 +10,11 @@ import {
   DEFAULT_BENCHMARK_ROOT,
   DEFAULT_MODEL,
   DEFAULT_MODEL_PROVIDER,
+  DEFAULT_OTLP_ENDPOINT,
   DEFAULT_SANDBOX_IMAGE,
   DEFAULT_SANDBOX_WORKDIR,
   parseWorkerConfig as parse,
+  WORKER_SERVICE_NAME,
   WorkerConfigError,
 } from "./config";
 
@@ -95,6 +97,18 @@ describe("parseWorkerConfig", () => {
         cloneTimeoutMs: 180_000,
         seedMaxBytes: 268_435_456,
         concurrency: 1,
+      },
+      telemetry: {
+        // Off by default like GitHub and the harness, and unlike them, legal in
+        // production: a worker with telemetry off is degraded rather than
+        // dishonest.
+        mode: "off",
+        endpoint: DEFAULT_OTLP_ENDPOINT,
+        exportIntervalMs: 15_000,
+        exportTimeoutMs: 10_000,
+        serviceName: WORKER_SERVICE_NAME,
+        serviceVersion: "0.0.0-dev",
+        environment: "development",
       },
     });
   });
@@ -558,6 +572,64 @@ describe("evaluation harness", () => {
 
   it("rejects a mode that is neither on nor off", () => {
     expect(() => parseWorkerConfig({ RIVET_EVAL: "yes" })).toThrow(WorkerConfigError);
+  });
+});
+
+describe("telemetry", () => {
+  /** A production environment every other switch already accepts. */
+  const PRODUCTION = {
+    NODE_ENV: "production",
+    RIVET_GITHUB: "app",
+    GITHUB_APP_ID: "123456",
+    GITHUB_APP_PRIVATE_KEY: Buffer.from(
+      "-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-key\n-----END RSA PRIVATE KEY-----\n",
+      "utf8",
+    ).toString("base64"),
+  };
+
+  it("is the one switch whose off is legal in production", () => {
+    // The other four refuse because a worker that skips real work looks
+    // healthy while lying about it. This one skips only the ability to watch,
+    // and refusing to boot over that would take a deployment down to protect
+    // its dashboards.
+    expect(() => parseWorkerConfig(PRODUCTION)).not.toThrow();
+    expect(parseWorkerConfig({ ...PRODUCTION, RIVET_TELEMETRY: "off" }).telemetry.mode).toBe("off");
+    expect(parseWorkerConfig({ ...PRODUCTION, RIVET_TELEMETRY: "otlp" }).telemetry.mode).toBe(
+      "otlp",
+    );
+  });
+
+  it("reads the standard OTLP endpoint variable and strips its trailing slash", () => {
+    const config = parseWorkerConfig({
+      RIVET_TELEMETRY: "otlp",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318/",
+      RIVET_TELEMETRY_EXPORT_INTERVAL_MS: "5000",
+      RIVET_TELEMETRY_EXPORT_TIMEOUT_MS: "2000",
+      RIVET_SERVICE_VERSION: "abc1234",
+      NODE_ENV: "test",
+    });
+
+    expect(config.telemetry).toEqual({
+      mode: "otlp",
+      endpoint: "http://collector:4318",
+      exportIntervalMs: 5_000,
+      exportTimeoutMs: 2_000,
+      serviceName: WORKER_SERVICE_NAME,
+      serviceVersion: "abc1234",
+      environment: "test",
+    });
+  });
+
+  it("refuses an endpoint that is not an absolute URL", () => {
+    // Caught here rather than at the first export, which happens on a
+    // background timer where nobody is looking.
+    expect(() =>
+      parseWorkerConfig({ RIVET_TELEMETRY: "otlp", OTEL_EXPORTER_OTLP_ENDPOINT: "localhost:4318" }),
+    ).toThrow(WorkerConfigError);
+  });
+
+  it("rejects a mode that is neither otlp nor off", () => {
+    expect(() => parseWorkerConfig({ RIVET_TELEMETRY: "on" })).toThrow(WorkerConfigError);
   });
 });
 
