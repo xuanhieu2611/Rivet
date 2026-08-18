@@ -13,7 +13,7 @@
  * - No `process.env` reads. Configuration arrives as function arguments, which
  *   is what lets tests drive the pipeline with zero-millisecond phases.
  * - Every module lives under one of `agent/`, `artifacts/`, `checkpoints/`, `evaluation/`,
- *   `jobs/`, `events/`, `pipeline/`, `queue/`, `sandbox/`.
+ *   `jobs/`, `events/`, `pipeline/`, `queue/`, `sandbox/`, `telemetry/`.
  *   A file at the top level next to this one is the first sign the package is
  *   turning into a junk drawer.
  */
@@ -81,6 +81,9 @@ export * from "./pipeline/targeted-tests";
 export * from "./sandbox/command-log";
 export * from "./sandbox/errors";
 export * from "./sandbox/sandbox-holder";
+export * from "./telemetry/noop-telemetry";
+export * from "./telemetry/recording-telemetry";
+export * from "./telemetry/telemetry";
 // Types only: the port is an interface, and the adapter that implements it
 // lives in `@rivet/queue`. That is the whole point of the split.
 export type * from "./queue/job-queue";

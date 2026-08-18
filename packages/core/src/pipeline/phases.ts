@@ -4,6 +4,7 @@ import type { CodingAgent } from "../agent/coding-agent";
 import type { LocalSeedPipelineOptions } from "../evaluation/local-seed";
 import type { GitHubPipelineOptions } from "../github/host-git";
 import type { SandboxProvider } from "../sandbox/sandbox";
+import type { Telemetry } from "../telemetry/telemetry";
 import { baselinePhase } from "./baseline-phase";
 import { finalizingPhase } from "./finalizing-phase";
 import { implementingPhase } from "./implementing-phase";
@@ -177,6 +178,19 @@ export interface PipelineOptions {
    * model running until the job's own budget ran out.
    */
   agent?: AgentOptions;
+  /**
+   * Where spans and instruments go, when this worker has anywhere to send them.
+   *
+   * Optional and read as `options.telemetry ?? NOOP_TELEMETRY` at every use
+   * site, rather than defaulted here. The distinction matters: a default in
+   * this interface would be the first piece of policy in the package that holds
+   * none, and the whole reason `memoryBytes` and `commandTimeoutMs` are
+   * required fields is that a forgotten limit must not become a silent choice.
+   * Telemetry is different only in that its absence is *safe* - `NOOP_TELEMETRY`
+   * changes no behaviour at all, which is what acceptance run C asserts - so it
+   * is the one option here that may go missing without the job going wrong.
+   */
+  telemetry?: Telemetry;
 }
 
 /**

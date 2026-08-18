@@ -336,7 +336,7 @@ says what it wanted.
 ```
 apps/web            Next.js 16 App Router. Pages and route handlers. No business logic.
 apps/worker         Long-running Node process. BullMQ Worker, heartbeat, sweeper, reaper, faults.
-packages/core       All domain logic: agent/, jobs/, events/, pipeline/, queue/, sandbox/ (three ports).
+packages/core       All domain logic: agent/, jobs/, events/, pipeline/, queue/, sandbox/, telemetry/ (four ports).
 packages/queue      BullMQ adapter for the port, an in-memory fake, the lazy ioredis connection.
 packages/sandbox    dockerode adapter for the sandbox port, a scripted fake, the lazy Docker client.
 packages/agent      Pi adapter for the coding-agent port, a scripted fake, the lazily-loaded SDK.
@@ -374,11 +374,19 @@ mechanism. Configuration arrives as function arguments, which is what lets the w
 under a millisecond at `speed: 0` with no fake timers and no sleeping in CI - and it is why
 `PipelineOptions` carries the image, the limits and all four timeouts rather than defaulting any of
 them here. A default limit in the package that is supposed to hold no policy is how a container ends
-up unbounded. Core declares the `JobQueue`, `Sandbox` and `CodingAgent` ports; `packages/queue`,
-`packages/sandbox` and `packages/agent` are the only packages that know Redis, Docker and Pi exist.
-Every module lives under `agent/`, `artifacts/`, `checkpoints/`, `evaluation/`, `jobs/`, `events/`,
-`pipeline/`, `queue/` or `sandbox/` - a file at the top level next to `index.ts` is the first sign
-the package is becoming a junk drawer.
+up unbounded. Core declares the `JobQueue`, `Sandbox`, `CodingAgent` and `Telemetry` ports;
+`packages/queue`, `packages/sandbox`, `packages/agent` and `packages/telemetry` are the only
+packages that know Redis, Docker, Pi and OpenTelemetry exist. Every module lives under `agent/`,
+`artifacts/`, `checkpoints/`, `evaluation/`, `jobs/`, `events/`, `pipeline/`, `queue/`, `sandbox/`
+or `telemetry/` - a file at the top level next to `index.ts` is the first sign the package is
+becoming a junk drawer.
+
+`Telemetry` is the one port whose fake lives in core rather than in its adapter package
+(`RecordingTelemetry`, beside `NOOP_TELEMETRY`), because core cannot depend on `packages/telemetry`
+without inverting the dependency the port exists to create, and core is the package with the most to
+assert about spans. `PipelineOptions.telemetry` is optional and read as
+`options.telemetry ?? NOOP_TELEMETRY` at every use site rather than defaulted in the interface: it
+is the only option here whose absence is safe, because the no-op changes no behaviour at all.
 
 **The model key stays on the worker host, and the container never sees a credential.** The harness
 runs in the worker process; its four tools - `read`, `write`, `edit`, `bash` - end at
