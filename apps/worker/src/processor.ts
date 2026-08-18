@@ -1,6 +1,13 @@
 import type { JobStatus } from "@rivet/contracts";
 import {
   abortableSleep,
+  ATTR_ATTEMPT,
+  ATTR_DISPATCH_GENERATION,
+  ATTR_FAILURE_CATEGORY,
+  ATTR_JOB_ID,
+  ATTR_QUEUE_WAIT_MS,
+  ATTR_RESUMED,
+  ATTR_STATUS,
   appendEvent,
   claimJob,
   classify,
@@ -10,6 +17,7 @@ import {
   getLatestCheckpoint,
   isBoundaryCheckpointPhase,
   JobTimedOutError,
+  NOOP_TELEMETRY,
   type Phase,
   type PhaseContext,
   type PhaseDirective,
@@ -20,6 +28,8 @@ import {
   type ResumePlan,
   runPipeline,
   SandboxHolder,
+  SPAN_JOB_RUN,
+  type Telemetry,
   simulatedPipeline,
   transitionJob,
   TransitionConflictError,
@@ -117,6 +127,15 @@ export interface ProcessorDeps {
    * there is nothing to retry, and the schedule will fire again shortly.
    */
   sweep?: () => Promise<void>;
+  /**
+   * Where this worker's spans go. Absent, nothing is recorded.
+   *
+   * The processor is where the attempt's root span lives, because it is the one
+   * thing that spans a whole claim: `runPipeline` starts after the claim and
+   * ends before the terminal transition, so a root opened there would miss the
+   * two writes most worth seeing when a job goes wrong.
+   */
+  telemetry?: Telemetry;
 }
 
 export function createProcessor(deps: ProcessorDeps) {
@@ -165,6 +184,39 @@ export function createProcessor(deps: ProcessorDeps) {
     }
 
     log.info({ attemptCount: claimed.attemptCount }, "claimed");
+
+    /**
+     * This attempt's root span.
+     *
+     * A *root* rather than a child of the request that created the job, and
+     * that is the milestone's central tracing decision. The request finished in
+     * milliseconds; this run may take twenty minutes, may be reclaimed onto
+     * another worker and may be the third attempt at the same job. A trace
+     * whose root stays open across three processes is one most backends drop,
+     * and it would make three attempts indistinguishable from one very strange
+     * attempt. So each attempt is its own trace, `linked` back to the stored
+     * `traceparent`, and `rivet.job_id` is what relates them.
+     *
+     * `startSpan` rather than `withSpan` because its lifetime is not a lexical
+     * block - it has to be endable from the `finally` after the terminal
+     * transition - and everything opened underneath it is handed the span
+     * explicitly.
+     */
+    const runSpan = (deps.telemetry ?? NOOP_TELEMETRY).startSpan(SPAN_JOB_RUN, {
+      kind: "consumer",
+      ...(claimed.traceContext ? { links: [{ traceContext: claimed.traceContext }] } : {}),
+      attributes: {
+        [ATTR_JOB_ID]: jobId,
+        [ATTR_ATTEMPT]: claimed.attemptCount,
+        [ATTR_DISPATCH_GENERATION]: dispatchGeneration,
+        // Only on the first attempt. On a reclaim the same subtraction would
+        // include however long the previous attempt ran, and a queue-wait
+        // dashboard that quietly counts execution time is worse than one that
+        // has no data for reclaims.
+        [ATTR_QUEUE_WAIT_MS]:
+          claimed.attemptCount === 1 ? Date.now() - claimed.createdAt.getTime() : undefined,
+      },
+    });
 
     const controller = new AbortController();
     runs.register(jobId, controller);
@@ -256,6 +308,7 @@ export function createProcessor(deps: ProcessorDeps) {
         checkpointMaxBytes: config.checkpointMaxBytes,
         checkpointTimeoutMs: config.checkpointTimeoutMs,
         repositoryDir: `${config.sandbox.workdir}/repo`,
+        ...(deps.telemetry ? { telemetry: deps.telemetry } : {}),
       });
 
       const resume = await selectResumePlan({
@@ -277,10 +330,15 @@ export function createProcessor(deps: ProcessorDeps) {
         );
       }
 
+      if (resume.kind === "checkpoint") runSpan.setAttribute(ATTR_RESUMED, true);
+
       const pipeline = runPipeline({
         phases: resume.phases,
         directivePhases: runDirectivePhases,
         signal: controller.signal,
+        ...(deps.telemetry ? { telemetry: deps.telemetry } : {}),
+        rootSpan: runSpan,
+        spanAttributes: { jobId, attempt: claimed.attemptCount },
         speed: config.pipelineSpeed,
         sleep: injection.sleep,
         ...(injection.fault ? { fault: injection.fault } : {}),
@@ -393,12 +451,20 @@ export function createProcessor(deps: ProcessorDeps) {
         patch: (_job, now) => ({ completedAt: now, leaseOwner: null, leaseExpiresAt: null }),
       });
 
+      runSpan.setAttribute(ATTR_STATUS, "completed");
       log.info("completed");
     } catch (error) {
       // Computed before `handleFailure`, which throws on two of its branches
       // and would otherwise never let this be read. `classify` is pure, so
       // asking twice costs nothing.
-      mayWrite = classify(error) !== "lease_lost";
+      const category = classify(error);
+      mayWrite = category !== "lease_lost";
+      // The span records what happened even when the job row cannot: a run that
+      // lost its lease writes nothing to Postgres from here on, and this is the
+      // only place that failure is visible from outside the log.
+      runSpan.recordException(error);
+      runSpan.setStatus("error", describeError(error));
+      runSpan.setAttributes({ [ATTR_STATUS]: currentStatus, [ATTR_FAILURE_CATEGORY]: category });
       // Destroy the attempt before `handleFailure` can clear or hand back its
       // lease. A stale worker may still clean up its own container, but it may
       // not append the cleanup event after discovering that it lost ownership.
@@ -412,6 +478,9 @@ export function createProcessor(deps: ProcessorDeps) {
       await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite, log });
       await stopHeartbeat();
       runs.release(jobId);
+      // Last, so everything above it - the cleanup, the terminal transition,
+      // the requeue - is inside the attempt it belongs to.
+      runSpan.end();
     }
   };
 }

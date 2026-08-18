@@ -77,6 +77,7 @@ export function toJobDetail(row: Job): JobDetail {
     issueNumber: row.issueNumber,
     issueUrl: row.issueUrl,
     envFingerprint: row.envFingerprint,
+    traceContext: row.traceContext,
     priority: row.priority,
     maxDurationSeconds: row.maxDurationSeconds,
     maxCostUsd: row.maxCostUsd,
@@ -123,8 +124,25 @@ export function toJobDetail(row: Job): JobDetail {
  * The column defaults supply status, priority and any execution budget a caller
  * does not pin. The review loop bound is schema-defaulted so a caller can set it
  * per run as well.
+ *
+ * `traceContext` rides on the input object rather than arriving as a third
+ * parameter, because the alternative would make the route handler pass `db`
+ * explicitly just to reach past it. It is deliberately not part of
+ * `createJobSchema`: a caller on the wire must not be able to choose which
+ * trace a job is attributed to, and Zod strips the key before the handler ever
+ * sees it. Only the process that actually opened the request span may supply
+ * one, which is the same argument the M9 install callback makes about trusting
+ * nothing in a query string.
  */
-export async function createJob(input: CreateJob, database: Database = db): Promise<JobDetail> {
+export interface CreateJobInput extends CreateJob {
+  /** The creating request's W3C `traceparent`, when something was recording. */
+  traceContext?: string;
+}
+
+export async function createJob(
+  input: CreateJobInput,
+  database: Database = db,
+): Promise<JobDetail> {
   return database.transaction(async (tx) => {
     const [row] = await tx
       .insert(jobs)
@@ -148,6 +166,7 @@ export async function createJob(input: CreateJob, database: Database = db): Prom
         ...(input.maxCostUsd === undefined ? {} : { maxCostUsd: input.maxCostUsd }),
         ...(input.maxModelCalls === undefined ? {} : { maxModelCalls: input.maxModelCalls }),
         ...(input.maxToolCalls === undefined ? {} : { maxToolCalls: input.maxToolCalls }),
+        ...(input.traceContext === undefined ? {} : { traceContext: input.traceContext }),
       })
       .returning();
 

@@ -4,6 +4,7 @@ import { listBenchmarkCases } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { serverError } from "@/lib/api/responses";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -15,23 +16,26 @@ export const dynamic = "force-dynamic";
  * returned so a caller can tell whether a stored result was produced by the
  * case as it exists now.
  */
-export async function GET() {
-  try {
-    const cases = await listBenchmarkCases();
-    return NextResponse.json({
-      benchmarks: cases.map((entry) => ({
-        id: entry.id,
-        title: entry.title,
-        category: entry.category,
-        difficulty: entry.difficulty,
-        versionHash: entry.versionHash,
-        baseCommitSha: entry.baseCommitSha,
-        spec: entry.spec,
-        createdAt: entry.createdAt.toISOString(),
-        updatedAt: entry.updatedAt.toISOString(),
-      })),
-    });
-  } catch (cause) {
-    return serverError("GET /api/benchmarks", cause);
-  }
-}
+export const GET = withRoute(
+  "/api/benchmarks",
+  async (_request: Request, telemetry: RouteTelemetry) => {
+    try {
+      const cases = await listBenchmarkCases();
+      return NextResponse.json({
+        benchmarks: cases.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          category: entry.category,
+          difficulty: entry.difficulty,
+          versionHash: entry.versionHash,
+          baseCommitSha: entry.baseCommitSha,
+          spec: entry.spec,
+          createdAt: entry.createdAt.toISOString(),
+          updatedAt: entry.updatedAt.toISOString(),
+        })),
+      });
+    } catch (cause) {
+      return serverError("GET /api/benchmarks", cause, telemetry.log);
+    }
+  },
+);

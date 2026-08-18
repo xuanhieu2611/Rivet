@@ -40,12 +40,21 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
+/**
+ * The route's own request, which the handler ignores and `withRoute` does not:
+ * every handler is now wrapped in a request span and a per-request logger, and
+ * both are built from this.
+ */
+function request(): Request {
+  return new Request("http://localhost/api/github/installations");
+}
+
 describe("GET /api/github/installations", () => {
   it("returns what the provider reports, refreshed into Postgres", async () => {
     enabled();
     sync.mockResolvedValue([INSTALLATION]);
 
-    const response = await GET();
+    const response = await GET(request());
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ installations: [INSTALLATION] });
@@ -54,7 +63,7 @@ describe("GET /api/github/installations", () => {
   it("answers 503 when GitHub is off here, so the client shows the manual field", async () => {
     access.mockReturnValue({ enabled: false, reason: "disabled" });
 
-    const response = await GET();
+    const response = await GET(request());
 
     expect(response.status).toBe(503);
     expect(sync).not.toHaveBeenCalled();
@@ -63,17 +72,17 @@ describe("GET /api/github/installations", () => {
   it("distinguishes a permission denial from an outage", async () => {
     enabled();
     sync.mockRejectedValue(new GitHubPermissionDeniedError("uninstalled"));
-    expect((await GET()).status).toBe(403);
+    expect((await GET(request())).status).toBe(403);
 
     sync.mockRejectedValue(new GitHubUnavailableError("502 from GitHub"));
-    expect((await GET()).status).toBe(502);
+    expect((await GET(request())).status).toBe(502);
   });
 
   it("does not dress an ordinary bug up as a GitHub problem", async () => {
     enabled();
     sync.mockRejectedValue(new Error("column does not exist"));
 
-    const response = await GET();
+    const response = await GET(request());
 
     expect(response.status).toBe(500);
     // The real cause is logged, never returned: it carries table and column names.

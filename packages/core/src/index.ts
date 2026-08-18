@@ -42,6 +42,7 @@ export * from "./github/effect-store";
 export * from "./github/errors";
 export type * from "./github/github";
 export * from "./github/installation-store";
+export * from "./github/instrumentation";
 export type * from "./github/host-git";
 export * from "./github/pull-request-body";
 export * from "./github/reconcile";
@@ -81,9 +82,11 @@ export * from "./pipeline/targeted-tests";
 export * from "./sandbox/command-log";
 export * from "./sandbox/errors";
 export * from "./sandbox/sandbox-holder";
+export * from "./telemetry/attributes";
 export * from "./telemetry/noop-telemetry";
 export * from "./telemetry/recording-telemetry";
 export * from "./telemetry/telemetry";
+export * from "./telemetry/trace-fields";
 // Types only: the port is an interface, and the adapter that implements it
 // lives in `@rivet/queue`. That is the whole point of the split.
 export type * from "./queue/job-queue";

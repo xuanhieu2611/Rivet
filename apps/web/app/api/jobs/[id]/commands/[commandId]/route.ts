@@ -5,6 +5,7 @@ import { getCommand, getJob } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { badRequest, notFound, serverError } from "@/lib/api/responses";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -19,22 +20,25 @@ function parseCommandId(raw: string): number | undefined {
 }
 
 /** `GET /api/jobs/:id/commands/:commandId` - one command with its transcript. */
-export async function GET(_request: Request, context: RouteContext) {
-  const { id, commandId: rawCommandId } = await context.params;
-  const commandId = parseCommandId(rawCommandId);
-  if (commandId === undefined) {
-    return badRequest("`commandId` must be a positive integer.");
-  }
+export const GET = withRoute(
+  "/api/jobs/:id/commands/:commandId",
+  async (_request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const { id, commandId: rawCommandId } = await context.params;
+    const commandId = parseCommandId(rawCommandId);
+    if (commandId === undefined) {
+      return badRequest("`commandId` must be a positive integer.");
+    }
 
-  try {
-    const job = await getJob(id);
-    if (!job) return notFound("Job not found.");
+    try {
+      const job = await getJob(id);
+      if (!job) return notFound("Job not found.");
 
-    const command = await getCommand(id, commandId);
-    if (!command) return notFound("Command not found.");
+      const command = await getCommand(id, commandId);
+      if (!command) return notFound("Command not found.");
 
-    return NextResponse.json(serializeJobCommand(command));
-  } catch (cause) {
-    return serverError("GET /api/jobs/:id/commands/:commandId", cause);
-  }
-}
+      return NextResponse.json(serializeJobCommand(command));
+    } catch (cause) {
+      return serverError("GET /api/jobs/:id/commands/:commandId", cause, telemetry.log);
+    }
+  },
+);

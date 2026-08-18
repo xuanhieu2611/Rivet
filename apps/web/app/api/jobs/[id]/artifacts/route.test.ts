@@ -1,11 +1,19 @@
 import type { JobArtifactSummary, JobDetail } from "@rivet/contracts";
 import { getJob, listArtifacts } from "@rivet/core";
+import type * as RivetCore from "@rivet/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET } from "./route";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@rivet/core", () => ({ getJob: vi.fn(), listArtifacts: vi.fn() }));
+// Spread over the real module rather than replaced outright: the route is
+// wrapped in `withRoute`, which reads the telemetry attribute names and the
+// no-op port from here, and a mock that lists only the queries under test
+// would make every handler fail on an import rather than on its behaviour.
+vi.mock("@rivet/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof RivetCore>();
+  return { ...actual, getJob: vi.fn(), listArtifacts: vi.fn() };
+});
 
 const JOB_ID = "11111111-2222-3333-4444-555555555555";
 const JOB: JobDetail = {
@@ -18,6 +26,7 @@ const JOB: JobDetail = {
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   baseCommitSha: null,
+  traceContext: null,
   githubInstallationId: null,
   repoOwner: null,
   repoName: null,

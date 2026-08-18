@@ -13,6 +13,7 @@ import {
   SSE_POLL_INTERVAL_MS,
   SSE_TERMINAL_GRACE_MS,
 } from "@/lib/events/stream-job-events";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -34,52 +35,55 @@ function acceptsEventStream(request: Request): boolean {
 }
 
 /** `GET /api/jobs/:id/events` - JSON incrementally, or SSE when requested. */
-export async function GET(request: Request, context: RouteContext) {
-  const url = new URL(request.url);
-  const after = resolveEventCursor(
-    url.searchParams.get("after"),
-    request.headers.get("last-event-id"),
-  );
-  if (after === undefined) {
-    return badRequest("`after` and `Last-Event-ID` must be non-negative integer event ids.");
-  }
-
-  try {
-    // Check existence before opening a stream. Once SSE headers are committed,
-    // an unknown job could only be reported as a broken response rather than a
-    // useful 404.
-    const job = await getJob((await context.params).id);
-    if (!job) return notFound("Job not found.");
-
-    if (!acceptsEventStream(request)) {
-      const events = await listEvents(job.id, after === null ? {} : { after });
-      const body: EventsResponse = {
-        events,
-        cursor: events.at(-1)?.id ?? after,
-      };
-      return NextResponse.json(body);
+export const GET = withRoute(
+  "/api/jobs/:id/events",
+  async (request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const url = new URL(request.url);
+    const after = resolveEventCursor(
+      url.searchParams.get("after"),
+      request.headers.get("last-event-id"),
+    );
+    if (after === undefined) {
+      return badRequest("`after` and `Last-Event-ID` must be non-negative integer event ids.");
     }
 
-    const stream = createJobEventStream({
-      jobId: job.id,
-      after,
-      initialStatus: job.status,
-      signal: request.signal,
-      pollIntervalMs: SSE_POLL_INTERVAL_MS,
-      heartbeatIntervalMs: SSE_HEARTBEAT_INTERVAL_MS,
-      terminalGraceMs: SSE_TERMINAL_GRACE_MS,
-      list: listEvents,
-      sleep: sleepWithAbort,
-    });
+    try {
+      // Check existence before opening a stream. Once SSE headers are committed,
+      // an unknown job could only be reported as a broken response rather than a
+      // useful 404.
+      const job = await getJob((await context.params).id);
+      if (!job) return notFound("Job not found.");
 
-    return new Response(stream, {
-      headers: {
-        "Cache-Control": "no-cache, no-transform",
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "X-Accel-Buffering": "no",
-      },
-    });
-  } catch (cause) {
-    return serverError("GET /api/jobs/:id/events", cause);
-  }
-}
+      if (!acceptsEventStream(request)) {
+        const events = await listEvents(job.id, after === null ? {} : { after });
+        const body: EventsResponse = {
+          events,
+          cursor: events.at(-1)?.id ?? after,
+        };
+        return NextResponse.json(body);
+      }
+
+      const stream = createJobEventStream({
+        jobId: job.id,
+        after,
+        initialStatus: job.status,
+        signal: request.signal,
+        pollIntervalMs: SSE_POLL_INTERVAL_MS,
+        heartbeatIntervalMs: SSE_HEARTBEAT_INTERVAL_MS,
+        terminalGraceMs: SSE_TERMINAL_GRACE_MS,
+        list: listEvents,
+        sleep: sleepWithAbort,
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Cache-Control": "no-cache, no-transform",
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    } catch (cause) {
+      return serverError("GET /api/jobs/:id/events", cause, telemetry.log);
+    }
+  },
+);

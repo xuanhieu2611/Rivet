@@ -1,3 +1,6 @@
+import { ATTR_ATTEMPT, ATTR_JOB_ID, ATTR_PHASE, phaseSpanName } from "../telemetry/attributes";
+import { NOOP_TELEMETRY } from "../telemetry/noop-telemetry";
+import type { Span, Telemetry } from "../telemetry/telemetry";
 import type { PhaseContext } from "./phase-context";
 import type { Phase } from "./phases";
 
@@ -94,6 +97,31 @@ export interface PipelineDeps {
 
   /** Injectable clock, for measuring elapsed time. Defaults to `Date.now`. */
   now?: () => number;
+
+  /**
+   * Where phase spans go. Absent, nothing is recorded and nothing changes.
+   *
+   * Read as `?? NOOP_TELEMETRY` rather than defaulted in the interface, the
+   * same rule `PipelineOptions.telemetry` follows: telemetry is the one
+   * dependency here whose absence is safe, because the no-op changes no
+   * behaviour at all. Acceptance run C is the assertion that keeps it true.
+   */
+  telemetry?: Telemetry;
+
+  /**
+   * The attempt's root span, when the caller opened one.
+   *
+   * Stated rather than inferred. The processor opens `job.run` with
+   * `startSpan` - it outlives the function that opens it - so there is no
+   * ambient context for a phase span to find, and passing the parent explicitly
+   * is what makes the tree the same shape under the OTel adapter and under
+   * `RecordingTelemetry`. Spans opened *inside* a phase body need no such
+   * arrangement: the phase span is active for its duration.
+   */
+  rootSpan?: Span;
+
+  /** Copied onto every phase span, so one filter answers "what happened to job X". */
+  spanAttributes?: { jobId?: string; attempt?: number };
 }
 
 /**
@@ -121,6 +149,15 @@ export interface PipelineDeps {
 export async function runPipeline(deps: PipelineDeps): Promise<void> {
   const now = deps.now ?? Date.now;
 
+  const telemetry = deps.telemetry ?? NOOP_TELEMETRY;
+  // Built once and copied onto every phase span. `undefined` values are dropped
+  // by the port, so a caller that passes no identity gets spans with no job
+  // attributes rather than spans with empty ones.
+  const jobAttributes = {
+    [ATTR_JOB_ID]: deps.spanAttributes?.jobId,
+    [ATTR_ATTEMPT]: deps.spanAttributes?.attempt,
+  };
+
   // Identity, not status: see `directivePhases`. Built once, because the set of
   // phases a worker was configured with cannot change mid-run. Pipelines built
   // by `buildPipeline` carry the same metadata on their array, so direct callers
@@ -141,34 +178,55 @@ export async function runPipeline(deps: PipelineDeps): Promise<void> {
     deps.signal.throwIfAborted();
 
     const startedAt = now();
-    await deps.onPhaseStart(phase);
 
-    const fault = deps.fault?.(phase);
-    if (fault) throw fault;
+    // The span opens around the whole phase - the status transition, the body
+    // and the completion callback - rather than around the body alone, so its
+    // duration is the same number `onPhaseComplete` is told and the boundary
+    // checkpoint capture is inside the phase that produced it. One span per
+    // `phase.started`/`phase.completed` pair is exactly what acceptance run A
+    // compares against the event log.
+    //
+    // Everything a phase body opens nests underneath without being handed a
+    // parent, because `withSpan` makes this span active for its body.
+    const directive = await telemetry.withSpan(
+      phaseSpanName(phase.status),
+      {
+        ...(deps.rootSpan ? { parent: deps.rootSpan } : {}),
+        attributes: { ...jobAttributes, [ATTR_PHASE]: phase.status },
+      },
+      async () => {
+        await deps.onPhaseStart(phase);
 
-    // The whole of Milestone 2's change to the runner. A phase either does its
-    // work or pretends to, and which one it is belongs to the phase rather than
-    // to the thing walking the list.
-    let directive: PhaseDirective;
-    if (phase.run) {
-      if (!deps.context) {
-        throw new Error(
-          `Phase "${phase.label}" has a body but the pipeline was built without a context factory.`,
-        );
-      }
-      directive = await phase.run(deps.context(phase));
-    } else {
-      await deps.sleep(scaleDuration(phase.durationMs, deps.speed), deps.signal);
-    }
+        const fault = deps.fault?.(phase);
+        if (fault) throw fault;
 
-    // Validated before the phase is reported complete, because a directive
-    // naming something this pipeline has no body for is a wiring mistake rather
-    // than a job outcome, and a phase that ends in one did not succeed.
-    if (directive) assertKnownPhases(phase, directive, known);
+        // The whole of Milestone 2's change to the runner. A phase either does
+        // its work or pretends to, and which one it is belongs to the phase
+        // rather than to the thing walking the list.
+        let produced: PhaseDirective;
+        if (phase.run) {
+          if (!deps.context) {
+            throw new Error(
+              `Phase "${phase.label}" has a body but the pipeline was built without a context factory.`,
+            );
+          }
+          produced = await phase.run(deps.context(phase));
+        } else {
+          await deps.sleep(scaleDuration(phase.durationMs, deps.speed), deps.signal);
+        }
 
-    deps.signal.throwIfAborted();
+        // Validated before the phase is reported complete, because a directive
+        // naming something this pipeline has no body for is a wiring mistake
+        // rather than a job outcome, and a phase that ends in one did not
+        // succeed.
+        if (produced) assertKnownPhases(phase, produced, known);
 
-    await deps.onPhaseComplete(phase, now() - startedAt, directive);
+        deps.signal.throwIfAborted();
+
+        await deps.onPhaseComplete(phase, now() - startedAt, produced);
+        return produced;
+      },
+    );
 
     // Ahead of the remaining queue, never appended to the end of it - which is
     // what keeps `finalPhaseStatus()` true: `finalizing` is still the last thing

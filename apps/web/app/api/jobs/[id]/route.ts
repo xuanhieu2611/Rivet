@@ -4,6 +4,7 @@ import { getJob } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { notFound, serverError } from "@/lib/api/responses";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -12,13 +13,16 @@ interface RouteContext {
 }
 
 /** `GET /api/jobs/:id` - 404 when the id is unknown or not a uuid. */
-export async function GET(_request: Request, context: RouteContext) {
-  const { id } = await context.params;
-  try {
-    const job = await getJob(id);
-    if (!job) return notFound("Job not found.");
-    return NextResponse.json(job);
-  } catch (cause) {
-    return serverError("GET /api/jobs/:id", cause);
-  }
-}
+export const GET = withRoute(
+  "/api/jobs/:id",
+  async (_request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const { id } = await context.params;
+    try {
+      const job = await getJob(id);
+      if (!job) return notFound("Job not found.");
+      return NextResponse.json(job);
+    } catch (cause) {
+      return serverError("GET /api/jobs/:id", cause, telemetry.log);
+    }
+  },
+);

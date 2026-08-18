@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 
 import { serverError } from "@/lib/api/responses";
 import { githubAccess, githubErrorResponse, githubUnavailable } from "@/lib/github/client";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -21,14 +22,20 @@ interface InstallationsResponse {
  * on demand is the only way an uninstall or a permission change ever becomes
  * visible; the table is the durable copy, not the source of truth.
  */
-export async function GET() {
-  const access = githubAccess();
-  if (!access.enabled) return githubUnavailable(access.reason);
+export const GET = withRoute(
+  "/api/github/installations",
+  async (_request: Request, telemetry: RouteTelemetry) => {
+    const access = githubAccess();
+    if (!access.enabled) return githubUnavailable(access.reason);
 
-  try {
-    const installations = await syncGitHubInstallations(access.client);
-    return NextResponse.json({ installations } satisfies InstallationsResponse);
-  } catch (cause) {
-    return githubErrorResponse(cause) ?? serverError("GET /api/github/installations", cause);
-  }
-}
+    try {
+      const installations = await syncGitHubInstallations(access.client);
+      return NextResponse.json({ installations } satisfies InstallationsResponse);
+    } catch (cause) {
+      return (
+        githubErrorResponse(cause) ??
+        serverError("GET /api/github/installations", cause, telemetry.log)
+      );
+    }
+  },
+);

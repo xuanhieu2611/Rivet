@@ -63,6 +63,18 @@ import {
 } from "../jobs/publication";
 import { type ReviewPatch, recordReview as persistReview } from "../jobs/review";
 import { recordCommand } from "../sandbox/command-log";
+import {
+  ATTR_COMMAND,
+  ATTR_COMMAND_ARGC,
+  ATTR_COMMAND_CWD,
+  ATTR_COMMAND_EXIT_CODE,
+  ATTR_COMMAND_TIMED_OUT,
+  ATTR_JOB_ID,
+  ATTR_PHASE,
+  SPAN_SANDBOX_COMMAND,
+} from "../telemetry/attributes";
+import { NOOP_TELEMETRY } from "../telemetry/noop-telemetry";
+import type { Telemetry } from "../telemetry/telemetry";
 import type { ExecResult } from "../sandbox/sandbox";
 import type { SandboxHolder } from "../sandbox/sandbox-holder";
 import type { Phase } from "./phases";
@@ -93,6 +105,22 @@ export interface PhaseContext {
   /** Cancellation, job timeout and worker shutdown all arrive here. */
   signal: AbortSignal;
   log: PhaseLogger;
+  /**
+   * Where a phase's own spans go.
+   *
+   * Optional in the same shape as `recordExternalEffect` and
+   * `readImplementationPlan` - the production factory always supplies it, and a
+   * focused test harness that builds a context literal is not made to care.
+   * Every use site reads it as `?? NOOP_TELEMETRY`, so the absence is a no-op
+   * rather than a branch.
+   *
+   * A phase does not have to reach for this to be traced. `runPipeline` already
+   * runs the body inside the phase span, and `exec` opens its own command span
+   * underneath; this is for the phases that own an operation of their own worth
+   * timing - a host clone, a publication - and for handing a parent to
+   * something that outlives a block.
+   */
+  telemetry?: Telemetry;
 
   /**
    * Runs a command in the run's sandbox and records that it ran.
@@ -369,6 +397,8 @@ export interface PhaseContextOptions {
   /** The cloned repository, used when a checkpoint caller does not pass one. */
   repositoryDir?: string;
   database?: Database;
+  /** Where command spans go. Absent, `NOOP_TELEMETRY` records nothing. */
+  telemetry?: Telemetry;
 }
 
 /**
@@ -384,6 +414,7 @@ export function createPhaseContextFactory(
 ): (phase: Phase) => PhaseContext {
   const database = options.database ?? db;
   const { job, leaseOwner, sandboxes, signal, log } = options;
+  const telemetry = options.telemetry ?? NOOP_TELEMETRY;
   let currentBaseCommitSha = job.baseCommitSha;
   let currentEnvFingerprint = job.envFingerprint;
   let currentAgentUsage: AgentUsageTotals = {
@@ -403,6 +434,7 @@ export function createPhaseContextFactory(
     sandboxes,
     signal,
     log,
+    telemetry,
 
     async exec(input) {
       const sandbox = sandboxes.require();
@@ -425,16 +457,54 @@ export function createPhaseContextFactory(
 
       let result: ExecResult;
       try {
-        result = await sandbox.exec({
-          argv: input.argv,
-          cwd: input.cwd,
-          timeoutMs: input.timeoutMs,
-          signal,
-          maxOutputBytes: input.maxOutputBytes ?? options.maxOutputBytes,
-          // `exactOptionalPropertyTypes` is on, so an absent env has to be an
-          // absent key rather than an explicit `undefined`.
-          ...(input.env ? { env: input.env } : {}),
-        });
+        // The span covers the container call and nothing else, so its duration
+        // is the command's rather than the command's plus two database writes.
+        // It needs no parent: `runPipeline` has the phase span active, which is
+        // what puts this command under the phase that ran it.
+        //
+        // Only `argv[0]` and the argument count are recorded. The rest of an
+        // argv can carry a branch name, a file path or a test name out of the
+        // repository under test, and a span is an export to a third-party
+        // backend - the same argument `SecretRegistry` makes about log lines,
+        // one system further out.
+        result = await telemetry.withSpan(
+          SPAN_SANDBOX_COMMAND,
+          {
+            kind: "client",
+            attributes: {
+              [ATTR_JOB_ID]: job.id,
+              [ATTR_PHASE]: phase.status,
+              [ATTR_COMMAND]: input.argv[0],
+              [ATTR_COMMAND_ARGC]: input.argv.length - 1,
+              [ATTR_COMMAND_CWD]: input.cwd,
+            },
+          },
+          async (span) => {
+            const executed = await sandbox.exec({
+              argv: input.argv,
+              cwd: input.cwd,
+              timeoutMs: input.timeoutMs,
+              signal,
+              maxOutputBytes: input.maxOutputBytes ?? options.maxOutputBytes,
+              // `exactOptionalPropertyTypes` is on, so an absent env has to be
+              // an absent key rather than an explicit `undefined`.
+              ...(input.env ? { env: input.env } : {}),
+            });
+            span.setAttributes({
+              // Null when the command was killed rather than exiting, which the
+              // port allows as a value meaning "never set" - so a timed-out
+              // command carries `timed_out` and no exit code, rather than a
+              // zero that would read as success.
+              [ATTR_COMMAND_EXIT_CODE]: executed.exitCode ?? undefined,
+              [ATTR_COMMAND_TIMED_OUT]: executed.timedOut,
+            });
+            // Deliberately not `setStatus("error")` on a non-zero exit. A
+            // failing command is frequently the answer a phase wanted - a red
+            // baseline, a check that is meant to fail - and a span marked
+            // error would make every honest run look broken in a backend.
+            return executed;
+          },
+        );
       } catch (cause) {
         try {
           await appendOwnedEvent({

@@ -18,6 +18,7 @@ import {
  */
 
 const row: Job = {
+  traceContext: null,
   id: "6f1c9c3e-6a5b-4a6f-9a0f-2b3c4d5e6f70",
   title: "Add a health check endpoint",
   description: "Return 200 with the build SHA at /api/health.",

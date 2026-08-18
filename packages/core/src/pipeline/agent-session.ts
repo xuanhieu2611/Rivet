@@ -9,6 +9,24 @@ import type {
 } from "../agent/coding-agent";
 import type { AgentUsagePatch } from "../jobs/agent-usage";
 import { BudgetExceededError, LeaseLostError } from "../jobs/failure";
+import {
+  ATTR_AGENT_INPUT_TOKENS,
+  ATTR_AGENT_MODEL,
+  ATTR_AGENT_OUTPUT_TOKENS,
+  ATTR_AGENT_PROVIDER,
+  ATTR_AGENT_ROLE,
+  ATTR_AGENT_STOP_REASON,
+  ATTR_AGENT_TOOL,
+  ATTR_AGENT_TOOL_ERROR,
+  ATTR_AGENT_TURN,
+  ATTR_JOB_ID,
+  ATTR_PHASE,
+  SPAN_AGENT_SESSION,
+  SPAN_AGENT_TOOL,
+  SPAN_AGENT_TURN,
+} from "../telemetry/attributes";
+import { NOOP_TELEMETRY } from "../telemetry/noop-telemetry";
+import type { Span } from "../telemetry/telemetry";
 import type { AgentUsageTotals, PhaseContext } from "./phase-context";
 import type { AgentOptions } from "./phases";
 
@@ -22,6 +40,31 @@ export async function runAgentSession(
   tools: AgentToolbox,
   ctx: PhaseContext,
 ): Promise<SessionAccounting> {
+  // One span for the session, with turn and tool spans underneath it. The whole
+  // of `runAgentSession` is inside it, budget refusal included: a session
+  // refused before the provider was contacted is a fact worth seeing, and a
+  // trace that shows nothing where a phase spent no money is indistinguishable
+  // from one where telemetry broke.
+  return (ctx.telemetry ?? NOOP_TELEMETRY).withSpan(
+    SPAN_AGENT_SESSION,
+    {
+      attributes: {
+        [ATTR_JOB_ID]: ctx.job.id,
+        [ATTR_PHASE]: ctx.phase.status,
+        [ATTR_AGENT_ROLE]: spec.role,
+      },
+    },
+    (span) => runSession(agent, spec, tools, ctx, span),
+  );
+}
+
+async function runSession(
+  agent: AgentOptions,
+  spec: CodingAgentSpec,
+  tools: AgentToolbox,
+  ctx: PhaseContext,
+  span: Span,
+): Promise<SessionAccounting> {
   const deadline = AbortSignal.timeout(agent.sessionTimeoutMs);
   const signal = AbortSignal.any([ctx.signal, deadline]);
 
@@ -30,8 +73,15 @@ export async function runAgentSession(
   // spend are already at their ceiling has no room for another turn, and
   // starting one to discover that costs a provider round trip and a container's
   // worth of context to arrive at the answer already sitting in the job row.
-  const state = new SessionAccounting(spec, ctx);
-  await state.assertBudgetRemaining();
+  const state = new SessionAccounting(spec, ctx, span);
+  try {
+    await state.assertBudgetRemaining();
+  } finally {
+    // Even a refused session closes whatever it opened. Nothing is open on this
+    // path today; it is here so a later ceiling check added above cannot leak
+    // one, which is the kind of thing that shows as a trace that never ends.
+    state.endOpenSpans();
+  }
 
   const session = await agent.coding.start(spec, tools, signal);
 
@@ -46,6 +96,10 @@ export async function runAgentSession(
     ctx.signal.throwIfAborted();
     throw deadline.aborted ? sessionExpired(agent.sessionTimeoutMs) : error;
   } finally {
+    // Before `session.stop()`, so a turn or tool span left open by a session
+    // that threw mid-turn is closed by the same `finally` that closes the
+    // session rather than surviving it.
+    state.endOpenSpans();
     await session.stop();
   }
 
@@ -99,9 +153,26 @@ export class SessionAccounting {
   private readonly total: CodingAgentUsage;
   private readonly sessionTotal: CodingAgentUsage = emptyUsage();
 
+  /**
+   * The turn currently being traced, and the tool spans open inside it.
+   *
+   * Turn and tool spans are opened from the event stream rather than around a
+   * block, because that is the only shape the stream offers: a turn begins at
+   * one event and ends at another, with an unknown number of tool calls in
+   * between and no function whose lifetime matches either. So they are tracked
+   * here and closed by `endOpenSpans`, which every exit path runs.
+   *
+   * Tools are keyed by `toolCallId` rather than by name because a turn may run
+   * two of the same tool concurrently, and closing them in arrival order would
+   * attribute the first one's duration to the second.
+   */
+  private turnSpan: Span | undefined;
+  private readonly toolSpans = new Map<string, Span>();
+
   constructor(
     private readonly spec: CodingAgentSpec,
     private readonly ctx: PhaseContext,
+    private readonly sessionSpan: Span | undefined = undefined,
   ) {
     const persisted =
       ctx.readAgentUsage?.() ??
@@ -153,6 +224,12 @@ export class SessionAccounting {
     switch (event.type) {
       case "session_started": {
         this.sessionId = event.sessionId;
+        // The model and provider are only known once the session answers, so
+        // they land on the span that is already open rather than at creation.
+        this.sessionSpan?.setAttributes({
+          [ATTR_AGENT_MODEL]: event.model,
+          [ATTR_AGENT_PROVIDER]: event.provider,
+        });
         await this.write("agent.session_started", `Started ${event.model} on ${event.provider}.`, {
           model: event.model,
           provider: event.provider,
@@ -162,6 +239,14 @@ export class SessionAccounting {
       }
 
       case "turn_started": {
+        // A model turn is a span, and the previous one ends here rather than at
+        // `turn_completed`: a session that stops mid-turn still produced the
+        // turn, and a span that only ever closes on the happy path is a span
+        // that disappears from exactly the traces worth reading.
+        this.endTurnSpan();
+        this.turnSpan = this.startSpan(SPAN_AGENT_TURN, this.sessionSpan, {
+          [ATTR_AGENT_TURN]: event.turn,
+        });
         this.turns += 1;
         this.cumulativeModelCalls += 1;
         await this.ctx.recordAgentUsage(this.usagePatch());
@@ -179,6 +264,13 @@ export class SessionAccounting {
       }
 
       case "tool_started": {
+        this.toolSpans.set(
+          event.toolCallId,
+          this.startSpan(SPAN_AGENT_TOOL, this.turnSpan ?? this.sessionSpan, {
+            [ATTR_AGENT_TURN]: event.turn,
+            [ATTR_AGENT_TOOL]: event.toolName,
+          }),
+        );
         this.cumulativeToolCalls += 1;
         await this.ctx.recordAgentUsage(this.usagePatch());
         await this.write("agent.tool_started", `${event.toolName} ${event.argsPreview}`, {
@@ -193,6 +285,15 @@ export class SessionAccounting {
       }
 
       case "tool_completed": {
+        const toolSpan = this.toolSpans.get(event.toolCallId);
+        if (toolSpan) {
+          this.toolSpans.delete(event.toolCallId);
+          // An attribute rather than an error status. A failed tool call is
+          // ordinary - a grep that matched nothing, a file that is not there -
+          // and it is the model's problem to solve, not the run's failure.
+          toolSpan.setAttribute(ATTR_AGENT_TOOL_ERROR, event.isError);
+          toolSpan.end();
+        }
         await this.write(
           "agent.tool_completed",
           event.isError
@@ -252,6 +353,13 @@ export class SessionAccounting {
       }
 
       case "session_ended": {
+        this.endTurnSpan();
+        this.sessionSpan?.setAttributes({
+          [ATTR_AGENT_STOP_REASON]: event.reason,
+          [ATTR_AGENT_TURN]: event.turns,
+          [ATTR_AGENT_INPUT_TOKENS]: this.sessionTotal.inputTokens,
+          [ATTR_AGENT_OUTPUT_TOKENS]: this.sessionTotal.outputTokens,
+        });
         await this.write("agent.session_ended", `Session ended: ${event.reason}.`, {
           stopReason: event.reason,
           turns: event.turns,
@@ -263,6 +371,41 @@ export class SessionAccounting {
         return;
       }
     }
+  }
+
+  /**
+   * Closes every span this session opened but has not closed.
+   *
+   * Called from `runAgentSession`'s `finally`, so a session that throws, times
+   * out or is cancelled leaves no span open. `Span.end()` is idempotent by the
+   * port's contract, which is what lets this run after the ordinary path has
+   * already ended the same spans.
+   */
+  endOpenSpans(): void {
+    for (const span of this.toolSpans.values()) span.end();
+    this.toolSpans.clear();
+    this.endTurnSpan();
+  }
+
+  private endTurnSpan(): void {
+    this.turnSpan?.end();
+    this.turnSpan = undefined;
+  }
+
+  private startSpan(
+    name: string,
+    parent: Span | undefined,
+    attributes: Record<string, string | number | boolean>,
+  ): Span {
+    return (this.ctx.telemetry ?? NOOP_TELEMETRY).startSpan(name, {
+      ...(parent ? { parent } : {}),
+      attributes: {
+        [ATTR_JOB_ID]: this.ctx.job.id,
+        [ATTR_PHASE]: this.ctx.phase.status,
+        [ATTR_AGENT_ROLE]: this.spec.role,
+        ...attributes,
+      },
+    });
   }
 
   private add(usage: CodingAgentUsage): void {

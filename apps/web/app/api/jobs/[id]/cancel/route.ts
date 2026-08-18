@@ -5,6 +5,7 @@ import { getJobQueue } from "@rivet/queue";
 import { NextResponse } from "next/server";
 
 import { conflict, notFound, serverError } from "@/lib/api/responses";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -26,36 +27,39 @@ interface RouteContext {
  *
  * Idempotent: cancelling a job that is already cancelling is another `202`.
  */
-export async function POST(_request: Request, context: RouteContext) {
-  const { id } = await context.params;
+export const POST = withRoute(
+  "/api/jobs/:id/cancel",
+  async (_request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const { id } = await context.params;
 
-  try {
-    const result = await requestJobCancellation(id, getJobQueue());
+    try {
+      const result = await requestJobCancellation(id, getJobQueue());
 
-    switch (result.outcome) {
-      case "not_found":
-        return notFound("Job not found.");
+      switch (result.outcome) {
+        case "not_found":
+          return notFound("Job not found.");
 
-      case "cancelled":
-        if (result.queueError) {
-          // The job is cancelled either way - a leftover message cannot claim
-          // it. Worth a log, not worth a different status code.
-          console.error(
-            `POST /api/jobs/${id}/cancel: could not drop the queue message`,
-            result.queueError,
-          );
-        }
-        return NextResponse.json(result.job);
+        case "cancelled":
+          if (result.queueError) {
+            // The job is cancelled either way - a leftover message cannot claim
+            // it. Worth a log, not worth a different status code.
+            telemetry.log.error(
+              { err: result.queueError, jobId: id },
+              "could not drop the queue message",
+            );
+          }
+          return NextResponse.json(result.job);
 
-      case "cancel_requested":
-        return NextResponse.json(result.job, { status: 202 });
+        case "cancel_requested":
+          return NextResponse.json(result.job, { status: 202 });
 
-      case "already_terminal":
-        return conflict(`This job already finished as ${result.job.status}.`, {
-          status: result.job.status,
-        });
+        case "already_terminal":
+          return conflict(`This job already finished as ${result.job.status}.`, {
+            status: result.job.status,
+          });
+      }
+    } catch (cause) {
+      return serverError("POST /api/jobs/:id/cancel", cause, telemetry.log);
     }
-  } catch (cause) {
-    return serverError("POST /api/jobs/:id/cancel", cause);
-  }
-}
+  },
+);

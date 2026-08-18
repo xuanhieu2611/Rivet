@@ -2,6 +2,7 @@ import { PiCodingAgent } from "@rivet/agent";
 import {
   type AgentOptions,
   buildPipeline,
+  instrumentGitHubOptions,
   type Phase,
   type SandboxProvider,
   simulatedPipeline,
@@ -16,6 +17,7 @@ import {
   getRedis,
 } from "@rivet/queue";
 import { dockerConnectionTarget, DockerSandboxProvider } from "@rivet/sandbox";
+import type { TelemetryHandle } from "@rivet/telemetry";
 import { Worker } from "bullmq";
 
 import { findRepositoryRoot, loadRootEnv, parseWorkerConfig, WorkerConfigError } from "./config";
@@ -59,7 +61,19 @@ const workerId = createWorkerId();
 // Constructed before the logger, because the logger's redaction pass reads from
 // it on every line and a token must never exist before the pass knows about it.
 const secrets = new SecretRegistry();
-const log = createLogger(config.logLevel, workerId, secrets);
+/**
+ * Filled in a few lines below, and read by every log line until it is.
+ *
+ * The ordering is genuinely circular: the logger's mixin wants the active
+ * span's trace context, and `createWorkerTelemetry` wants a logger to report
+ * export failures to. A `let` the mixin closes over is the honest way to break
+ * it - lines written before the handle exists simply carry no trace ids, which
+ * is exactly what they should carry, because no span was open yet.
+ */
+const telemetryRef: { current: TelemetryHandle | undefined } = { current: undefined };
+const log = createLogger(config.logLevel, workerId, secrets, () =>
+  telemetryRef.current?.telemetry.traceContext(),
+);
 const runs = new RunRegistry();
 
 /**
@@ -72,7 +86,8 @@ const runs = new RunRegistry();
  * production, where a system nobody can see is a real problem, and once
  * anywhere else, where it is the default.
  */
-const telemetry = createWorkerTelemetry(config.telemetry, workerId, log);
+telemetryRef.current = createWorkerTelemetry(config.telemetry, workerId, log);
+const telemetry = telemetryRef.current;
 if (!telemetry) {
   const message =
     "RIVET_TELEMETRY=off: this worker exports no traces and no metrics, so a run can only be " +
@@ -91,7 +106,14 @@ if (!telemetry) {
  * `publication.skipped` - which is what CI and every existing suite run under,
  * and what `parseWorkerConfig` refuses in production.
  */
-const github = createGitHubOptions(config.github, secrets);
+const github = (() => {
+  const options = createGitHubOptions(config.github, secrets);
+  // Wrapped here rather than inside the adapter, so `apps/worker/src/github.ts`
+  // stays the file whose only job is keeping credentials out of core. Under
+  // `RIVET_TELEMETRY=off` there is nothing to wrap with and the options pass
+  // through untouched.
+  return options && telemetry ? instrumentGitHubOptions(options, telemetry.telemetry) : options;
+})();
 if (!github) {
   log.warn("RIVET_GITHUB=off: no pull request will be opened, jobs end at the validated diff");
 }
@@ -267,6 +289,7 @@ const worker = new Worker<JobRunsMessage>(
     runs,
     sweep,
     phases,
+    ...(telemetry ? { telemetry: telemetry.telemetry } : {}),
     ...(phaseFactory ? { phaseFactory } : {}),
     // One injection per run, because `hang` is per-run state. Without
     // `RIVET_FAULT_*` set this is the plain abortable sleep and no fault at all.

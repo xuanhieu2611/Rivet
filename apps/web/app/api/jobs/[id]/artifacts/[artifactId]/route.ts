@@ -5,6 +5,7 @@ import { getArtifact, getJob } from "@rivet/core";
 import { NextResponse } from "next/server";
 
 import { badRequest, notFound, serverError } from "@/lib/api/responses";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -19,22 +20,25 @@ function parseArtifactId(raw: string): number | undefined {
 }
 
 /** `GET /api/jobs/:id/artifacts/:artifactId` - one artifact with its content. */
-export async function GET(_request: Request, context: RouteContext) {
-  const { id, artifactId: rawArtifactId } = await context.params;
-  const artifactId = parseArtifactId(rawArtifactId);
-  if (artifactId === undefined) {
-    return badRequest("`artifactId` must be a positive integer.");
-  }
+export const GET = withRoute(
+  "/api/jobs/:id/artifacts/:artifactId",
+  async (_request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const { id, artifactId: rawArtifactId } = await context.params;
+    const artifactId = parseArtifactId(rawArtifactId);
+    if (artifactId === undefined) {
+      return badRequest("`artifactId` must be a positive integer.");
+    }
 
-  try {
-    const job = await getJob(id);
-    if (!job) return notFound("Job not found.");
+    try {
+      const job = await getJob(id);
+      if (!job) return notFound("Job not found.");
 
-    const artifact = await getArtifact(id, artifactId);
-    if (!artifact) return notFound("Artifact not found.");
+      const artifact = await getArtifact(id, artifactId);
+      if (!artifact) return notFound("Artifact not found.");
 
-    return NextResponse.json(serializeJobArtifact(artifact));
-  } catch (cause) {
-    return serverError("GET /api/jobs/:id/artifacts/:artifactId", cause);
-  }
-}
+      return NextResponse.json(serializeJobArtifact(artifact));
+    } catch (cause) {
+      return serverError("GET /api/jobs/:id/artifacts/:artifactId", cause, telemetry.log);
+    }
+  },
+);

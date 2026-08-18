@@ -64,6 +64,13 @@
       "when": 1786923748450,
       "tag": "0008_serious_ghost_rider",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787030444203,
+      "tag": "0009_luxuriant_wendigo",
+      "breakpoints": true
     }
   ]
 }

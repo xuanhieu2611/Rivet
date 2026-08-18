@@ -172,6 +172,15 @@ export interface JobDetail extends JobSummary {
   issueUrl: string | null;
   /** The environment recorded by provisioning, for reproducibility. */
   envFingerprint: Record<string, unknown> | null;
+  /**
+   * The W3C `traceparent` of the request that created this job, or null.
+   *
+   * Read by the worker to *link* each attempt's root span back to the click
+   * that caused it. Null whenever nothing was recording - telemetry off, a
+   * fixture, the evaluation runner - which is an ordinary state and never a
+   * reason for anything to fail.
+   */
+  traceContext: string | null;
   priority: number;
   maxDurationSeconds: number;
   maxCostUsd: string;

@@ -639,6 +639,51 @@ drop spans and log a line, which is the correct failure mode for telemetry and t
 acceptance run C asserts. `TelemetryHandle.shutdown()` never rejects for the same reason: a graceful
 shutdown must not fail because Grafana was down.
 
+**A job's trace is linked to its creating request, never parented by it.** `POST /api/jobs` records
+its own short span and stores the `traceparent` on `jobs.trace_context` - one nullable `text`
+column, and M11's entire schema footprint. Each attempt then opens its **own root** `job.run` span
+in `apps/worker/src/processor.ts` with a **span link** back to that context. The obvious design, one
+trace rooted at the request, is wrong here for three reasons at once: the request finishes in
+milliseconds while the run takes minutes, the run can be reclaimed onto another worker, and it can
+be attempted three times - a root held open across three processes is one most backends drop, and it
+would make three attempts indistinguishable from one very strange attempt. What relates them is
+`rivet.job_id`, which every span carries at every depth, so "show me everything about job X" is a
+query rather than a trace lookup. Null trace context is ordinary rather than exceptional (telemetry
+off, a fixture, the evaluation runner) and an unparseable one drops the link rather than failing the
+job: telemetry never changes the outcome of a run.
+
+Under that root: one span per phase (`phase.<status>`, opened by `runPipeline`), one per sandbox
+command (`sandbox.command`, opened by `PhaseContext.exec`), one per model session, turn and tool
+call (opened from the session's own event stream in `agent-session.ts`), one per host Git operation
+and one per GitHub API call (`github/instrumentation.ts`, decorators over the port rather than
+instrumentation inside the adapter). Only `runPipeline` is handed the parent explicitly, because
+`startSpan` does not make a span active; everything deeper nests through `withSpan`. Acceptance run
+A is `packages/core/src/pipeline/tracing.test.ts` and asserts the whole shape in-process against
+`RecordingTelemetry` with no SDK, no collector, no Docker and no database - which is the payoff of
+telemetry being a port.
+
+**Spans carry no repository content and no credential.** A command span records `argv[0]`, the
+argument count and the cwd, never the full argv; a GitHub span records an operation name, an
+installation id and `owner/name`, never a token, an issue body or a remote URL. A span is an export
+to a third-party backend, so it gets the same treatment `SecretRegistry` gives a log line, one
+system further out. A non-zero command exit is an attribute rather than an error status, because a
+failing command is frequently the answer a phase wanted - a red baseline, a check meant to fail -
+and a span marked error would make every honest run look broken.
+
+**Both deployables' pino lines carry `trace_id` and `span_id`.** Through one helper, `traceFields()`
+in `packages/core/src/telemetry/trace-fields.ts`, so the web app's logger does not have to import
+the OTel adapter to correlate - and the field names are snake_case because they are Grafana's and
+the OTel log data model's, not Rivet's. The web app gets a logger at all for the first time in M11
+(`apps/web/lib/logger.ts`); `withRoute` in `apps/web/lib/api/route-telemetry.ts` wraps every API
+handler in a server span named for the route **pattern** and a per-request child logger, and
+`serverError` now takes that logger. Route wrapping is explicit rather than automatic: HTTP
+auto-instrumentation would trace Next's own asset and RSC traffic as enthusiastically as Rivet's
+API, and the valuable part is not the span but that it is _active_ for the handler, which is what
+lets `POST /api/jobs` read a real `traceparent` to store. `apps/web/instrumentation.ts` registers
+the SDK once per server process, guarded on `NEXT_RUNTIME === "nodejs"`. `LOG_LEVEL` is read by both
+deployables, and the web app is `silent` under vitest because unit tests call route handlers
+directly.
+
 **The `rivet-local:` scheme is opaque on purpose, and that is the whole security argument.** A
 path-carrying scheme (`file:///...`) would make every acceptor one crafted request away from cloning
 `/etc`, and the refusal would have to be written correctly in each of them. `rivet-local:<case-id>`

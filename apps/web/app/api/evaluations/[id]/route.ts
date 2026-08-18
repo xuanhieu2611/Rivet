@@ -11,6 +11,7 @@ import {
 import { NextResponse } from "next/server";
 
 import { notFound, serverError } from "@/lib/api/responses";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 
 export const dynamic = "force-dynamic";
 
@@ -35,29 +36,32 @@ function serializeRun(run: EvaluationRunRecord) {
  * starts a paid multi-hour matrix is the wrong thing to add to a single-owner
  * app (see SECURITY.md).
  */
-export async function GET(_request: Request, context: RouteContext) {
-  const { id } = await context.params;
+export const GET = withRoute(
+  "/api/evaluations/:id",
+  async (_request: Request, telemetry: RouteTelemetry, context: RouteContext) => {
+    const { id } = await context.params;
 
-  try {
-    const suite = await getEvaluationSuite(id);
-    if (!suite) return notFound("Evaluation suite not found.");
+    try {
+      const suite = await getEvaluationSuite(id);
+      if (!suite) return notFound("Evaluation suite not found.");
 
-    const [runs, cases] = await Promise.all([listEvaluationRuns(suite.id), listBenchmarkCases()]);
-    const categories: Record<string, BenchmarkCategory> = Object.fromEntries(
-      cases.map((entry) => [entry.id, entry.category]),
-    );
+      const [runs, cases] = await Promise.all([listEvaluationRuns(suite.id), listBenchmarkCases()]);
+      const categories: Record<string, BenchmarkCategory> = Object.fromEntries(
+        cases.map((entry) => [entry.id, entry.category]),
+      );
 
-    return NextResponse.json({
-      suite: {
-        ...suite,
-        startedAt: suite.startedAt.toISOString(),
-        completedAt: suite.completedAt?.toISOString() ?? null,
-        createdAt: suite.createdAt.toISOString(),
-      },
-      summary: summarizeEvaluationRuns(runs, { categories }),
-      runs: runs.map(serializeRun),
-    });
-  } catch (cause) {
-    return serverError("GET /api/evaluations/:id", cause);
-  }
-}
+      return NextResponse.json({
+        suite: {
+          ...suite,
+          startedAt: suite.startedAt.toISOString(),
+          completedAt: suite.completedAt?.toISOString() ?? null,
+          createdAt: suite.createdAt.toISOString(),
+        },
+        summary: summarizeEvaluationRuns(runs, { categories }),
+        runs: runs.map(serializeRun),
+      });
+    } catch (cause) {
+      return serverError("GET /api/evaluations/:id", cause, telemetry.log);
+    }
+  },
+);

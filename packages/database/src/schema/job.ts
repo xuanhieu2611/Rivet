@@ -189,6 +189,21 @@ export const jobs = pgTable(
      * read it back.
      */
     envFingerprint: jsonb("env_fingerprint").$type<Record<string, unknown>>(),
+    /**
+     * The W3C `traceparent` of the request that created this job.
+     *
+     * One nullable `text` column, and it is the whole of Milestone 11's schema
+     * footprint. Null is ordinary rather than exceptional: a job created while
+     * `RIVET_TELEMETRY=off`, or by a fixture, or by the evaluation runner, has
+     * no request span to point at.
+     *
+     * Deliberately not a parent. Each attempt opens its own root `job.run` span
+     * and *links* back to this one: the request finishes in milliseconds while
+     * the run takes minutes across possibly three processes, and a root span
+     * held open that long is one most backends drop. See
+     * `docs/plans/milestone-11.md` §2.
+     */
+    traceContext: text("trace_context"),
   },
   (table) => [
     // Dashboard list query: filter by status, newest first.

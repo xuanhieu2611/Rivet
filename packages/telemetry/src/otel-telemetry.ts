@@ -79,10 +79,19 @@ function toOtelAttributes(attributes: Attributes): OtelAttributes {
 }
 
 function toOtelAttributeValue(value: AttributeValue): OtelAttributeValue {
-  // Arrays are copied rather than cast, because the port's are `readonly` and
-  // OTel's are not - and a frozen array the SDK decides to sort is a crash in
-  // the one code path that must never have one.
-  return Array.isArray(value) ? [...(value as readonly (string | number | boolean)[])] : value;
+  // `Array.isArray` does not narrow a `readonly T[]` out of the union in the
+  // false branch, so the scalar side is asserted too. Both assertions cover the
+  // same narrowing gap; neither widens what the port accepts.
+  if (!Array.isArray(value)) return value as OtelAttributeValue;
+  // Copied rather than cast through, because the port's arrays are `readonly`
+  // and OTel's are not - and a frozen array the SDK decides to sort in place is
+  // a crash in the one code path that must never have one.
+  //
+  // The assertion is on the copy and covers a narrowing gap rather than a real
+  // one: the port's type is `readonly string[] | readonly number[] | readonly
+  // boolean[]` and OTel's is the same three arrays unmixed, but `Array.isArray`
+  // widens the element type to the union, which no longer matches either side.
+  return [...(value as readonly (string | number | boolean)[])] as OtelAttributeValue;
 }
 
 class OtelSpanAdapter implements Span {

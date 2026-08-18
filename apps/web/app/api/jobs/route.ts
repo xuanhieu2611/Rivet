@@ -6,6 +6,8 @@ import { getJobQueue } from "@rivet/queue";
 import { NextResponse } from "next/server";
 
 import { badRequest, readJsonBody, serverError, validationFailed } from "@/lib/api/responses";
+import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
+import { currentTraceContext } from "@/lib/telemetry/telemetry";
 
 /**
  * Never prerender: these handlers talk to Postgres, and `next build` must not
@@ -15,18 +17,18 @@ import { badRequest, readJsonBody, serverError, validationFailed } from "@/lib/a
 export const dynamic = "force-dynamic";
 
 /** `GET /api/jobs` - newest first, capped by `?limit=`. */
-export async function GET(request: Request) {
+export const GET = withRoute("/api/jobs", async (request: Request, telemetry: RouteTelemetry) => {
   try {
     const limit = resolveListLimit(new URL(request.url).searchParams.get("limit"));
     const jobs = await listJobs({ limit });
     return NextResponse.json({ jobs, limit });
   } catch (cause) {
-    return serverError("GET /api/jobs", cause);
+    return serverError("GET /api/jobs", cause, telemetry.log);
   }
-}
+});
 
 /** `POST /api/jobs` - validate, persist, enqueue, return 201 with the created job. */
-export async function POST(request: Request) {
+export const POST = withRoute("/api/jobs", async (request: Request, telemetry: RouteTelemetry) => {
   const body = await readJsonBody(request);
   if (!body) {
     return badRequest("Request body must be valid JSON.");
@@ -39,9 +41,18 @@ export async function POST(request: Request) {
 
   let job;
   try {
-    job = await createJob(parsed.data);
+    // The creating request's own span, stored so each attempt of the run can
+    // *link* back to it. Deliberately not part of `createJobSchema`: a client
+    // must not get to choose which trace its job is attributed to, and Zod has
+    // already stripped the key if one was sent. `undefined` when telemetry is
+    // off, which is the ordinary case and leaves the column null.
+    const traceContext = currentTraceContext();
+    job = await createJob({
+      ...parsed.data,
+      ...(traceContext ? { traceContext } : {}),
+    });
   } catch (cause) {
-    return serverError("POST /api/jobs", cause);
+    return serverError("POST /api/jobs", cause, telemetry.log);
   }
 
   // Deliberately outside the try above, and deliberately not able to fail the
@@ -51,11 +62,11 @@ export async function POST(request: Request) {
   // exactly what the sweeper reconciles, within a minute.
   const outcome = await requestJobRun(job.id, job.dispatchGeneration, getJobQueue());
   if (outcome.error) {
-    console.error(`POST /api/jobs: enqueue failed for ${job.id}`, outcome.error);
+    telemetry.log.error({ err: outcome.error, jobId: job.id }, "enqueue failed");
   }
 
   return NextResponse.json(job, {
     status: 201,
     headers: { Location: `/api/jobs/${job.id}` },
   });
-}
+});
