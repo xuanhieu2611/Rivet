@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -28,6 +28,94 @@ export interface HostGitObserver {
   onCommand?: (command: HostGitCommand) => void;
   onAskPassCreated?: (path: string) => void;
   onTemporaryDirectoryCreated?: (path: string) => void;
+}
+
+const HOST_OPERATION_MARKER = ".rivet-host-operation";
+const HOST_OPERATION_DIRECTORY_PREFIXES = [
+  "rivet-github-seed-",
+  "rivet-local-seed-",
+  "rivet-github-publish-",
+] as const;
+const HOST_OPERATION_FILE_PATTERNS = [
+  /^rivet-checkpoint-[0-9a-f-]+\.index$/iu,
+  /^rivet-(?:seed|github|local)-archive-[^/]+$/u,
+] as const;
+
+export interface HostGitCleanupOptions {
+  /** Directory to scan. Defaults to the host's temp directory. */
+  directory?: string;
+  /** Only entries older than this are eligible. Defaults to two minutes. */
+  olderThanMs?: number;
+  /** Injectable for deterministic tests. */
+  now?: number;
+}
+
+/**
+ * Removes host-side Git work left by a worker that was killed before `finally`.
+ *
+ * The marker records the creating PID, so a long-running clone is never removed
+ * merely because it crossed the age threshold. A dead PID or a legacy
+ * unmarked directory is safe to reap after the grace period.
+ */
+export async function reapHostGitTemporaryFiles(
+  options: HostGitCleanupOptions = {},
+): Promise<string[]> {
+  const directory = options.directory ?? tmpdir();
+  const olderThanMs = options.olderThanMs ?? 120_000;
+  const now = options.now ?? Date.now();
+  const removed: string[] = [];
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return removed;
+  }
+
+  for (const entry of entries) {
+    const isDirectory =
+      entry.isDirectory() &&
+      HOST_OPERATION_DIRECTORY_PREFIXES.some((prefix) => entry.name.startsWith(prefix));
+    const isFile =
+      entry.isFile() && HOST_OPERATION_FILE_PATTERNS.some((pattern) => pattern.test(entry.name));
+    if (!isDirectory && !isFile) continue;
+
+    const path = join(directory, entry.name);
+    let info;
+    try {
+      info = await stat(path);
+    } catch {
+      continue;
+    }
+    if (now - info.mtimeMs < olderThanMs) continue;
+
+    if (isDirectory && (await hostOperationIsLive(path))) continue;
+
+    try {
+      await rm(path, { recursive: isDirectory, force: true });
+      removed.push(path);
+    } catch {
+      // Cleanup is a backstop. A permissions or race failure is retried on the
+      // next sweep rather than being allowed to interrupt job reconciliation.
+    }
+  }
+  return removed;
+}
+
+async function hostOperationIsLive(path: string): Promise<boolean> {
+  try {
+    const marker = JSON.parse(await readFile(join(path, HOST_OPERATION_MARKER), "utf8")) as {
+      pid?: unknown;
+    };
+    if (!Number.isInteger(marker.pid) || (marker.pid as number) <= 0) return false;
+    try {
+      process.kill(marker.pid as number, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  } catch {
+    return false;
+  }
 }
 
 /** The smallest credential shape needed by host Git. */
@@ -728,6 +816,11 @@ async function withTemporaryDirectory<T>(
 ): Promise<T> {
   const root = await mkdtemp(join(parent ?? tmpdir(), prefix));
   try {
+    await writeFile(
+      join(root, HOST_OPERATION_MARKER),
+      JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
+      { mode: 0o600 },
+    );
     observer.onTemporaryDirectoryCreated?.(root);
     return await operation(root);
   } finally {

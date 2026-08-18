@@ -97,6 +97,25 @@ export class BullJobQueue implements JobQueue {
     return this.queue.removeJobScheduler(SCHEDULER_IDS.sweep);
   }
 
+  /**
+   * Removes schedulers left behind by an old worker build or an abandoned key.
+   *
+   * This queue is Rivet-owned, so every scheduler except the current stable id
+   * is stale. Removing through BullMQ also removes its next delayed message;
+   * deleting Redis keys directly would leave a scheduler that can fire once
+   * more with no registry entry.
+   */
+  async removeStaleSchedulers(): Promise<string[]> {
+    const schedulers = await this.queue.getJobSchedulers(0, -1, true);
+    const current = new Set<string>(Object.values(SCHEDULER_IDS));
+    const stale = schedulers
+      .map((scheduler) => scheduler.id ?? scheduler.key)
+      .filter((id): id is string => !current.has(id));
+
+    await Promise.all(stale.map((id) => this.queue.removeJobScheduler(id)));
+    return stale;
+  }
+
   async enqueueJobRun(
     jobId: string,
     dispatchGeneration: number,

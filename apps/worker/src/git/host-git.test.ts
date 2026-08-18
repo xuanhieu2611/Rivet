@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ import {
   HostGitCommandError,
   localSeed,
   publish,
+  reapHostGitTemporaryFiles,
   SeedArchiveTooLargeError,
   seedClone,
   type HostGitCommand,
@@ -235,6 +236,33 @@ describe("host Git operations", () => {
     await expect(
       localSeed({ repositoryPath: fixture.remote, baseBranch: "main", maxArchiveBytes: 1_024 }),
     ).rejects.toBeInstanceOf(SeedArchiveTooLargeError);
+  });
+
+  it("reaps abandoned host Git state but spares a live operation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rivet-host-git-reaper-test-"));
+    temporaryRoots.push(root);
+    const staleDirectory = join(root, "rivet-github-seed-abandoned");
+    const liveDirectory = join(root, "rivet-local-seed-live");
+    const staleIndex = join(root, "rivet-checkpoint-01234567-89ab-cdef-0123-456789abcdef.index");
+    await mkdir(staleDirectory);
+    await mkdir(liveDirectory);
+    await writeFile(
+      join(liveDirectory, ".rivet-host-operation"),
+      JSON.stringify({ pid: process.pid }),
+    );
+    await writeFile(staleIndex, "stale");
+    const old = new Date(Date.now() - 10_000);
+    await Promise.all([
+      utimes(staleDirectory, old, old),
+      utimes(liveDirectory, old, old),
+      utimes(staleIndex, old, old),
+    ]);
+
+    const removed = await reapHostGitTemporaryFiles({ directory: root, olderThanMs: 1_000 });
+
+    expect(removed).toEqual(expect.arrayContaining([staleDirectory, staleIndex]));
+    expect(removed).not.toContain(liveDirectory);
+    await expect(readFile(join(liveDirectory, ".rivet-host-operation"))).resolves.toBeDefined();
   });
 
   it("removes the askpass helper and clone directory when a command fails", async () => {

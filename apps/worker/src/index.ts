@@ -24,6 +24,7 @@ import { findRepositoryRoot, loadRootEnv, parseWorkerConfig, WorkerConfigError }
 import { createLocalSeedOptions } from "./eval";
 import { createFaultInjection, type FaultInjection } from "./faults";
 import { createGitHubOptions } from "./github";
+import { reapHostGitTemporaryFiles } from "./git/host-git";
 import { createWorkerId } from "./identity";
 import { createLogger } from "./logger";
 import { createProcessor, RunRegistry } from "./processor";
@@ -210,10 +211,11 @@ const agent: AgentOptions | undefined = await (async () => {
   };
 })();
 
-const { phases, phaseFactory, sandbox } = ((): {
+const { phases, phaseFactory, sandbox, assertNetworkIsolation } = ((): {
   phases: readonly Phase[];
   phaseFactory?: (injection: FaultInjection) => readonly Phase[];
   sandbox?: SandboxProvider;
+  assertNetworkIsolation?: () => Promise<void>;
 } => {
   if (config.sandbox.mode === "off") {
     log.warn("RIVET_SANDBOX=off: running the simulated pipeline, no containers will be created");
@@ -255,8 +257,24 @@ const { phases, phaseFactory, sandbox } = ((): {
     phaseFactory: (injection) =>
       buildPipeline({ sandbox: injection.sandbox ?? provider, ...pipelineOptions }),
     sandbox: provider,
+    assertNetworkIsolation: () =>
+      provider.assertNetworkIsolation({
+        image: config.sandbox.image,
+        databaseUrl: process.env.DATABASE_URL ?? "",
+        redisUrl: process.env.REDIS_URL ?? "",
+      }),
   };
 })();
+
+if (assertNetworkIsolation) {
+  try {
+    await assertNetworkIsolation();
+    log.info("sandbox network isolation probe passed");
+  } catch (error) {
+    log.error({ err: error }, "sandbox network isolation probe failed; refusing to start");
+    process.exit(1);
+  }
+}
 
 // The worker needs a `Queue` as well as a `Worker`: the sweeper re-enqueues
 // what it reclaims, and the recurring sweep itself is registered through the
@@ -270,6 +288,13 @@ const sweep = createSweepRunner({
   // The reaper's half of the sweep. Absent under `off`, where there is nothing
   // to reap and no daemon to ask.
   ...(sandbox ? { sandbox } : {}),
+  cleanupOrphans: async () => {
+    const [temporaryFiles, schedulers] = await Promise.all([
+      reapHostGitTemporaryFiles({ olderThanMs: config.sandbox.reapGraceMs }),
+      queue.removeStaleSchedulers(),
+    ]);
+    return { temporaryFiles: temporaryFiles.length, schedulers: schedulers.length };
+  },
 });
 
 // Redis schedulers cover steady state, but a worker must also reconcile once

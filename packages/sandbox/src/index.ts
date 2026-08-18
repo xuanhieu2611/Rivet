@@ -16,11 +16,14 @@
 export { dockerConnectionTarget, getDocker, resetDocker } from "./connection";
 export {
   DockerSandboxProvider,
+  SandboxNetworkExposedError,
   type DockerSandboxOptions,
+  type SandboxNetworkProbeOptions,
   LABEL_CREATED_AT,
   LABEL_JOB_ID,
   LABEL_WORKER_ID,
   SANDBOX_NETWORK,
+  SANDBOX_NETWORK_OPTIONS,
   type SandboxLogger,
 } from "./docker-sandbox";
 export {

@@ -60,6 +60,11 @@ export const LABEL_CREATED_AT = "rivet.created-at";
  */
 export const SANDBOX_NETWORK = "rivet-sandbox";
 
+/** The bridge option that prevents containers on this network from talking to each other. */
+export const SANDBOX_NETWORK_OPTIONS = {
+  "com.docker.network.bridge.enable_icc": "false",
+} as const;
+
 /** How long a container gets to be young enough that the reaper leaves it alone. */
 const DEFAULT_REAP_GRACE_MS = 120_000;
 
@@ -81,6 +86,27 @@ export interface DockerSandboxOptions {
 export interface SandboxLogger {
   info(details: Record<string, unknown>, message: string): void;
   warn(details: Record<string, unknown>, message: string): void;
+}
+
+export interface SandboxNetworkProbeOptions {
+  image: string;
+  databaseUrl: string;
+  redisUrl: string;
+  timeoutMs?: number;
+}
+
+/** The worker must not start when a sandbox can reach one of its control-plane endpoints. */
+export class SandboxNetworkExposedError extends Error {
+  constructor(
+    readonly service: "DATABASE_URL" | "REDIS_URL",
+    endpoint: string,
+  ) {
+    super(
+      `Sandbox network isolation failed: a probe container reached ${service} at ${endpoint}. ` +
+        "Bind control-plane services to loopback or a separate Docker network before starting Rivet.",
+    );
+    this.name = "SandboxNetworkExposedError";
+  }
 }
 
 /** The default when no logger is supplied, which is the case in every unit test. */
@@ -177,6 +203,90 @@ export class DockerSandboxProvider implements SandboxProvider {
         : asSandboxError(cause, "Could not start the sandbox container.");
     }
     return sandbox;
+  }
+
+  /**
+   * Proves the network does not expose the worker's control-plane endpoints.
+   *
+   * This is deliberately a startup check rather than a job failure. If the
+   * network is unsafe, every repository Rivet runs would inherit that mistake;
+   * refusing to boot makes the configuration error impossible to miss.
+   */
+  async assertNetworkIsolation(options: SandboxNetworkProbeOptions): Promise<void> {
+    if (!options.databaseUrl || !options.redisUrl) {
+      throw new SandboxCreateFailedError(
+        "Sandbox network isolation needs both DATABASE_URL and REDIS_URL so the worker can " +
+          "prove that its control plane is unreachable.",
+      );
+    }
+
+    await this.ping();
+    await this.ensureImage(options.image);
+    await this.ensureNetwork();
+
+    const endpoints = [
+      probeEndpoint("DATABASE_URL", options.databaseUrl),
+      probeEndpoint("REDIS_URL", options.redisUrl),
+    ];
+
+    for (const endpoint of endpoints) {
+      const reachable = await this.runNetworkProbe(options, endpoint);
+      if (reachable) throw new SandboxNetworkExposedError(endpoint.service, endpoint.display);
+    }
+  }
+
+  private async runNetworkProbe(
+    options: SandboxNetworkProbeOptions,
+    endpoint: ProbeEndpoint,
+  ): Promise<boolean> {
+    const timeoutMs = options.timeoutMs ?? 1_000;
+    let container: Container | undefined;
+    try {
+      container = await this.docker.createContainer({
+        Image: options.image,
+        Cmd: ["node", "-e", NETWORK_PROBE_SCRIPT],
+        Env: [`RIVET_PROBE_HOST=${endpoint.host}`, `RIVET_PROBE_PORT=${endpoint.port}`],
+        User: "node",
+        HostConfig: {
+          CapDrop: ["ALL"],
+          SecurityOpt: ["no-new-privileges"],
+          NetworkMode: SANDBOX_NETWORK,
+          AutoRemove: false,
+        },
+      });
+      await container.start();
+
+      const waitForExit = (container.wait() as Promise<unknown>).then((value) => {
+        const statusCode = (value as { StatusCode?: unknown }).StatusCode;
+        if (typeof statusCode !== "number") {
+          throw new SandboxCreateFailedError(
+            `The startup reachability probe for ${endpoint.display} returned no exit code.`,
+          );
+        }
+        return { StatusCode: statusCode };
+      });
+      const result = await Promise.race([
+        waitForExit,
+        delay(timeoutMs).then(async () => {
+          await container?.kill({ signal: "SIGKILL" }).catch(() => undefined);
+          return { StatusCode: 124 };
+        }),
+      ]);
+
+      if (result.StatusCode === 0) return true;
+      if (result.StatusCode === 1 || result.StatusCode === 124) return false;
+      throw new SandboxCreateFailedError(
+        `The startup reachability probe for ${endpoint.display} exited with ${result.StatusCode}.`,
+      );
+    } catch (cause) {
+      if (cause instanceof SandboxCreateFailedError) throw cause;
+      throw asSandboxError(
+        cause,
+        `Could not run the sandbox reachability probe for ${endpoint.display}.`,
+      );
+    } finally {
+      await container?.remove({ force: true, v: true }).catch(() => undefined);
+    }
   }
 
   async reap(jobIsLive: (jobId: string) => Promise<boolean>): Promise<string[]> {
@@ -276,20 +386,41 @@ export class DockerSandboxProvider implements SandboxProvider {
   }
 
   private async createNetwork(): Promise<void> {
+    const network = this.docker.getNetwork(SANDBOX_NETWORK);
     try {
-      await this.docker.getNetwork(SANDBOX_NETWORK).inspect();
-      return;
+      const info = await network.inspect();
+      if (info.Options?.["com.docker.network.bridge.enable_icc"] === "false") return;
+
+      // A network created by an older Rivet process is not safe to reuse. It is
+      // only repaired when empty; removing an active network would disconnect a
+      // live job and would turn hardening into an availability bug.
+      const attached = Object.keys(info.Containers ?? {});
+      if (attached.length > 0) {
+        throw new SandboxCreateFailedError(
+          `Docker network ${SANDBOX_NETWORK} exists without enable_icc=false and has ` +
+            `${attached.length} attached container${attached.length === 1 ? "" : "s"}. ` +
+            "Stop those containers and remove the network before restarting Rivet.",
+        );
+      }
+      await network.remove();
     } catch (cause) {
+      if (cause instanceof SandboxCreateFailedError) throw cause;
       if (!isNotFound(cause)) throw asSandboxError(cause, "Could not inspect the sandbox network.");
     }
 
     try {
-      await this.docker.createNetwork({ Name: SANDBOX_NETWORK, Driver: "bridge" });
+      await this.docker.createNetwork({
+        Name: SANDBOX_NETWORK,
+        Driver: "bridge",
+        Options: SANDBOX_NETWORK_OPTIONS,
+      });
     } catch (cause) {
-      // 409 means another worker created it between the inspect and the create,
-      // which is the expected outcome of two workers starting together, not a
-      // failure.
-      if (statusCodeOf(cause) === 409) return;
+      // 409 means another worker created it between the inspect and the create.
+      // Inspect once more so a race cannot silently accept an unsafe network.
+      if (statusCodeOf(cause) === 409) {
+        const info = await this.docker.getNetwork(SANDBOX_NETWORK).inspect();
+        if (info.Options?.["com.docker.network.bridge.enable_icc"] === "false") return;
+      }
       throw asSandboxError(cause, "Could not create the sandbox network.");
     }
   }
@@ -640,6 +771,51 @@ class DockerSandbox implements Sandbox {
     }
     return false;
   }
+}
+
+interface ProbeEndpoint {
+  service: "DATABASE_URL" | "REDIS_URL";
+  host: string;
+  port: number;
+  display: string;
+}
+
+/** A tiny TCP-only program; it never receives a URL, credentials or worker environment. */
+const NETWORK_PROBE_SCRIPT = [
+  'const net = require("node:net");',
+  "const host = process.env.RIVET_PROBE_HOST;",
+  "const port = Number(process.env.RIVET_PROBE_PORT);",
+  "const socket = net.createConnection({ host, port });",
+  "let settled = false;",
+  "const finish = (code) => { if (settled) return; settled = true; socket.destroy(); process.exit(code); };",
+  "socket.setTimeout(700);",
+  'socket.once("connect", () => finish(0));',
+  'socket.once("timeout", () => finish(1));',
+  'socket.once("error", () => finish(1));',
+].join(" ");
+
+function probeEndpoint(service: ProbeEndpoint["service"], value: string): ProbeEndpoint {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (cause) {
+    throw new SandboxCreateFailedError(
+      `The ${service} value is not a valid URL for the startup probe.`,
+      {
+        cause,
+      },
+    );
+  }
+
+  const defaultPort = service === "DATABASE_URL" ? 5432 : 6379;
+  const port = url.port.length > 0 ? Number(url.port) : defaultPort;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535 || !url.hostname) {
+    throw new SandboxCreateFailedError(
+      `The ${service} value has no valid host or port for the startup probe.`,
+    );
+  }
+
+  return { service, host: url.hostname, port, display: `${url.hostname}:${port}` };
 }
 
 /** Matches the worker's `SANDBOX_MAX_OUTPUT_BYTES` default; a caller normally passes one. */

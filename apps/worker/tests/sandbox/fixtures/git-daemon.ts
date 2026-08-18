@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, Socket } from "node:net";
 
-import { getDocker, SANDBOX_NETWORK } from "@rivet/sandbox";
+import { getDocker, SANDBOX_NETWORK, SANDBOX_NETWORK_OPTIONS } from "@rivet/sandbox";
 
 /**
  * Serves bare repositories on a host path to containers, over `git://`.
@@ -116,7 +116,11 @@ async function containerHost(): Promise<string> {
     await docker.getNetwork(SANDBOX_NETWORK).inspect();
   } catch (error) {
     if ((error as { statusCode?: number }).statusCode !== 404) throw error;
-    await docker.createNetwork({ Name: SANDBOX_NETWORK, Driver: "bridge" });
+    await docker.createNetwork({
+      Name: SANDBOX_NETWORK,
+      Driver: "bridge",
+      Options: SANDBOX_NETWORK_OPTIONS,
+    });
   }
 
   const network = await docker.getNetwork(SANDBOX_NETWORK).inspect();

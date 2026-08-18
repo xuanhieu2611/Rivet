@@ -8,6 +8,7 @@ import {
 } from "@rivet/core";
 
 import type { WorkerConfig } from "./config";
+import { reapHostGitTemporaryFiles } from "./git/host-git";
 import type { Logger } from "./logger";
 
 /**
@@ -34,6 +35,8 @@ export interface SweepDeps {
    * daemon.
    */
   sandbox?: SandboxProvider;
+  /** Reconciles host Git temporary state and queue scheduler state. */
+  cleanupOrphans?: () => Promise<{ temporaryFiles: number; schedulers: number }>;
 }
 
 export function createSweepRunner(deps: SweepDeps): () => Promise<void> {
@@ -49,6 +52,8 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<void> {
     // eye than "one container per running job, plus however many are pending a
     // sweep".
     await reapSandboxes(deps);
+
+    const orphaned = await cleanupOrphans(deps);
 
     const report = await sweepJobs(queue, {
       maxAttempts: config.maxAttempts,
@@ -69,6 +74,8 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<void> {
       skipped: report.expiredLeases.filter((r) => r.outcome === "skipped").length,
       requeued: report.orphanedQueued.filter((r) => r.outcome === "enqueued").length,
       unreachable: report.orphanedQueued.filter((r) => r.outcome === "error").length,
+      temporaryFiles: orphaned.temporaryFiles,
+      schedulers: orphaned.schedulers,
     };
 
     // Quiet is the normal answer, once a minute, forever. Logging it at `info`
@@ -122,6 +129,34 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<void> {
  * unreachable must not abort a sweep whose job-reconciliation half is perfectly
  * able to run, and the next pass will try again in a minute.
  */
+async function cleanupOrphans(
+  deps: SweepDeps,
+): Promise<{ temporaryFiles: number; schedulers: number }> {
+  if (deps.cleanupOrphans) {
+    try {
+      return await deps.cleanupOrphans();
+    } catch (error) {
+      deps.log.error({ err: error }, "could not clean up host or queue orphans");
+    }
+  }
+
+  try {
+    const removed = await reapHostGitTemporaryFiles({
+      olderThanMs: deps.config.sandbox.reapGraceMs,
+    });
+    if (removed.length > 0) {
+      deps.log.warn(
+        { count: removed.length, category: "host_cleanup" },
+        "reaped host Git leftovers",
+      );
+    }
+    return { temporaryFiles: removed.length, schedulers: 0 };
+  } catch (error) {
+    deps.log.error({ err: error }, "could not reap host Git leftovers");
+    return { temporaryFiles: 0, schedulers: 0 };
+  }
+}
+
 async function reapSandboxes(deps: SweepDeps): Promise<void> {
   if (!deps.sandbox) return;
 
