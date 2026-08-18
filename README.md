@@ -25,11 +25,14 @@ claim: a job under evaluation must be indistinguishable from one created in the 
 [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md) is the first experiment run
 over it.
 
-Milestone 11 is in progress. Its first eleven stages add the telemetry port, OTLP export, traces,
-metrics, a local OpenTelemetry Collector, Prometheus, Tempo and Grafana stack, container resource
-monitoring, control-plane hardening, and prompt-injection fencing and detection. Run `pnpm obs:up`
-and follow [docs/milestone-11-guide.md](docs/milestone-11-guide.md) to explore the provisioned
-dashboards.
+Milestone 11 is in progress and all twelve of its stages have landed: the telemetry port, OTLP
+export, traces, metrics, a local OpenTelemetry Collector, Prometheus, Tempo and Grafana stack,
+container resource monitoring, sandbox network isolation, redaction across every durable write,
+authentication, CSRF protection, rate limiting, prompt-injection fencing and detection, and a
+written security review with its own CI workflow. M11 adds one nullable column, no new table, no new
+job status and no new job failure category. Run `pnpm obs:up` and follow
+[docs/milestone-11-guide.md](docs/milestone-11-guide.md) for the walkthrough, or
+[docs/security-review.md](docs/security-review.md) for the security half.
 
 Milestone 9 ends a job in a real pull request. A GitHub App, repository and issue pickers,
 short-lived installation tokens that never enter a container, an authenticated host clone, and
@@ -88,8 +91,10 @@ See [docs/architecture.md](docs/architecture.md) for how the pieces fit together
 [docs/plans/milestone-10.md](docs/plans/milestone-10.md) for the committed M10 plan,
 [docs/plans/milestone-10-acceptance.md](docs/plans/milestone-10-acceptance.md) for its acceptance
 contract, [docs/milestone-10-guide.md](docs/milestone-10-guide.md) for an educational walkthrough of
-the evaluation harness, [docs/milestone-11-guide.md](docs/milestone-11-guide.md) for the local
-observability stack, [docs/plans/milestone-9.md](docs/plans/milestone-9.md) for the M9 plan,
+the evaluation harness, [docs/plans/milestone-11.md](docs/plans/milestone-11.md) for the committed
+M11 plan, [docs/milestone-11-guide.md](docs/milestone-11-guide.md) for an educational walkthrough of
+observability and hardening, [docs/security-review.md](docs/security-review.md) for the §27 security
+review, [docs/plans/milestone-9.md](docs/plans/milestone-9.md) for the M9 plan,
 [docs/plans/milestone-9-acceptance.md](docs/plans/milestone-9-acceptance.md) for its acceptance
 contract, [docs/milestone-9-guide.md](docs/milestone-9-guide.md) for an educational walkthrough of
 GitHub publication, [docs/milestone-9-setup.md](docs/milestone-9-setup.md) for the one-time GitHub
