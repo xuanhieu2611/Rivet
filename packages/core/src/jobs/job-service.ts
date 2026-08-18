@@ -5,9 +5,10 @@ import {
   parseFailureCategory,
   parseReviewDecision,
   parseReviewMode,
+  TERMINAL_STATUSES,
 } from "@rivet/contracts";
 import { db, type Database, type Job, jobs } from "@rivet/database";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, notInArray, sql } from "drizzle-orm";
 
 import { appendEvent } from "../events/event-service";
 
@@ -139,11 +140,48 @@ export interface CreateJobInput extends CreateJob {
   traceContext?: string;
 }
 
+export interface CreateJobOptions {
+  /** Maximum number of non-terminal jobs allowed after this insert. */
+  activeJobLimit?: number;
+}
+
+/** Creation was refused because every active-job slot is currently occupied. */
+export class ActiveJobLimitError extends Error {
+  constructor(
+    readonly limit: number,
+    readonly activeCount: number,
+  ) {
+    super(`The active job limit of ${limit} has been reached.`);
+    this.name = "ActiveJobLimitError";
+  }
+}
+
+// A single advisory lock serializes cap checks across web processes without a
+// new table or a second source of truth. The lock is transaction-scoped.
+const ACTIVE_JOB_CAP_LOCK_KEY = 7_814_203_119;
+
 export async function createJob(
   input: CreateJobInput,
   database: Database = db,
+  options: CreateJobOptions = {},
 ): Promise<JobDetail> {
   return database.transaction(async (tx) => {
+    if (options.activeJobLimit !== undefined) {
+      if (!Number.isSafeInteger(options.activeJobLimit) || options.activeJobLimit < 1) {
+        throw new RangeError("Active-job limit must be a positive integer.");
+      }
+
+      await tx.execute(sql`select pg_advisory_xact_lock(${ACTIVE_JOB_CAP_LOCK_KEY}::bigint)`);
+      const [activeRow] = await tx
+        .select({ count: sql<number>`count(*)` })
+        .from(jobs)
+        .where(notInArray(jobs.status, [...TERMINAL_STATUSES]));
+      const activeCount = Number(activeRow?.count ?? 0);
+      if (activeCount >= options.activeJobLimit) {
+        throw new ActiveJobLimitError(options.activeJobLimit, activeCount);
+      }
+    }
+
     const [row] = await tx
       .insert(jobs)
       .values({

@@ -26,6 +26,15 @@ export {
 } from "./bull-queue";
 export { InMemoryJobQueue, type RecordedEnqueue } from "./memory-queue";
 export {
+  createRateLimiter,
+  DEFAULT_RATE_LIMIT_COMMAND_TIMEOUT_MS,
+  getRateLimiter,
+  RateLimitUnavailableError,
+  RedisRateLimiter,
+  type RateLimiter,
+  type RateLimitResult,
+} from "./rate-limiter";
+export {
   encodeJobRunId,
   JOB_NAMES,
   type JobRunPayload,

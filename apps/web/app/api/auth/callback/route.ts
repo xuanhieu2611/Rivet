@@ -1,6 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
+import { getRateLimiter, RateLimitUnavailableError } from "@rivet/queue";
 
 import {
   AUTH_UNCONFIGURED_MESSAGE,
@@ -15,6 +16,9 @@ import {
   setSessionCookie,
 } from "@/lib/auth/session";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
+import { resolveWebRateLimitConfig } from "@/lib/rate-limit/config";
+import { requestAddress, rateLimitKey } from "@/lib/rate-limit/request";
+import { rateLimitExceeded, rateLimitUnavailable } from "@/lib/rate-limit/response";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +31,25 @@ export const GET = withRoute(
     if (config.mode === "off") return redirect(request, "/");
     if (!config.enabled) {
       return NextResponse.json({ error: AUTH_UNCONFIGURED_MESSAGE }, { status: 503 });
+    }
+
+    const rateLimits = resolveWebRateLimitConfig();
+    try {
+      const result = await getRateLimiter().consume(
+        rateLimitKey("oauth", requestAddress(request)),
+        rateLimits.unauthenticatedLimit,
+        rateLimits.unauthenticatedWindowMs,
+      );
+      if (!result.allowed) {
+        return rateLimitExceeded(
+          "unauthenticated OAuth requests",
+          rateLimits.unauthenticatedLimit,
+          result,
+        );
+      }
+    } catch (cause) {
+      if (!(cause instanceof RateLimitUnavailableError)) throw cause;
+      return rateLimitUnavailable();
     }
 
     const url = new URL(request.url);

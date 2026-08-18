@@ -3,6 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@rivet/queue", () => ({
+  getRateLimiter: () => ({
+    consume: vi
+      .fn()
+      .mockResolvedValue({ allowed: true, resetAt: Date.now() + 600_000, remaining: 9 }),
+  }),
+  RateLimitUnavailableError: class RateLimitUnavailableError extends Error {},
+}));
 
 const ENV = {
   RIVET_AUTH: "github",

@@ -9,6 +9,14 @@ import { githubAccess } from "@/lib/github/client";
 import { GET } from "./route";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@rivet/queue", () => ({
+  getRateLimiter: () => ({
+    consume: vi
+      .fn()
+      .mockResolvedValue({ allowed: true, resetAt: Date.now() + 600_000, remaining: 9 }),
+  }),
+  RateLimitUnavailableError: class RateLimitUnavailableError extends Error {},
+}));
 vi.mock("@/lib/github/client", async (importOriginal) => {
   const actual = await importOriginal<typeof GitHubClientModule>();
   return { ...actual, githubAccess: vi.fn() };

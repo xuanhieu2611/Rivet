@@ -1,12 +1,16 @@
 import "server-only";
 
 import { syncGitHubInstallation } from "@rivet/core";
+import { getRateLimiter, RateLimitUnavailableError } from "@rivet/queue";
 import { NextResponse } from "next/server";
 
 import { csrfFailure } from "@/lib/auth/csrf";
 import { githubAccess, githubUnavailable } from "@/lib/github/client";
 import { parseInstallationId } from "@/lib/github/params";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
+import { resolveWebRateLimitConfig } from "@/lib/rate-limit/config";
+import { requestAddress, rateLimitKey } from "@/lib/rate-limit/request";
+import { rateLimitExceeded, rateLimitUnavailable } from "@/lib/rate-limit/response";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +40,25 @@ export const GET = withRoute(
 
     const access = githubAccess();
     if (!access.enabled) return githubUnavailable(access.reason);
+
+    const rateLimits = resolveWebRateLimitConfig();
+    try {
+      const result = await getRateLimiter().consume(
+        rateLimitKey("github-setup", requestAddress(request)),
+        rateLimits.unauthenticatedLimit,
+        rateLimits.unauthenticatedWindowMs,
+      );
+      if (!result.allowed) {
+        return rateLimitExceeded(
+          "unauthenticated GitHub setup requests",
+          rateLimits.unauthenticatedLimit,
+          result,
+        );
+      }
+    } catch (cause) {
+      if (!(cause instanceof RateLimitUnavailableError)) throw cause;
+      return rateLimitUnavailable();
+    }
 
     // `setup_action=request` means an organization admin still has to approve the
     // install. There is no installation to record yet, and saying so is the whole

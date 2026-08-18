@@ -1,15 +1,28 @@
 import "server-only";
 
 import { createJobSchema } from "@rivet/contracts";
-import { createJob, listJobs, requestJobRun, resolveListLimit } from "@rivet/core";
-import { getJobQueue } from "@rivet/queue";
+import {
+  ActiveJobLimitError,
+  createJob,
+  listJobs,
+  requestJobRun,
+  resolveListLimit,
+} from "@rivet/core";
+import { getJobQueue, getRateLimiter, RateLimitUnavailableError } from "@rivet/queue";
 import { NextResponse } from "next/server";
 
 import { badRequest, readJsonBody, serverError, validationFailed } from "@/lib/api/responses";
 import { csrfFailure } from "@/lib/auth/csrf";
-import { requireSession } from "@/lib/auth/guard";
+import { authenticatedPrincipal, requireSession } from "@/lib/auth/guard";
 import { withRoute, type RouteTelemetry } from "@/lib/api/route-telemetry";
 import { currentTraceContext } from "@/lib/telemetry/telemetry";
+import { resolveWebRateLimitConfig } from "@/lib/rate-limit/config";
+import { rateLimitKey } from "@/lib/rate-limit/request";
+import {
+  activeJobCapExceeded,
+  rateLimitExceeded,
+  rateLimitUnavailable,
+} from "@/lib/rate-limit/response";
 
 /**
  * Never prerender: these handlers talk to Postgres, and `next build` must not
@@ -49,6 +62,29 @@ export const POST = withRoute("/api/jobs", async (request: Request, telemetry: R
     return validationFailed(parsed.error);
   }
 
+  const rateLimits = resolveWebRateLimitConfig();
+  const principal = await authenticatedPrincipal(request);
+  if (!principal) {
+    return NextResponse.json(
+      { error: "Authentication required. Sign in with GitHub to create a job." },
+      { status: 401 },
+    );
+  }
+
+  try {
+    const result = await getRateLimiter().consume(
+      rateLimitKey("job-creation", principal),
+      rateLimits.jobCreationLimit,
+      rateLimits.jobCreationWindowMs,
+    );
+    if (!result.allowed) {
+      return rateLimitExceeded("job creations", rateLimits.jobCreationLimit, result);
+    }
+  } catch (cause) {
+    if (!(cause instanceof RateLimitUnavailableError)) throw cause;
+    return rateLimitUnavailable();
+  }
+
   let job;
   try {
     // The creating request's own span, stored so each attempt of the run can
@@ -57,11 +93,18 @@ export const POST = withRoute("/api/jobs", async (request: Request, telemetry: R
     // already stripped the key if one was sent. `undefined` when telemetry is
     // off, which is the ordinary case and leaves the column null.
     const traceContext = currentTraceContext();
-    job = await createJob({
-      ...parsed.data,
-      ...(traceContext ? { traceContext } : {}),
-    });
+    job = await createJob(
+      {
+        ...parsed.data,
+        ...(traceContext ? { traceContext } : {}),
+      },
+      undefined,
+      { activeJobLimit: rateLimits.activeJobCap },
+    );
   } catch (cause) {
+    if (cause instanceof ActiveJobLimitError) {
+      return activeJobCapExceeded(cause.limit, cause.activeCount);
+    }
     return serverError("POST /api/jobs", cause, telemetry.log);
   }
 

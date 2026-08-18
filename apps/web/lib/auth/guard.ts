@@ -34,6 +34,21 @@ export async function requireSession(request: Request): Promise<Response | null>
   return null;
 }
 
+/**
+ * Returns the authenticated principal for spend-shaped operations.
+ * Authentication is intentionally one-owner today, but using the signed login
+ * here keeps the key correct if the allowlist grows before the schema does.
+ */
+export async function authenticatedPrincipal(request: Request): Promise<string | null> {
+  const config = resolveWebAuthConfig();
+  assertWebAuthModeAllowed(config.mode, process.env.NODE_ENV);
+  if (config.mode === "off") return "local-owner";
+  if (!config.enabled) return null;
+
+  const session = await sessionFromRequest(request, config.sessionSecret);
+  return session?.githubLogin.toLowerCase() ?? null;
+}
+
 export async function sessionFromRequest(
   request: Request,
   secret: string,
