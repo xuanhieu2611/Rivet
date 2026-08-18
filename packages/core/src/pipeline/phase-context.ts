@@ -73,6 +73,7 @@ import {
   ATTR_PHASE,
   SPAN_SANDBOX_COMMAND,
 } from "../telemetry/attributes";
+import { METRIC_COMMAND_DURATION, recordDuration } from "../telemetry/metrics";
 import { NOOP_TELEMETRY } from "../telemetry/noop-telemetry";
 import type { Telemetry } from "../telemetry/telemetry";
 import type { ExecResult } from "../sandbox/sandbox";
@@ -121,6 +122,8 @@ export interface PhaseContext {
    * something that outlives a block.
    */
   telemetry?: Telemetry;
+  /** Injectable clock for event-stream metrics such as model latency. */
+  now?: () => number;
 
   /**
    * Runs a command in the run's sandbox and records that it ran.
@@ -399,6 +402,8 @@ export interface PhaseContextOptions {
   database?: Database;
   /** Where command spans go. Absent, `NOOP_TELEMETRY` records nothing. */
   telemetry?: Telemetry;
+  /** Injectable clock for metrics that measure an event-stream interval. */
+  now?: () => number;
 }
 
 /**
@@ -415,6 +420,7 @@ export function createPhaseContextFactory(
   const database = options.database ?? db;
   const { job, leaseOwner, sandboxes, signal, log } = options;
   const telemetry = options.telemetry ?? NOOP_TELEMETRY;
+  const now = options.now ?? Date.now;
   let currentBaseCommitSha = job.baseCommitSha;
   let currentEnvFingerprint = job.envFingerprint;
   let currentAgentUsage: AgentUsageTotals = {
@@ -435,6 +441,7 @@ export function createPhaseContextFactory(
     signal,
     log,
     telemetry,
+    now,
 
     async exec(input) {
       const sandbox = sandboxes.require();
@@ -559,6 +566,22 @@ export function createPhaseContextFactory(
         );
         return recorded;
       });
+
+      // The command row and its completion event are committed before the
+      // observation is emitted. `durationMs` is the sandbox's measured value,
+      // so the metric cannot drift from the durable command ledger.
+      recordDuration(
+        telemetry,
+        METRIC_COMMAND_DURATION,
+        result.durationMs,
+        {
+          phase: phase.status,
+          command: result.argv[0],
+          timedOut: result.timedOut,
+          oomKilled: result.oomKilled,
+        },
+        "Elapsed time of a sandbox command.",
+      );
 
       return { ...result, commandId: command.id, commandExecutionId };
     },

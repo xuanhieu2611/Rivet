@@ -16,6 +16,8 @@
 
 /** On every span Rivet opens for a job, at every depth. */
 export const ATTR_JOB_ID = "rivet.job_id";
+/** The worker process that owns a lease or emits a worker-level sample. */
+export const ATTR_WORKER_ID = "rivet.worker_id";
 
 /**
  * Which claim of the job this span belongs to.

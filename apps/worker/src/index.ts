@@ -265,6 +265,7 @@ const sweep = createSweepRunner({
   queue,
   config,
   log,
+  ...(telemetry ? { telemetry: telemetry.telemetry } : {}),
   // The reaper's half of the sweep. Absent under `off`, where there is nothing
   // to reap and no daemon to ask.
   ...(sandbox ? { sandbox } : {}),

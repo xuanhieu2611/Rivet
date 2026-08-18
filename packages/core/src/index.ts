@@ -83,6 +83,7 @@ export * from "./sandbox/command-log";
 export * from "./sandbox/errors";
 export * from "./sandbox/sandbox-holder";
 export * from "./telemetry/attributes";
+export * from "./telemetry/metrics";
 export * from "./telemetry/noop-telemetry";
 export * from "./telemetry/recording-telemetry";
 export * from "./telemetry/telemetry";

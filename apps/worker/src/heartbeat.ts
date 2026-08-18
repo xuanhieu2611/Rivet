@@ -1,4 +1,13 @@
-import { heartbeat, JobCancelledError, LeaseLostError } from "@rivet/core";
+import {
+  ATTR_WORKER_ID,
+  heartbeat,
+  JobCancelledError,
+  LeaseLostError,
+  METRIC_WORKER_HEARTBEAT,
+  NOOP_TELEMETRY,
+  recordLevel,
+  type Telemetry,
+} from "@rivet/core";
 
 import type { Logger } from "./logger";
 
@@ -18,6 +27,8 @@ export interface HeartbeatOptions {
   /** Aborted with a named error when the lease is lost or a cancel lands. */
   controller: AbortController;
   log: Logger;
+  /** Where worker liveness samples go. Absent, the sample is a no-op. */
+  telemetry?: Telemetry;
 }
 
 /** Stops the loop and waits for any tick already in flight. */
@@ -25,6 +36,17 @@ export type StopHeartbeat = () => Promise<void>;
 
 export function startHeartbeat(options: HeartbeatOptions): StopHeartbeat {
   const { jobId, leaseOwner, leaseSeconds, controller, log } = options;
+  const telemetry = options.telemetry ?? NOOP_TELEMETRY;
+  const workerAttributes = { [ATTR_WORKER_ID]: leaseOwner };
+
+  // A worker is not live for this lease until the first round trip succeeds.
+  recordLevel(
+    telemetry,
+    METRIC_WORKER_HEARTBEAT,
+    0,
+    workerAttributes,
+    "Whether the worker's latest lease heartbeat succeeded.",
+  );
 
   let inFlight: Promise<void> = Promise.resolve();
   let stopped = false;
@@ -36,6 +58,13 @@ export function startHeartbeat(options: HeartbeatOptions): StopHeartbeat {
       const result = await heartbeat(jobId, leaseOwner, leaseSeconds);
 
       if (!result) {
+        recordLevel(
+          telemetry,
+          METRIC_WORKER_HEARTBEAT,
+          0,
+          workerAttributes,
+          "Whether the worker's latest lease heartbeat succeeded.",
+        );
         // The `lease_owner` predicate did not match: something reclaimed this
         // job while we were working on it. Abort immediately and, critically,
         // write nothing further to the row - its new owner is mid-flight.
@@ -46,6 +75,14 @@ export function startHeartbeat(options: HeartbeatOptions): StopHeartbeat {
         return;
       }
 
+      recordLevel(
+        telemetry,
+        METRIC_WORKER_HEARTBEAT,
+        1,
+        workerAttributes,
+        "Whether the worker's latest lease heartbeat succeeded.",
+      );
+
       if (result.cancelRequested) {
         log.info("cancel requested; aborting between phases");
         controller.abort(new JobCancelledError(`Job ${jobId} was cancelled.`));
@@ -54,6 +91,13 @@ export function startHeartbeat(options: HeartbeatOptions): StopHeartbeat {
 
       log.debug({ status: result.status }, "lease renewed");
     } catch (error) {
+      recordLevel(
+        telemetry,
+        METRIC_WORKER_HEARTBEAT,
+        0,
+        workerAttributes,
+        "Whether the worker's latest lease heartbeat succeeded.",
+      );
       // A failed heartbeat is not a failed job. Neon hiccups, and the lease has
       // two more intervals of slack by construction - that is what the
       // `heartbeat * 3 <= lease` invariant buys. If the database really is gone

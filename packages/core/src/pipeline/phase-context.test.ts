@@ -15,6 +15,8 @@ import { appendEvent } from "../events/event-service";
 import { recordCommand } from "../sandbox/command-log";
 import type { ExecResult, Sandbox } from "../sandbox/sandbox";
 import { SandboxHolder } from "../sandbox/sandbox-holder";
+import { METRIC_COMMAND_DURATION } from "../telemetry/metrics";
+import { RecordingTelemetry } from "../telemetry/recording-telemetry";
 import { createPhaseContextFactory, type PhaseExecInput, type PhaseLogger } from "./phase-context";
 
 vi.mock("../events/event-service", () => ({ appendEvent: vi.fn() }));
@@ -94,6 +96,7 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
 
   const { database, transaction } = fakeDatabase();
   const warn = vi.fn<PhaseLogger["warn"]>();
+  const telemetry = new RecordingTelemetry();
 
   vi.mocked(appendEvent).mockImplementation((input) => {
     events.push(input);
@@ -131,6 +134,7 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
     checkpointMaxBytes: 4_096,
     checkpointTimeoutMs: 30_000,
     database,
+    telemetry,
   })(PHASE);
 
   return {
@@ -142,6 +146,7 @@ function harness(exec: () => Promise<ExecResult> = () => Promise.resolve(RESULT)
     sandboxExec,
     transaction,
     warn,
+    telemetry,
   };
 }
 
@@ -168,6 +173,7 @@ describe("PhaseContext command lifecycle", () => {
     // and its completion event.
     expect(test.transaction).toHaveBeenCalledTimes(2);
     expect(result.commandId).toBe(17);
+    expect(test.telemetry.total(METRIC_COMMAND_DURATION)).toBe(RESULT.durationMs);
 
     const started = test.events[0];
     const completed = test.events[1];

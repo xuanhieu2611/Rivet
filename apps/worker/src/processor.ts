@@ -5,6 +5,7 @@ import {
   ATTR_DISPATCH_GENERATION,
   ATTR_FAILURE_CATEGORY,
   ATTR_JOB_ID,
+  ATTR_WORKER_ID,
   ATTR_QUEUE_WAIT_MS,
   ATTR_RESUMED,
   ATTR_STATUS,
@@ -17,7 +18,15 @@ import {
   getLatestCheckpoint,
   isBoundaryCheckpointPhase,
   JobTimedOutError,
+  METRIC_ACTIVE_JOBS,
+  METRIC_QUEUE_WAIT,
+  METRIC_RETRIES,
+  METRIC_SANDBOX_PROVISIONING_DURATION,
   NOOP_TELEMETRY,
+  recordCount,
+  recordDuration,
+  recordLevel,
+  recordTerminalJobMetrics,
   type Phase,
   type PhaseContext,
   type PhaseDirective,
@@ -143,6 +152,18 @@ export function createProcessor(deps: ProcessorDeps) {
   const phases = deps.phases ?? simulatedPipeline();
   const configuredDirectivePhases = deps.directivePhases ?? directivePhasesFor(phases);
   const faults: () => FaultInjection = deps.faults ?? (() => ({ sleep: abortableSleep }));
+  const telemetry = deps.telemetry ?? NOOP_TELEMETRY;
+  const workerAttributes = { [ATTR_WORKER_ID]: workerId };
+
+  // A worker starts with no claims. Recording the initial level makes a fresh
+  // process visible to a dashboard before its first job arrives.
+  recordLevel(
+    telemetry,
+    METRIC_ACTIVE_JOBS,
+    runs.size,
+    workerAttributes,
+    "Jobs currently claimed by a worker.",
+  );
 
   return async function processMessage(job: Job<JobRunsMessage>, token?: string): Promise<void> {
     // Two kinds of message share the `job-runs` queue, and they are told apart
@@ -185,6 +206,24 @@ export function createProcessor(deps: ProcessorDeps) {
 
     log.info({ attemptCount: claimed.attemptCount }, "claimed");
 
+    // `startedAt` is set by the same database transaction that claims the row.
+    // Use it rather than the worker clock so the histogram agrees with the
+    // durable creation and claim timestamps, and only measure the first claim:
+    // a reclaim's wait includes execution time from the prior attempt.
+    const queueWaitMs =
+      claimed.attemptCount === 1 && claimed.startedAt
+        ? Math.max(0, claimed.startedAt.getTime() - claimed.createdAt.getTime())
+        : undefined;
+    if (queueWaitMs !== undefined) {
+      recordDuration(
+        telemetry,
+        METRIC_QUEUE_WAIT,
+        queueWaitMs,
+        { status: "queued" },
+        "Time a job waited before its first claim.",
+      );
+    }
+
     /**
      * This attempt's root span.
      *
@@ -213,13 +252,19 @@ export function createProcessor(deps: ProcessorDeps) {
         // include however long the previous attempt ran, and a queue-wait
         // dashboard that quietly counts execution time is worse than one that
         // has no data for reclaims.
-        [ATTR_QUEUE_WAIT_MS]:
-          claimed.attemptCount === 1 ? Date.now() - claimed.createdAt.getTime() : undefined,
+        [ATTR_QUEUE_WAIT_MS]: queueWaitMs,
       },
     });
 
     const controller = new AbortController();
     runs.register(jobId, controller);
+    recordLevel(
+      telemetry,
+      METRIC_ACTIVE_JOBS,
+      runs.size,
+      workerAttributes,
+      "Jobs currently claimed by a worker.",
+    );
 
     // The whole-*job* budget, and the distinction is Milestone 6's. Until now
     // this was `maxDurationSeconds` counted from this claim, which gave every
@@ -250,6 +295,7 @@ export function createProcessor(deps: ProcessorDeps) {
       intervalMs: config.heartbeatSeconds * 1_000,
       controller,
       log,
+      telemetry,
     });
 
     // The status this worker believes the job is in. Every transition is a
@@ -390,6 +436,16 @@ export function createProcessor(deps: ProcessorDeps) {
             leaseOwner: workerId,
           });
 
+          if (phase.status === "provisioning") {
+            recordDuration(
+              telemetry,
+              METRIC_SANDBOX_PROVISIONING_DURATION,
+              elapsedMs,
+              { phase: phase.status },
+              "Elapsed time of the sandbox provisioning phase.",
+            );
+          }
+
           // Said once, after the environment has been rebuilt and the patch
           // verified, and before the resumed phase starts. `checkpoint.restored`
           // states that a workspace came back; this states that the *run* is
@@ -439,7 +495,7 @@ export function createProcessor(deps: ProcessorDeps) {
       // write in `finally`.
       await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite: true, log });
 
-      await transitionJob({
+      const completed = await transitionJob({
         jobId,
         from: currentStatus,
         to: "completed",
@@ -452,6 +508,7 @@ export function createProcessor(deps: ProcessorDeps) {
       });
 
       runSpan.setAttribute(ATTR_STATUS, "completed");
+      recordTerminalJobMetrics(telemetry, completed);
       log.info("completed");
     } catch (error) {
       // Computed before `handleFailure`, which throws on two of its branches
@@ -469,7 +526,15 @@ export function createProcessor(deps: ProcessorDeps) {
       // lease. A stale worker may still clean up its own container, but it may
       // not append the cleanup event after discovering that it lost ownership.
       await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite, log });
-      await handleFailure(error, { job, token, jobId, currentStatus, workerId, log });
+      await handleFailure(error, {
+        job,
+        token,
+        jobId,
+        currentStatus,
+        workerId,
+        log,
+        telemetry,
+      });
     } finally {
       deadline.cancel();
       // Fallback for failures that happen before the main try body reaches its
@@ -478,6 +543,13 @@ export function createProcessor(deps: ProcessorDeps) {
       await destroySandbox({ sandboxes, jobId, leaseOwner: workerId, mayWrite, log });
       await stopHeartbeat();
       runs.release(jobId);
+      recordLevel(
+        telemetry,
+        METRIC_ACTIVE_JOBS,
+        runs.size,
+        workerAttributes,
+        "Jobs currently claimed by a worker.",
+      );
       // Last, so everything above it - the cleanup, the terminal transition,
       // the requeue - is inside the attempt it belongs to.
       runSpan.end();
@@ -649,6 +721,7 @@ interface FailureContext {
   currentStatus: JobStatus;
   workerId: string;
   log: Logger;
+  telemetry: Telemetry;
 }
 
 /**
@@ -659,7 +732,8 @@ interface FailureContext {
  * drifting apart, and the switch below is the entire retry policy.
  */
 async function handleFailure(error: unknown, context: FailureContext): Promise<void> {
-  const { job, jobId, currentStatus, workerId, log } = context;
+  const { job, jobId, currentStatus, workerId, log, telemetry } = context;
+  const category = failureCategoryFor(error);
   const outcome = classify(error);
 
   switch (outcome) {
@@ -687,12 +761,12 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
     case "cancelled": {
       // A cancelled job is not a failed job, and the message is finished
       // normally: there is nothing left to retry.
-      await finishBadly(jobId, currentStatus, "cancelled", workerId, error, log);
+      await finishBadly(jobId, currentStatus, "cancelled", workerId, error, log, telemetry);
       return;
     }
 
     case "timed_out": {
-      await finishBadly(jobId, currentStatus, "timed_out", workerId, error, log);
+      await finishBadly(jobId, currentStatus, "timed_out", workerId, error, log, telemetry);
       // v6: `UnrecoverableError`, not the v5 `job.discard()`. A job that blew
       // its budget will blow it again.
       throw new UnrecoverableError(describeError(error));
@@ -703,7 +777,7 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       // out of budget did not go wrong - it was stopped, and the dashboard
       // should say which. Never retried: a second attempt would start from zero
       // and spend the same budget reaching the same ceiling.
-      await finishBadly(jobId, currentStatus, "budget_exceeded", workerId, error, log);
+      await finishBadly(jobId, currentStatus, "budget_exceeded", workerId, error, log, telemetry);
       throw new UnrecoverableError(describeError(error));
     }
 
@@ -713,7 +787,7 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       // worker delivery here would turn a terminal publication outage into a
       // second sandbox run and would blur the external failure on the timeline.
       if (currentStatus === "finalizing") {
-        await finishBadly(jobId, currentStatus, "failed", workerId, error, log);
+        await finishBadly(jobId, currentStatus, "failed", workerId, error, log, telemetry);
         throw new UnrecoverableError(describeError(error));
       }
 
@@ -723,20 +797,29 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       // category that explains why it never completed and make the sweeper
       // guess `lease_expired` later. Persist the error we actually observed.
       if (isLastBullAttempt(job)) {
-        await finishBadly(jobId, currentStatus, "failed", workerId, error, log);
+        await finishBadly(jobId, currentStatus, "failed", workerId, error, log, telemetry);
         throw new UnrecoverableError(describeError(error));
       }
 
-      await releaseJob(jobId, workerId, {
+      const released = await releaseJob(jobId, workerId, {
         reason: `Retrying after a transient failure: ${describeError(error)}`,
         type: "job.retry_scheduled",
       });
+      if (released) {
+        recordCount(
+          telemetry,
+          METRIC_RETRIES,
+          1,
+          { [ATTR_FAILURE_CATEGORY]: category },
+          "Job retries scheduled after a retryable failure.",
+        );
+      }
       log.warn({ err: error }, "transient failure; released for retry");
       throw error;
     }
 
     case "terminal": {
-      await finishBadly(jobId, currentStatus, "failed", workerId, error, log);
+      await finishBadly(jobId, currentStatus, "failed", workerId, error, log, telemetry);
       throw new UnrecoverableError(describeError(error));
     }
   }
@@ -760,9 +843,10 @@ async function finishBadly(
   workerId: string,
   error: unknown,
   log: Logger,
+  telemetry: Telemetry,
 ): Promise<void> {
   try {
-    await transitionJob({
+    const terminal = await transitionJob({
       jobId,
       from,
       to,
@@ -778,6 +862,7 @@ async function finishBadly(
         leaseExpiresAt: null,
       }),
     });
+    recordTerminalJobMetrics(telemetry, terminal);
     log.info({ status: to }, "run ended");
   } catch (cause) {
     if (cause instanceof TransitionConflictError) {

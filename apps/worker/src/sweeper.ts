@@ -4,6 +4,7 @@ import {
   type JobQueue,
   type SandboxProvider,
   sweepJobs,
+  type Telemetry,
 } from "@rivet/core";
 
 import type { WorkerConfig } from "./config";
@@ -23,6 +24,8 @@ export interface SweepDeps {
   queue: JobQueue;
   config: WorkerConfig;
   log: Logger;
+  /** Reconciliation metrics, absent when telemetry is disabled. */
+  telemetry?: Telemetry;
   /**
    * The sandbox reaper, when this worker has one.
    *
@@ -55,6 +58,7 @@ export function createSweepRunner(deps: SweepDeps): () => Promise<void> {
       // enqueue - harmless, since re-enqueueing is idempotent, but it would
       // fill the log with reconciliations that reconciled nothing.
       orphanedQueuedAfterMs: config.sweepIntervalMs,
+      ...(deps.telemetry ? { telemetry: deps.telemetry } : {}),
     });
 
     const summary = {

@@ -3,6 +3,14 @@ import { db, type Database, jobs, type Job } from "@rivet/database";
 import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 
 import { appendEvent } from "../events/event-service";
+import {
+  METRIC_LEASE_RECLAIMS,
+  METRIC_SWEEPER_OUTCOMES,
+  recordCount,
+  recordTerminalJobMetrics,
+} from "../telemetry/metrics";
+import { NOOP_TELEMETRY } from "../telemetry/noop-telemetry";
+import type { Telemetry } from "../telemetry/telemetry";
 import type { JobQueue } from "../queue/job-queue";
 import { LEASED_STATUSES } from "./claims";
 import { requestJobRun } from "./enqueue";
@@ -66,6 +74,8 @@ export interface SweepOptions {
   limit?: number;
   /** See `DEFAULT_ORPHANED_QUEUED_AFTER_MS`. */
   orphanedQueuedAfterMs?: number;
+  /** Where reconciliation outcomes go. Absent, the samples are no-ops. */
+  telemetry?: Telemetry;
 }
 
 /**
@@ -189,10 +199,13 @@ export async function reclaimExpiredJobs(
     .for("update", { skipLocked: true });
 
   const results: ReclaimResult[] = [];
+  const telemetry = options.telemetry ?? NOOP_TELEMETRY;
 
   for (const candidate of candidates) {
-    results.push(await reclaimOne(candidate, options.maxAttempts, database));
+    results.push(await reclaimOne(candidate, options.maxAttempts, database, telemetry));
   }
+
+  recordReclaimMetrics(telemetry, results);
 
   // Enqueued only after every write has committed. A message for a transaction
   // that later rolled back would be a worker racing to claim a job that is
@@ -217,6 +230,27 @@ export async function reclaimExpiredJobs(
   return results;
 }
 
+function recordReclaimMetrics(telemetry: Telemetry, results: readonly ReclaimResult[]): void {
+  for (const result of results) {
+    recordCount(
+      telemetry,
+      METRIC_SWEEPER_OUTCOMES,
+      1,
+      { kind: "expired_lease", outcome: result.outcome },
+      "Outcomes observed while reconciling expired job leases.",
+    );
+    if (result.outcome === "reclaimed") {
+      recordCount(
+        telemetry,
+        METRIC_LEASE_RECLAIMS,
+        1,
+        { from: result.from },
+        "Expired leases returned to the queue for another attempt.",
+      );
+    }
+  }
+}
+
 interface ReclaimCandidate {
   id: string;
   status: JobStatus;
@@ -230,6 +264,7 @@ async function reclaimOne(
   candidate: ReclaimCandidate,
   maxAttempts: number,
   database: Database,
+  telemetry: Telemetry,
 ): Promise<ReclaimResult> {
   const base = {
     jobId: candidate.id,
@@ -261,7 +296,7 @@ async function reclaimOne(
     // cancelled job must not be recorded as `failed` just because it happened
     // to be on its last attempt when its worker died.
     if (candidate.cancelRequestedAt !== null) {
-      await transitionJob(
+      const terminal = await transitionJob(
         {
           jobId: candidate.id,
           from: candidate.status,
@@ -278,6 +313,7 @@ async function reclaimOne(
         },
         database,
       );
+      recordTerminalJobMetrics(telemetry, terminal);
       return { ...base, outcome: "cancelled" };
     }
 
@@ -285,7 +321,7 @@ async function reclaimOne(
       const reason =
         `Lease held by ${owner} expired after ${candidate.attemptCount} ` +
         `attempt(s); no attempts remain.`;
-      await transitionJob(
+      const terminal = await transitionJob(
         {
           jobId: candidate.id,
           from: candidate.status,
@@ -304,6 +340,7 @@ async function reclaimOne(
         },
         database,
       );
+      recordTerminalJobMetrics(telemetry, terminal);
       return { ...base, outcome: "failed" };
     }
 
@@ -425,5 +462,18 @@ export async function requeueOrphanedJobs(
     }
   }
 
+  recordRequeueMetrics(options.telemetry ?? NOOP_TELEMETRY, results);
   return results;
+}
+
+function recordRequeueMetrics(telemetry: Telemetry, results: readonly RequeueResult[]): void {
+  for (const result of results) {
+    recordCount(
+      telemetry,
+      METRIC_SWEEPER_OUTCOMES,
+      1,
+      { kind: "orphaned_queue", outcome: result.outcome },
+      "Outcomes observed while reconciling queued jobs without messages.",
+    );
+  }
 }

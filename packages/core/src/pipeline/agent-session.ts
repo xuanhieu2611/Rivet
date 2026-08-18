@@ -25,8 +25,19 @@ import {
   SPAN_AGENT_TOOL,
   SPAN_AGENT_TURN,
 } from "../telemetry/attributes";
+import {
+  METRIC_JOB_COST_USD,
+  METRIC_JOB_INPUT_TOKENS,
+  METRIC_JOB_OUTPUT_TOKENS,
+  METRIC_MODEL_CALLS,
+  METRIC_MODEL_ERRORS,
+  METRIC_MODEL_LATENCY,
+  METRIC_TOOL_FAILURES,
+  recordCount,
+  recordDuration,
+} from "../telemetry/metrics";
 import { NOOP_TELEMETRY } from "../telemetry/noop-telemetry";
-import type { Span } from "../telemetry/telemetry";
+import type { Span, Telemetry } from "../telemetry/telemetry";
 import type { AgentUsageTotals, PhaseContext } from "./phase-context";
 import type { AgentOptions } from "./phases";
 
@@ -94,6 +105,11 @@ async function runSession(
     // A composed signal aborts with whichever reason fired. The job's own
     // reason wins because it carries cancellation, timeout, or lease loss.
     ctx.signal.throwIfAborted();
+    // A session timeout is a bounded stop, not a provider error. Anything else
+    // that escapes the session is a model/harness failure and is counted once;
+    // `session_ended(reason: error)` covers the adapter path that reports the
+    // same fact as an event before closing its stream.
+    if (!deadline.aborted && !(error instanceof LeaseLostError)) state.recordModelError();
     throw deadline.aborted ? sessionExpired(agent.sessionTimeoutMs) : error;
   } finally {
     // Before `session.stop()`, so a turn or tool span left open by a session
@@ -141,7 +157,11 @@ export class SessionAccounting {
   lastAssistantMessage: string | undefined;
 
   private sessionId: string | undefined;
+  private model: string | undefined;
+  private provider: string | undefined;
   private turns = 0;
+  private turnStartedAt: number | undefined;
+  private modelErrorRecorded = false;
   private warnedAboutCost = false;
   /** The breach has already been persisted and announced; do not do it twice. */
   private breachSettled = false;
@@ -150,6 +170,8 @@ export class SessionAccounting {
   private cumulativeTurns: number;
   private cumulativeModelCalls: number;
   private cumulativeToolCalls: number;
+  /** The rounded cost last written to the durable job row. */
+  private persistedCostUsd: number | null;
   private readonly total: CodingAgentUsage;
   private readonly sessionTotal: CodingAgentUsage = emptyUsage();
 
@@ -184,12 +206,13 @@ export class SessionAccounting {
         totalModelCalls: ctx.job.totalModelCalls ?? 0,
         totalToolCalls: ctx.job.totalToolCalls ?? 0,
       } satisfies AgentUsageTotals);
+    this.persistedCostUsd = parseStoredCost(persisted.totalCostUsd);
     this.total = {
       inputTokens: persisted.totalInputTokens,
       outputTokens: persisted.totalOutputTokens,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
-      costUsd: parseStoredCost(persisted.totalCostUsd),
+      costUsd: this.persistedCostUsd,
     };
     this.cumulativeTurns = persisted.totalTurns ?? 0;
     this.cumulativeModelCalls = persisted.totalModelCalls ?? 0;
@@ -224,6 +247,8 @@ export class SessionAccounting {
     switch (event.type) {
       case "session_started": {
         this.sessionId = event.sessionId;
+        this.model = event.model;
+        this.provider = event.provider;
         // The model and provider are only known once the session answers, so
         // they land on the span that is already open rather than at creation.
         this.sessionSpan?.setAttributes({
@@ -244,6 +269,7 @@ export class SessionAccounting {
         // turn, and a span that only ever closes on the happy path is a span
         // that disappears from exactly the traces worth reading.
         this.endTurnSpan();
+        this.turnStartedAt = this.now();
         this.turnSpan = this.startSpan(SPAN_AGENT_TURN, this.sessionSpan, {
           [ATTR_AGENT_TURN]: event.turn,
         });
@@ -251,6 +277,13 @@ export class SessionAccounting {
         this.cumulativeModelCalls += 1;
         await this.ctx.recordAgentUsage(this.usagePatch());
         await this.write("agent.turn_started", `Turn ${this.turns}.`, { turn: event.turn });
+        recordCount(
+          this.telemetry(),
+          METRIC_MODEL_CALLS,
+          1,
+          this.modelAttributes(),
+          "Model calls started by coding sessions.",
+        );
         this.check("turns", this.turns, this.spec.limits.maxTurns);
         this.check("model_calls", this.cumulativeModelCalls, this.spec.limits.maxModelCalls);
         await this.settleBreach();
@@ -308,6 +341,15 @@ export class SessionAccounting {
             ...(event.commandExecutionId ? { commandExecutionId: event.commandExecutionId } : {}),
           },
         );
+        if (event.isError) {
+          recordCount(
+            this.telemetry(),
+            METRIC_TOOL_FAILURES,
+            1,
+            { ...this.modelAttributes(), tool: event.toolName },
+            "Tool calls that returned an error to the model.",
+          );
+        }
         return;
       }
 
@@ -320,12 +362,14 @@ export class SessionAccounting {
           outputTokens: event.usage.outputTokens,
           costUsd: this.sessionTotal.costUsd,
         });
+        this.recordUsageMetrics(event.usage);
         this.checkCost();
         await this.settleBreach();
         return;
       }
 
       case "turn_completed": {
+        this.endTurnSpan();
         this.cumulativeTurns += 1;
         await this.ctx.recordAgentUsage(this.usagePatch());
         await this.write("agent.turn_completed", `Turn ${event.turn} completed.`, {
@@ -368,6 +412,7 @@ export class SessionAccounting {
           costUsd: this.sessionTotal.costUsd,
           ...(event.error ? { error: event.error } : {}),
         });
+        if (event.reason === "error") this.recordModelError();
         return;
       }
     }
@@ -388,8 +433,91 @@ export class SessionAccounting {
   }
 
   private endTurnSpan(): void {
+    const startedAt = this.turnStartedAt;
     this.turnSpan?.end();
     this.turnSpan = undefined;
+    this.turnStartedAt = undefined;
+
+    if (startedAt !== undefined) {
+      recordDuration(
+        this.telemetry(),
+        METRIC_MODEL_LATENCY,
+        this.now() - startedAt,
+        this.modelAttributes(),
+        "Elapsed time of one model turn.",
+      );
+    }
+  }
+
+  private now(): number {
+    return this.ctx.now?.() ?? Date.now();
+  }
+
+  private telemetry(): Telemetry {
+    return this.ctx.telemetry ?? NOOP_TELEMETRY;
+  }
+
+  private modelAttributes(): Record<string, string | number | boolean | undefined> {
+    return {
+      [ATTR_AGENT_ROLE]: this.spec.role,
+      [ATTR_AGENT_MODEL]: this.model,
+      [ATTR_AGENT_PROVIDER]: this.provider,
+    };
+  }
+
+  /** Usage metrics are deltas, matching the cumulative values on `jobs`. */
+  private recordUsageMetrics(usage: CodingAgentUsage): void {
+    const telemetry = this.telemetry();
+    const attributes = this.modelAttributes();
+    recordCount(
+      telemetry,
+      METRIC_JOB_INPUT_TOKENS,
+      usage.inputTokens,
+      attributes,
+      "Input tokens consumed by coding sessions.",
+      "{token}",
+    );
+    recordCount(
+      telemetry,
+      METRIC_JOB_OUTPUT_TOKENS,
+      usage.outputTokens,
+      attributes,
+      "Output tokens consumed by coding sessions.",
+      "{token}",
+    );
+    // `jobs.total_cost_usd` is numeric(10,4), so the durable writer rounds
+    // the cumulative total on every usage event. Emit that same rounded delta
+    // rather than the provider's raw turn price; otherwise a long run can
+    // report a metric that differs from the row by the accumulated fractions
+    // below four decimal places.
+    if (this.total.costUsd !== null && this.persistedCostUsd !== null) {
+      const persistedCostUsd = Number(this.total.costUsd.toFixed(4));
+      const delta = Number((persistedCostUsd - this.persistedCostUsd).toFixed(4));
+      this.persistedCostUsd = persistedCostUsd;
+      if (delta !== 0) {
+        recordCount(
+          telemetry,
+          METRIC_JOB_COST_USD,
+          delta,
+          attributes,
+          "Priced model spend recorded on jobs.",
+          "{USD}",
+        );
+      }
+    }
+  }
+
+  /** Counts a provider or harness error once, even when it reports twice. */
+  recordModelError(): void {
+    if (this.modelErrorRecorded) return;
+    this.modelErrorRecorded = true;
+    recordCount(
+      this.telemetry(),
+      METRIC_MODEL_ERRORS,
+      1,
+      this.modelAttributes(),
+      "Coding-session errors raised by the model provider or harness.",
+    );
   }
 
   private startSpan(
