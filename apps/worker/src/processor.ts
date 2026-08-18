@@ -33,6 +33,7 @@ import {
   type Phase,
   type PhaseContext,
   type PhaseDirective,
+  type Redactor,
   directivePhasesFor,
   planResume,
   releaseJob,
@@ -149,6 +150,8 @@ export interface ProcessorDeps {
    * two writes most worth seeing when a job goes wrong.
    */
   telemetry?: Telemetry;
+  /** The worker's live credential registry, used by all durable writers. */
+  redactor?: Redactor;
 }
 
 export function createProcessor(deps: ProcessorDeps) {
@@ -368,6 +371,7 @@ export function createProcessor(deps: ProcessorDeps) {
         checkpointTimeoutMs: config.checkpointTimeoutMs,
         repositoryDir: `${config.sandbox.workdir}/repo`,
         ...(deps.telemetry ? { telemetry: deps.telemetry } : {}),
+        ...(deps.redactor ? { redactor: deps.redactor } : {}),
       });
       contextForCleanup = contextFor;
 
@@ -418,6 +422,7 @@ export function createProcessor(deps: ProcessorDeps) {
               message: phase.label,
               data: { phase: phase.label },
               leaseOwner: workerId,
+              ...(deps.redactor ? { redactor: deps.redactor } : {}),
             });
             return;
           }
@@ -430,6 +435,7 @@ export function createProcessor(deps: ProcessorDeps) {
             type: "phase.started",
             message: phase.label,
             data: { phase: phase.label },
+            ...(deps.redactor ? { redactor: deps.redactor } : {}),
           });
           currentStatus = phase.status;
         },
@@ -449,6 +455,7 @@ export function createProcessor(deps: ProcessorDeps) {
             message: `${phase.label} finished`,
             data: { phase: phase.label, durationMs: elapsedMs },
             leaseOwner: workerId,
+            ...(deps.redactor ? { redactor: deps.redactor } : {}),
           });
 
           if (phase.status === "provisioning") {
@@ -485,6 +492,7 @@ export function createProcessor(deps: ProcessorDeps) {
                 dispatchGeneration,
               },
               leaseOwner: workerId,
+              ...(deps.redactor ? { redactor: deps.redactor } : {}),
             });
           }
         },
@@ -515,6 +523,7 @@ export function createProcessor(deps: ProcessorDeps) {
         mayWrite: true,
         log,
         resourceContext: resourceContext(),
+        ...(deps.redactor ? { redactor: deps.redactor } : {}),
       });
 
       const completed = await transitionJob({
@@ -527,6 +536,7 @@ export function createProcessor(deps: ProcessorDeps) {
         // The lease is cleared on the way out so the sweeper never has to think
         // about a finished job at all.
         patch: (_job, now) => ({ completedAt: now, leaseOwner: null, leaseExpiresAt: null }),
+        ...(deps.redactor ? { redactor: deps.redactor } : {}),
       });
 
       runSpan.setAttribute(ATTR_STATUS, "completed");
@@ -554,6 +564,7 @@ export function createProcessor(deps: ProcessorDeps) {
         mayWrite,
         log,
         resourceContext: resourceContext(),
+        ...(deps.redactor ? { redactor: deps.redactor } : {}),
       });
       await handleFailure(error, {
         job,
@@ -563,6 +574,7 @@ export function createProcessor(deps: ProcessorDeps) {
         workerId,
         log,
         telemetry,
+        ...(deps.redactor ? { redactor: deps.redactor } : {}),
       });
     } finally {
       deadline.cancel();
@@ -576,6 +588,7 @@ export function createProcessor(deps: ProcessorDeps) {
         mayWrite,
         log,
         resourceContext: resourceContext(),
+        ...(deps.redactor ? { redactor: deps.redactor } : {}),
       });
       await stopHeartbeat();
       runs.release(jobId);
@@ -680,6 +693,7 @@ interface DestroyContext {
   log: Logger;
   /** The active phase context used for the fenced artifact and event writes. */
   resourceContext: PhaseContext | undefined;
+  redactor?: Redactor;
 }
 
 /**
@@ -701,7 +715,7 @@ interface DestroyContext {
  * the lease makes.
  */
 async function destroySandbox(context: DestroyContext): Promise<void> {
-  const { sandboxes, jobId, leaseOwner, mayWrite, log, resourceContext } = context;
+  const { sandboxes, jobId, leaseOwner, mayWrite, log, resourceContext, redactor } = context;
   const sandbox = sandboxes.current;
   if (!sandbox) return;
 
@@ -739,6 +753,7 @@ async function destroySandbox(context: DestroyContext): Promise<void> {
       message: `Sandbox ${containerId.slice(0, 12)} removed.`,
       data: { containerId },
       leaseOwner,
+      ...(redactor ? { redactor } : {}),
     });
   } catch (error) {
     log.error({ err: error }, "could not record sandbox destruction");
@@ -821,6 +836,7 @@ interface FailureContext {
   workerId: string;
   log: Logger;
   telemetry: Telemetry;
+  redactor?: Redactor;
 }
 
 /**
@@ -831,7 +847,7 @@ interface FailureContext {
  * drifting apart, and the switch below is the entire retry policy.
  */
 async function handleFailure(error: unknown, context: FailureContext): Promise<void> {
-  const { job, jobId, currentStatus, workerId, log, telemetry } = context;
+  const { job, jobId, currentStatus, workerId, log, telemetry, redactor } = context;
   const category = failureCategoryFor(error);
   const outcome = classify(error);
 
@@ -852,6 +868,7 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       await releaseJob(jobId, workerId, {
         reason: "Worker shut down; job handed back to the queue.",
         type: "job.reclaimed",
+        ...(redactor ? { redactor } : {}),
       });
       log.info("released on shutdown");
       return requeue(context.job, context.token);
@@ -860,12 +877,30 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
     case "cancelled": {
       // A cancelled job is not a failed job, and the message is finished
       // normally: there is nothing left to retry.
-      await finishBadly(jobId, currentStatus, "cancelled", workerId, error, log, telemetry);
+      await finishBadly(
+        jobId,
+        currentStatus,
+        "cancelled",
+        workerId,
+        error,
+        log,
+        telemetry,
+        redactor,
+      );
       return;
     }
 
     case "timed_out": {
-      await finishBadly(jobId, currentStatus, "timed_out", workerId, error, log, telemetry);
+      await finishBadly(
+        jobId,
+        currentStatus,
+        "timed_out",
+        workerId,
+        error,
+        log,
+        telemetry,
+        redactor,
+      );
       // v6: `UnrecoverableError`, not the v5 `job.discard()`. A job that blew
       // its budget will blow it again.
       throw new UnrecoverableError(describeError(error));
@@ -876,7 +911,16 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       // out of budget did not go wrong - it was stopped, and the dashboard
       // should say which. Never retried: a second attempt would start from zero
       // and spend the same budget reaching the same ceiling.
-      await finishBadly(jobId, currentStatus, "budget_exceeded", workerId, error, log, telemetry);
+      await finishBadly(
+        jobId,
+        currentStatus,
+        "budget_exceeded",
+        workerId,
+        error,
+        log,
+        telemetry,
+        redactor,
+      );
       throw new UnrecoverableError(describeError(error));
     }
 
@@ -886,7 +930,16 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       // worker delivery here would turn a terminal publication outage into a
       // second sandbox run and would blur the external failure on the timeline.
       if (currentStatus === "finalizing") {
-        await finishBadly(jobId, currentStatus, "failed", workerId, error, log, telemetry);
+        await finishBadly(
+          jobId,
+          currentStatus,
+          "failed",
+          workerId,
+          error,
+          log,
+          telemetry,
+          redactor,
+        );
         throw new UnrecoverableError(describeError(error));
       }
 
@@ -896,13 +949,23 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
       // category that explains why it never completed and make the sweeper
       // guess `lease_expired` later. Persist the error we actually observed.
       if (isLastBullAttempt(job)) {
-        await finishBadly(jobId, currentStatus, "failed", workerId, error, log, telemetry);
+        await finishBadly(
+          jobId,
+          currentStatus,
+          "failed",
+          workerId,
+          error,
+          log,
+          telemetry,
+          redactor,
+        );
         throw new UnrecoverableError(describeError(error));
       }
 
       const released = await releaseJob(jobId, workerId, {
         reason: `Retrying after a transient failure: ${describeError(error)}`,
         type: "job.retry_scheduled",
+        ...(redactor ? { redactor } : {}),
       });
       if (released) {
         recordCount(
@@ -918,7 +981,7 @@ async function handleFailure(error: unknown, context: FailureContext): Promise<v
     }
 
     case "terminal": {
-      await finishBadly(jobId, currentStatus, "failed", workerId, error, log, telemetry);
+      await finishBadly(jobId, currentStatus, "failed", workerId, error, log, telemetry, redactor);
       throw new UnrecoverableError(describeError(error));
     }
   }
@@ -943,6 +1006,7 @@ async function finishBadly(
   error: unknown,
   log: Logger,
   telemetry: Telemetry,
+  redactor?: Redactor,
 ): Promise<void> {
   try {
     const terminal = await transitionJob({
@@ -953,6 +1017,7 @@ async function finishBadly(
       type: to === "failed" ? "job.failed" : "job.status_changed",
       message: describeError(error),
       data: { error: describeError(error), failureCategory: failureCategoryFor(error) },
+      ...(redactor ? { redactor } : {}),
       patch: (_job, now) => ({
         completedAt: now,
         failureReason: describeError(error),

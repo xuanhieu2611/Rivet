@@ -11,6 +11,7 @@ import { and, asc, desc, eq, gt } from "drizzle-orm";
 
 import { assertActiveLease } from "../jobs/lease";
 import { truncate } from "../sandbox/command-log";
+import type { Redactor } from "../telemetry/redaction";
 
 /**
  * The append-only store of a job's durable output.
@@ -51,6 +52,8 @@ export interface RecordArtifactInput {
   requireComplete?: boolean;
   /** When present, the artifact row is fenced on this active lease. */
   leaseOwner?: string;
+  /** Redacts live credentials before the artifact becomes durable. */
+  redactor?: Redactor;
 }
 
 /**
@@ -77,13 +80,18 @@ export async function recordArtifact(
     await assertActiveLease(input.jobId, input.leaseOwner, executor);
   }
 
-  const byteSize = Buffer.byteLength(input.content, "utf8");
+  const content = input.redactor?.redact(input.content) ?? input.content;
+  const metadata =
+    input.metadata === undefined
+      ? undefined
+      : ((input.redactor?.redactDeep(input.metadata) ?? input.metadata) as Record<string, unknown>);
+  const byteSize = Buffer.byteLength(content, "utf8");
   if (input.requireComplete && byteSize > input.maxBytes) {
     throw new ArtifactTooLargeError(
       `The ${input.type} artifact is ${byteSize} bytes, above the complete ${input.maxBytes}-byte limit.`,
     );
   }
-  const bounded = truncate(input.content, input.maxBytes);
+  const bounded = truncate(content, input.maxBytes);
 
   const [row] = await executor
     .insert(jobArtifacts)
@@ -96,7 +104,7 @@ export async function recordArtifact(
       truncated: bounded.truncated,
       // `exactOptionalPropertyTypes` is on, so absent metadata has to be an
       // absent key rather than an explicit `undefined`.
-      ...(input.metadata ? { metadata: input.metadata } : {}),
+      ...(metadata === undefined ? {} : { metadata }),
     })
     .returning();
 

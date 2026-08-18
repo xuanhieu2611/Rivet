@@ -3,6 +3,7 @@ import { db, type Executor, type JobEventRow, jobEvents } from "@rivet/database"
 import { and, asc, eq, gt } from "drizzle-orm";
 
 import { assertActiveLease } from "../jobs/lease";
+import type { Redactor } from "../telemetry/redaction";
 
 /**
  * The append-only job event log.
@@ -25,6 +26,8 @@ export interface AppendEventInput {
   data?: JobEventData;
   /** When present, the event is written only while this lease is active. */
   leaseOwner?: string;
+  /** Redacts live credentials before the payload becomes durable. */
+  redactor?: Redactor;
 }
 
 /** Maps a database row to the contract shape. */
@@ -63,13 +66,19 @@ export async function appendEvent(
     await assertActiveLease(input.jobId, input.leaseOwner, executor);
   }
 
+  const data =
+    input.data === undefined
+      ? undefined
+      : ((input.redactor?.redactDeep(input.data) ?? input.data) as JobEventData);
+  const message = input.redactor?.redact(input.message) ?? input.message;
+
   const [row] = await executor
     .insert(jobEvents)
     .values({
       jobId: input.jobId,
       type: input.type,
-      message: input.message,
-      ...(input.data ? { data: input.data } : {}),
+      message,
+      ...(data === undefined ? {} : { data }),
     })
     .returning();
 

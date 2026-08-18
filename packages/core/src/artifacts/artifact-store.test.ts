@@ -1,6 +1,7 @@
 import type { Executor, NewJobArtifactRow } from "@rivet/database";
 import { describe, expect, it, vi } from "vitest";
 
+import type { Redactor } from "../telemetry/redaction";
 import { ArtifactTooLargeError, getArtifact, recordArtifact } from "./artifact-store";
 
 /**
@@ -36,6 +37,20 @@ const INPUT = {
   type: "diff",
   phase: "testing",
 } as const;
+const SECRET = "sentinel-secret-value";
+const redactor: Redactor = {
+  redact: (value) => value.split(SECRET).join("[REDACTED]"),
+  redactDeep: (value) => {
+    if (typeof value === "string") return value.split(SECRET).join("[REDACTED]");
+    if (Array.isArray(value)) return value.map((entry) => redactor.redactDeep(entry));
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [key, redactor.redactDeep(entry)]),
+      );
+    }
+    return value;
+  },
+};
 
 describe("recordArtifact", () => {
   it("stores content under the bound untouched", async () => {
@@ -83,6 +98,26 @@ describe("recordArtifact", () => {
       ),
     ).rejects.toBeInstanceOf(ArtifactTooLargeError);
     expect(capture.values).toEqual([]);
+  });
+
+  it("redacts content and metadata before storing them", async () => {
+    const capture = capturingExecutor();
+
+    await recordArtifact(
+      {
+        ...INPUT,
+        content: `public-sentinel ${SECRET}`,
+        metadata: { note: SECRET },
+        maxBytes: 1_024,
+        redactor,
+      },
+      capture.executor,
+    );
+
+    expect(capture.values[0]?.content).toBe("public-sentinel [REDACTED]");
+    expect(capture.values[0]?.metadata).toEqual({ note: "[REDACTED]" });
+    expect(JSON.stringify(capture.values[0])).toContain("public-sentinel");
+    expect(JSON.stringify(capture.values[0])).not.toContain(SECRET);
   });
 
   it("counts the size in bytes rather than characters", async () => {

@@ -1,11 +1,77 @@
+import type { Executor, NewJobCommandRow } from "@rivet/database";
 import { describe, expect, it } from "vitest";
 
-import { truncate } from "./command-log";
+import type { Redactor } from "../telemetry/redaction";
+import { recordCommand, truncate } from "./command-log";
+import type { ExecResult } from "./sandbox";
 
 /**
- * `recordCommand` is not tested here: it is an insert, and the unit suite runs
- * with no database. `truncate` is the part with logic in it, and it is pure.
+ * The writer tests use a capturing executor, so they still run without a
+ * database while asserting the durable redaction boundary.
  */
+
+function capturingExecutor(): { executor: Executor; values: NewJobCommandRow[] } {
+  const values: NewJobCommandRow[] = [];
+  const executor = {
+    insert: () => ({
+      values: (row: NewJobCommandRow) => {
+        values.push(row);
+        return { returning: () => Promise.resolve([{ ...row, id: 1, createdAt: new Date(0) }]) };
+      },
+    }),
+  } as unknown as Executor;
+  return { executor, values };
+}
+
+const SECRET = "sentinel-secret-value";
+const redactor: Redactor = {
+  redact: (value) => value.split(SECRET).join("[REDACTED]"),
+  redactDeep: (value) => {
+    if (typeof value === "string") return value.split(SECRET).join("[REDACTED]");
+    if (Array.isArray(value)) return value.map((entry) => redactor.redactDeep(entry));
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [key, redactor.redactDeep(entry)]),
+      );
+    }
+    return value;
+  },
+};
+
+const result: ExecResult = {
+  argv: ["printf", SECRET],
+  cwd: `/workspace/${SECRET}`,
+  exitCode: 0,
+  stdout: `public-sentinel ${SECRET}`,
+  stderr: "",
+  truncated: false,
+  timedOut: false,
+  oomKilled: false,
+  durationMs: 4,
+};
+describe("recordCommand", () => {
+  it("redacts every durable command string", async () => {
+    const capture = capturingExecutor();
+
+    await recordCommand(
+      {
+        jobId: "11111111-2222-3333-4444-555555555555",
+        phase: "testing",
+        result,
+        redactor,
+      },
+      capture.executor,
+    );
+
+    const stored = capture.values[0];
+    expect(stored?.argv).toEqual(["printf", "[REDACTED]"]);
+    expect(stored?.cwd).toBe("/workspace/[REDACTED]");
+    expect(stored?.stdout).toBe("public-sentinel [REDACTED]");
+    expect(JSON.stringify(stored)).not.toContain(SECRET);
+    expect(JSON.stringify(stored)).toContain("public-sentinel");
+  });
+});
+
 describe("truncate", () => {
   it("leaves output under the cap alone", () => {
     const result = truncate("hello", 64);

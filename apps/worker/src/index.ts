@@ -317,6 +317,7 @@ const worker = new Worker<JobRunsMessage>(
     sweep,
     phases,
     ...(telemetry ? { telemetry: telemetry.telemetry } : {}),
+    redactor: secrets,
     ...(phaseFactory ? { phaseFactory } : {}),
     // One injection per run, because `hang` is per-run state. Without
     // `RIVET_FAULT_*` set this is the plain abortable sleep and no fault at all.

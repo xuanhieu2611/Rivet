@@ -3,6 +3,7 @@ import { db, type Database, type Job, type NewJob, jobs } from "@rivet/database"
 import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 
 import { appendEvent } from "../events/event-service";
+import type { Redactor } from "../telemetry/redaction";
 import { toJobDetail } from "./job-service";
 
 /**
@@ -156,6 +157,8 @@ export interface TransitionInput {
   /** Event type, when the change deserves a more specific name than the default. */
   type?: JobEventType;
   data?: TransitionEventData;
+  /** Redacts the transition message and event payload before persistence. */
+  redactor?: Redactor;
   /**
    * An extra condition on the locked row, beyond status and lease ownership.
    *
@@ -280,6 +283,7 @@ export async function transitionJob(
         // the status update, even when the patch clears the lease on terminal
         // completion.
         data: { ...eventData, from: current.status, to: input.to },
+        ...(input.redactor ? { redactor: input.redactor } : {}),
       },
       tx,
     );

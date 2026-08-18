@@ -8,6 +8,7 @@ import {
 import { db, type Database, jobs } from "@rivet/database";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
+import type { Redactor } from "../telemetry/redaction";
 import { transitionJob, TransitionConflictError } from "./transitions";
 
 /**
@@ -177,6 +178,8 @@ export interface ReleaseOptions {
    * timeline is where that distinction is worth keeping.
    */
   type?: JobEventType;
+  /** Redacts the release reason before it becomes a durable event. */
+  redactor?: Redactor;
 }
 
 /**
@@ -210,6 +213,7 @@ export async function releaseJob(
         message: options.reason,
         data: { leaseOwner },
         leaseOwner,
+        ...(options.redactor ? { redactor: options.redactor } : {}),
         patch: { leaseOwner: null, leaseExpiresAt: null },
       },
       database,

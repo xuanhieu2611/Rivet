@@ -87,6 +87,7 @@ export * from "./telemetry/attributes";
 export * from "./telemetry/metrics";
 export * from "./telemetry/noop-telemetry";
 export * from "./telemetry/recording-telemetry";
+export type * from "./telemetry/redaction";
 export * from "./telemetry/telemetry";
 export * from "./telemetry/trace-fields";
 // Types only: the port is an interface, and the adapter that implements it

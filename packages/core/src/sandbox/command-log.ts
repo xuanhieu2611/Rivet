@@ -3,6 +3,7 @@ import { db, type Executor, type JobCommandRow, jobCommands } from "@rivet/datab
 import { and, asc, eq, gt } from "drizzle-orm";
 
 import { assertActiveLease } from "../jobs/lease";
+import type { Redactor } from "../telemetry/redaction";
 import type { ExecResult } from "./sandbox";
 
 /**
@@ -211,6 +212,8 @@ export interface RecordCommandInput {
   result: ExecResult;
   /** When present, the command row is fenced on this active lease. */
   leaseOwner?: string;
+  /** Redacts live credentials before the transcript becomes durable. */
+  redactor?: Redactor;
 }
 
 /**
@@ -234,7 +237,7 @@ export async function recordCommand(
     await assertActiveLease(input.jobId, input.leaseOwner, executor);
   }
 
-  const { result } = input;
+  const result = (input.redactor?.redactDeep(input.result) ?? input.result) as ExecResult;
   const [row] = await executor
     .insert(jobCommands)
     .values({

@@ -75,6 +75,7 @@ import {
 } from "../telemetry/attributes";
 import { METRIC_COMMAND_DURATION, recordDuration } from "../telemetry/metrics";
 import { NOOP_TELEMETRY } from "../telemetry/noop-telemetry";
+import type { Redactor } from "../telemetry/redaction";
 import type { Telemetry } from "../telemetry/telemetry";
 import type { ExecResult } from "../sandbox/sandbox";
 import type { SandboxHolder } from "../sandbox/sandbox-holder";
@@ -402,6 +403,8 @@ export interface PhaseContextOptions {
   database?: Database;
   /** Where command spans go. Absent, `NOOP_TELEMETRY` records nothing. */
   telemetry?: Telemetry;
+  /** Redacts live credentials before phase-owned durable writes. */
+  redactor?: Redactor;
   /** Injectable clock for metrics that measure an event-stream interval. */
   now?: () => number;
 }
@@ -420,6 +423,7 @@ export function createPhaseContextFactory(
   const database = options.database ?? db;
   const { job, leaseOwner, sandboxes, signal, log } = options;
   const telemetry = options.telemetry ?? NOOP_TELEMETRY;
+  const redactor = options.redactor;
   const now = options.now ?? Date.now;
   let currentBaseCommitSha = job.baseCommitSha;
   let currentEnvFingerprint = job.envFingerprint;
@@ -432,8 +436,9 @@ export function createPhaseContextFactory(
     totalToolCalls: job.totalToolCalls ?? 0,
   };
   const appendOwnedEvent = (input: PhaseEventInput) =>
-    database.transaction((tx) => appendEvent({ ...input, jobId: job.id, leaseOwner }, tx));
-
+    database.transaction((tx) =>
+      appendEvent({ ...input, jobId: job.id, leaseOwner, ...(redactor ? { redactor } : {}) }, tx),
+    );
   return (phase) => ({
     job,
     phase,
@@ -542,7 +547,13 @@ export function createPhaseContextFactory(
       // `commandId` that resolves to nothing is worse than no event at all.
       const command = await database.transaction(async (tx) => {
         const recorded = await recordCommand(
-          { jobId: job.id, phase: phase.status, result, leaseOwner },
+          {
+            jobId: job.id,
+            phase: phase.status,
+            result,
+            leaseOwner,
+            ...(redactor ? { redactor } : {}),
+          },
           tx,
         );
         await appendEvent(
@@ -561,6 +572,7 @@ export function createPhaseContextFactory(
               phase: phase.label,
             },
             leaseOwner,
+            ...(redactor ? { redactor } : {}),
           },
           tx,
         );
@@ -615,6 +627,7 @@ export function createPhaseContextFactory(
                 adopted: input.adopted,
               },
               leaseOwner,
+              ...(redactor ? { redactor } : {}),
             },
             tx,
           );
@@ -657,6 +670,7 @@ export function createPhaseContextFactory(
             ...(input.metadata ? { metadata: input.metadata } : {}),
             ...(input.requireComplete ? { requireComplete: true } : {}),
             leaseOwner,
+            ...(redactor ? { redactor } : {}),
           },
           tx,
         );
@@ -675,6 +689,7 @@ export function createPhaseContextFactory(
               phase: phase.label,
             },
             leaseOwner,
+            ...(redactor ? { redactor } : {}),
           },
           tx,
         );
