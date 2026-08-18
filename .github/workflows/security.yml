@@ -1,0 +1,119 @@
+name: Security
+
+# The fifth CI surface, in its own workflow file with three independent jobs.
+# Deliberately not folded into `verify`, for the same reason the other four CI
+# jobs are separate: `verify` proves the whole pipeline typechecks, lints, tests
+# and builds with no database, no Redis and no Docker, and a scanner installing
+# its own toolchain into that job would put that property at the mercy of an
+# unrelated tool. Shared setup is how you lose the property a job exists to
+# protect.
+#
+# Thresholds are stated rather than implied, and `docs/security-review.md` §5
+# says why each one is where it is.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Advisories and CodeQL queries change without anybody pushing. A weekly run
+    # is what turns "clean when we last merged" into "clean now".
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The one permission any Rivet workflow holds beyond `contents: read`, and
+      # it is scoped to this job rather than to the workflow.
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # `build-mode: none` because every workspace package is consumed as raw
+      # TypeScript and `apps/worker` runs under tsx. There is nothing to compile
+      # for CodeQL to watch, so asking it to build would only add a way to fail.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:javascript-typescript
+
+  dependencies:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # `pnpm audit` reads the lockfile, so no install is needed and this job
+      # stays fast enough to run on every push.
+      #
+      # High and critical only. Failing on any advisory at any severity sounds
+      # stricter and is worse in practice: a transitive low-severity advisory
+      # with no available fix would block unrelated work, and a gate that has to
+      # be bypassed weekly is a gate nobody reads.
+      #
+      # There are currently no ignored advisories. An `--ignore` added here must
+      # carry a comment saying either that the advisory has no fixed version and
+      # does not reach a code path Rivet executes, or which release removes it.
+      - name: Audit dependencies
+        run: pnpm audit --audit-level high
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history. A secret that was committed and later removed is still
+          # a leaked secret, so scanning only the diff would miss the case that
+          # matters most.
+          fetch-depth: 0
+
+      # The release binary rather than the action: no marketplace license
+      # question on a public repository, an explicitly pinned version, and one
+      # fewer third-party action with access to the checkout.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # Unlike the dependency audit, this fails on ANY finding. There is no
+      # acceptable rate of committed credentials. `--redact` keeps a matched
+      # value out of the public build log, which would otherwise turn a
+      # detection into a second disclosure.
+      - name: Scan history for secrets
+        run: gitleaks git --redact --no-banner --config .gitleaks.toml .

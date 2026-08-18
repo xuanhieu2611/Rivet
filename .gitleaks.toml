@@ -1,0 +1,24 @@
+# gitleaks configuration for Rivet.
+#
+# Extends the upstream default rule set rather than replacing it: the default
+# rules are maintained against real credential formats, and a hand-written
+# subset would silently stop covering whatever it forgot.
+#
+# The allowlist below is empty on purpose. Every entry added to it must carry a
+# comment saying either that the matched value is provably not a live credential
+# (a test fixture, a documented sentinel, a public key) or why it cannot be
+# removed. An entry with no comment is a bug - see docs/security-review.md §5.
+
+title = "Rivet"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths that cannot contain a live credential."
+
+paths = [
+  # Lockfiles carry integrity hashes, which are high-entropy by construction and
+  # are not secrets.
+  '''pnpm-lock\.yaml''',
+]

@@ -15,5 +15,10 @@ export async function requirePageSession(): Promise<void> {
 
   const cookieHeader = (await cookies()).toString();
   const token = readCookieValue(cookieHeader, SESSION_COOKIE);
-  if (!(await readSessionToken(token, config.sessionSecret))) redirect("/sign-in");
+  const session = await readSessionToken(token, config.sessionSecret);
+  // Same allowlist re-check the API guard performs: a signature that is still
+  // valid is not a decision about who is currently allowed in.
+  if (session?.githubLogin.toLowerCase() !== config.ownerGithubLogin.toLowerCase()) {
+    redirect("/sign-in");
+  }
 }
