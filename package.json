@@ -19,6 +19,8 @@
     "eval:grade": "pnpm --filter @rivet/worker eval:grade",
     "eval:label": "pnpm --filter @rivet/worker eval:label",
     "demo:eval": "pnpm --filter @rivet/worker demo:eval",
+    "obs:up": "docker compose -f ops/observability/docker-compose.yml up -d",
+    "obs:down": "docker compose -f ops/observability/docker-compose.yml down --remove-orphans",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",

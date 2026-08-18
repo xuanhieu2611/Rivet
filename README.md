@@ -25,6 +25,11 @@ claim: a job under evaluation must be indistinguishable from one created in the 
 [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md) is the first experiment run
 over it.
 
+Milestone 11 is in progress. Its first five stages add the telemetry port, OTLP export, traces,
+metrics, and a local OpenTelemetry Collector, Prometheus, Tempo and Grafana stack. Run `pnpm obs:up`
+and follow [docs/milestone-11-guide.md](docs/milestone-11-guide.md) to explore the provisioned
+dashboards.
+
 Milestone 9 ends a job in a real pull request. A GitHub App, repository and issue pickers,
 short-lived installation tokens that never enter a container, an authenticated host clone, and
 branch, commit, push and pull-request creation guarded by an append-only receipt ledger that makes
@@ -82,7 +87,8 @@ See [docs/architecture.md](docs/architecture.md) for how the pieces fit together
 [docs/plans/milestone-10.md](docs/plans/milestone-10.md) for the committed M10 plan,
 [docs/plans/milestone-10-acceptance.md](docs/plans/milestone-10-acceptance.md) for its acceptance
 contract, [docs/milestone-10-guide.md](docs/milestone-10-guide.md) for an educational walkthrough of
-the evaluation harness, [docs/plans/milestone-9.md](docs/plans/milestone-9.md) for the M9 plan,
+the evaluation harness, [docs/milestone-11-guide.md](docs/milestone-11-guide.md) for the local
+observability stack, [docs/plans/milestone-9.md](docs/plans/milestone-9.md) for the M9 plan,
 [docs/plans/milestone-9-acceptance.md](docs/plans/milestone-9-acceptance.md) for its acceptance
 contract, [docs/milestone-9-guide.md](docs/milestone-9-guide.md) for an educational walkthrough of
 GitHub publication, [docs/milestone-9-setup.md](docs/milestone-9-setup.md) for the one-time GitHub
@@ -343,6 +349,8 @@ Every command is run from the repository root. Turborepo fans them out across th
 | `pnpm demo:job`         | Runs a full job against `rivet-fixture-node` with a real Pi session             |
 | `pnpm demo:recovery`    | Kills a worker mid-job and proves the replacement resumes from its checkpoint   |
 | `pnpm demo:pr`          | Runs one bound job against the demo repository and opens a real pull request    |
+| `pnpm obs:up`           | Starts the local Collector, Prometheus, Tempo and Grafana stack                 |
+| `pnpm obs:down`         | Stops the local observability stack without deleting its volumes                |
 | `pnpm build`            | Production build of every workspace. Needs no database and no Redis             |
 | `pnpm lint`             | ESLint across every workspace                                                   |
 | `pnpm typecheck`        | `tsc --noEmit` across every workspace                                           |
