@@ -1,8 +1,8 @@
 import type { ArtifactType, JobArtifact, JobArtifactSummary } from "@rivet/contracts";
 
+import { DiffViewer } from "@/components/diff-viewer/diff-viewer";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatBytes, formatDateTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 const ARTIFACT_LABELS: Record<ArtifactType, string> = {
   diff: "Working tree diff",
@@ -71,7 +71,11 @@ export function JobArtifactsPanel({ artifacts, summary, diff }: JobArtifactsPane
               stats ? formatDiffStats(stats) : "The staged change captured by validation."
             }
           >
-            <DiffViewer content={diff.content} />
+            <DiffViewer
+              content={diff.content}
+              truncated={diff.truncated}
+              byteSize={diff.byteSize}
+            />
           </ArtifactSection>
         ) : null}
 
@@ -150,50 +154,6 @@ function ArtifactMeta({ artifact }: { artifact: JobArtifact }) {
       ) : null}
     </div>
   );
-}
-
-/** Renders a unified diff without adding a syntax-highlighting dependency. */
-export function DiffViewer({ content }: { content: string }) {
-  const lines = content.split("\n");
-
-  return (
-    <div className="overflow-auto rounded-md bg-background" aria-label="Code diff" role="region">
-      <pre className="w-fit min-w-full py-1 font-mono text-xs leading-5">
-        <code>
-          {lines.map((line, index) => (
-            <span
-              key={index}
-              data-diff-line={diffLineKind(line)}
-              className={cn("block min-w-max px-3", diffLineClassName(line))}
-            >
-              {line || " "}
-            </span>
-          ))}
-        </code>
-      </pre>
-    </div>
-  );
-}
-
-function diffLineKind(line: string): "added" | "removed" | "hunk" | "context" {
-  if (line.startsWith("+++") || line.startsWith("---")) return "context";
-  if (line.startsWith("+")) return "added";
-  if (line.startsWith("-")) return "removed";
-  if (line.startsWith("@@")) return "hunk";
-  return "context";
-}
-
-function diffLineClassName(line: string): string {
-  switch (diffLineKind(line)) {
-    case "added":
-      return "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200";
-    case "removed":
-      return "bg-red-500/15 text-red-800 dark:text-red-200";
-    case "hunk":
-      return "bg-sky-500/10 text-sky-800 dark:text-sky-200";
-    case "context":
-      return "text-muted-foreground";
-  }
 }
 
 function latestArtifactOfType(

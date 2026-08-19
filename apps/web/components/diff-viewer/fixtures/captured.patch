@@ -1,0 +1,56 @@
+diff --git a/deleted.txt b/deleted.txt
+deleted file mode 100644
+index 286c5f5776916d7d7d5849988ca9d83e722cf9c2..0000000000000000000000000000000000000000
+--- a/deleted.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-gone
+diff --git a/icon.bin b/icon.bin
+index 9cc6c61f506abf1fbc08929c786edd9196da7355..84d190aa8b1b5bd5b64726b2a828e23f2dd031dd 100644
+GIT binary patch
+literal 7
+OcmeYYaA#m-`Ue08RRQAw
+
+literal 7
+OcmWIWb7x>=`VRmGbOGo9
+
+diff --git a/logo.bin b/logo.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..1d940460f0f6452f233a0505e815c0adab42571d
+GIT binary patch
+literal 6
+NcmZ?wbYu9>000Iv0oDKj
+
+literal 0
+HcmV?d00001
+
+diff --git a/old-name.ts b/new-name.ts
+similarity index 68%
+rename from old-name.ts
+rename to new-name.ts
+index f861c8a8e37d73aab5c3ce80103a2fc8c466176b..89a373a5ec1552f81f8e4c404dfffc7a2d7f16c7 100644
+--- a/old-name.ts
++++ b/new-name.ts
+@@ -1,2 +1,3 @@
+ rename me
+ second
++changed
+diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755
+diff --git a/src/added.ts b/src/added.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..39a36559da069f8ae106568b59a9d960ba9a6e27
+--- /dev/null
++++ b/src/added.ts
+@@ -0,0 +1 @@
++export const n = 1;
+diff --git a/src/sum.ts b/src/sum.ts
+index df95d4e12b932da0b7894835ff76a61cd757c964..b8bd093fc504a9c420d51791ee3feca3ca0df637 100644
+--- a/src/sum.ts
++++ b/src/sum.ts
+@@ -1,2 +1,3 @@
+-old line
++new line
+ keep me
++extra

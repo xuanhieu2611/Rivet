@@ -1,0 +1,11 @@
+diff --git a/old-name.ts b/new-name.ts
+similarity index 68%
+rename from old-name.ts
+rename to new-name.ts
+index f861c8a..89a373a 100644
+--- a/old-name.ts
++++ b/new-name.ts
+@@ -1,2 +1,3 @@
+ rename me
+ second
++changed

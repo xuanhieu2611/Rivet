@@ -9,7 +9,7 @@ and no model and run in `pnpm test`. G needs Docker. H is the milestone's demo.
 | --- | ---------------------------------------------------------------------------------------------- |
 | A   | `apps/web/app/(public)/page.test.ts`                                                           |
 | B   | `apps/web/lib/auth/pages.test.ts` (static), `apps/web/lib/auth/live-page-guard.test.ts` (live) |
-| C   | not yet (work item 2)                                                                          |
+| C   | `apps/web/components/diff-viewer/diff-viewer.test.ts`                                          |
 | D   | not yet (work item 3)                                                                          |
 | E   | not yet (work item 4)                                                                          |
 | F   | not yet (work item 4)                                                                          |
@@ -95,9 +95,15 @@ coverage test can be worse than no test.
 
 ## C - The diff viewer renders every shape
 
-Work item 2. Pure unit tests over checked-in patches: binary hunk, rename, pure addition, pure
-deletion, mode change, and a truncated artifact that says it is truncated, including one patch taken
-from a real capture.
+**`apps/web/components/diff-viewer/diff-viewer.test.ts`** (render) and
+**`apps/web/components/diff-viewer/parse-diff-artifact.test.ts`** (parse).
+
+Work item 2. Pure unit tests over checked-in patches under
+`apps/web/components/diff-viewer/fixtures/`: binary hunk (`binary-literal.patch`, a
+`--binary --full-index` capture), `Binary files` marker, rename, pure addition, pure deletion, mode
+change, and a truncated artifact that says it is truncated at the clip point. `captured.patch` is
+one patch taken from a real git capture covering every shape together. A 40-file synthetic diff
+starts collapsed.
 
 ---
 

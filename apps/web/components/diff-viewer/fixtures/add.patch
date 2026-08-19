@@ -1,0 +1,7 @@
+diff --git a/src/added.ts b/src/added.ts
+new file mode 100644
+index 0000000..39a3655
+--- /dev/null
++++ b/src/added.ts
+@@ -0,0 +1 @@
++export const n = 1;

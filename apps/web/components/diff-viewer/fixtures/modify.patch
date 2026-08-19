@@ -1,0 +1,9 @@
+diff --git a/src/sum.ts b/src/sum.ts
+index df95d4e..b8bd093 100644
+--- a/src/sum.ts
++++ b/src/sum.ts
+@@ -1,2 +1,3 @@
+-old line
++new line
+ keep me
++extra
