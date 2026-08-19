@@ -486,7 +486,37 @@ than a rewrite.
 **6.8 No alerting.** Dashboards and traces, no alert rules and no pager. Alerting without a
 deployment is alerting about a laptop.
 
-**6.9 No deployment hardening review.** Nothing here covers TLS termination, a WAF, network policy
+**6.9 The container can route to the host on Docker Desktop.** The sandbox is on a user-defined
+bridge with `enable_icc=false`, and §3's layered argument puts the load-bearing control first:
+nothing the container needs is bound where it can reach it. On macOS Docker Desktop that control is
+weaker than it reads. The host answers on `host.docker.internal` and four sibling aliases **and on a
+raw address** (`192.168.65.254` on current builds), and Desktop's port forwarding reaches services
+bound to the host's `127.0.0.1` - so "Postgres binds to loopback in development" does not, by
+itself, put it out of reach. Measured, not assumed: a probe container connected to a loopback-only
+Postgres through the alias.
+
+Pinning the aliases to `127.0.0.1` via `ExtraHosts` was implemented and then **reverted**, and the
+reason is worth recording rather than quietly dropping. It removed the convenient path and not the
+path - the raw address is still routable, no `/etc/hosts` entry can take it away, and the container
+drops `ALL` capabilities so nothing inside it can install a route filter either. Against that it
+cost something real: the sandbox suite's own fixtures serve a git daemon on the host and clone it
+from inside containers through exactly that route
+(`apps/worker/tests/sandbox/fixtures/git-daemon.ts`), so pinning broke the suite on macOS while
+leaving Linux CI green, because the Linux fixtures use the bridge gateway instead. A control that
+buys no real reduction in reach, breaks the harness, and makes test containers configured
+differently from production ones is not worth keeping.
+
+Closing this properly needs 6.1's egress control, a host firewall rule, or a VM boundary. Nothing
+smaller is honest about it.
+
+The practical consequence is recorded rather than worked around: the startup probe refuses to boot a
+worker whose configured control plane answers, which is why `RIVET_SANDBOX=docker` cannot run
+against Neon and Upstash and the Docker demos require a local Postgres and Redis. That refusal is
+the control working, not a defect in it. Linux hosts do not share the alias behaviour, but a
+published service port is reachable through the bridge gateway there, which is the same risk wearing
+different clothes.
+
+**6.10 No deployment hardening review.** Nothing here covers TLS termination, a WAF, network policy
 or secret management in a hosted environment, because there is no hosted environment. The SSE
 stream's need for a streaming-capable host is still open in `docs/architecture.md`.
 

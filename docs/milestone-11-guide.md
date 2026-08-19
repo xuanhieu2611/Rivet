@@ -1060,8 +1060,10 @@ pnpm --filter @rivet/telemetry test
 
 # 3. focused: the hardening half
 pnpm --filter @rivet/web test lib/auth
+pnpm --filter @rivet/web test app/api/jobs/rate-limit.test.ts
 pnpm --filter @rivet/queue test src/rate-limiter.test.ts
 pnpm --filter @rivet/core test src/pipeline/prompt-injection.test.ts
+pnpm --filter @rivet/core test src/pipeline/telemetry-neutrality.test.ts
 
 # 4. integration acceptance (Postgres + Redis)
 pnpm test:integration
@@ -1072,8 +1074,8 @@ pnpm test:streaming
 # 6. sandbox acceptance (Postgres + Redis + Docker)
 pnpm test:sandbox
 
-# 7. the whole thing, visibly
-pnpm obs:up && RIVET_TELEMETRY=otlp pnpm dev
+# 7. the whole thing, visibly - needs a LOCAL Postgres and Redis, see Part 18
+pnpm obs:up && pnpm demo:observability
 ```
 
 Rung 1 is the one that matters most and it is the cheapest. If it breaks, something in M11 read
@@ -1128,9 +1130,33 @@ redis-server --port 6379 --daemonize yes --save "" --appendonly no
 
 ### The worker refuses to start naming Postgres or Redis
 
-The network isolation probe connected to a service the sandbox should not be able to reach. Bind
-Postgres and Redis to loopback rather than `0.0.0.0`. This refusal is the control doing its job; do
-not disable it to get past it.
+The network isolation probe connected to a service the sandbox should not be able to reach. This
+refusal is the control doing its job; do not disable it to get past it.
+
+There are two causes and only one of them is a mistake.
+
+**A local service bound too widely.** Bind Postgres and Redis to loopback rather than `0.0.0.0`, and
+restart the worker.
+
+**A managed control plane**, which is the ordinary case on a development machine: `.env.local`
+points `DATABASE_URL` at Neon and `REDIS_URL` at Upstash, and a managed endpoint is reachable from
+inside a container by construction. There is nothing to rebind - Neon is _supposed_ to answer from
+anywhere - so `RIVET_SANDBOX=docker` needs a local control plane instead, the same one the test
+suites use:
+
+```bash
+brew services start postgresql@17
+redis-server --port 6379 --daemonize yes --save "" --appendonly no
+createdb -h localhost -U postgres rivet_dev
+
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rivet_dev \
+  DATABASE_URL_UNPOOLED=postgresql://postgres:postgres@localhost:5432/rivet_dev \
+  pnpm db:migrate
+```
+
+Then pass the same three URLs to whichever demo you are running. `assertLocalControlPlane()` in
+`apps/worker/src/demo-preflight.ts` makes every Docker demo check this itself and print the same
+recipe, before it creates a job or spends a model call.
 
 ### A `resource_report` shows `sampleCount: 0`
 

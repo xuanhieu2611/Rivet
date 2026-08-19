@@ -12,19 +12,31 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 10 is complete.** Rivet now measures itself. A benchmark case is
-git-tracked files that build into a lock-pinned local bare repository; an evaluation run **is** an
-ordinary job, created through `createJob()` and executed by a real worker under a real lease; and a
-second container grades the job's last checkpoint against hidden tests the job never saw.
-`evaluation_suites`, `evaluation_runs` and the `benchmark_cases` registry hold the results,
-`/evaluations/:id` renders them, and `docs/experiments/reviewer-value.md` is the first experiment
-run over them. **M10 adds no job status, no job event type and no job failure category**, which is
-the milestone's central claim: a job under evaluation must be indistinguishable from one created in
-the web form, or the harness is measuring a different system than production runs. Its acceptance
-runs are A-G (`packages/core/src/evaluation/case-loader.test.ts` and
-`apps/worker/src/eval-corpus.test.ts` for the builder and the corpus,
-`apps/worker/tests/integration/evaluation.int.test.ts` for classification and metrics,
-`apps/worker/tests/sandbox/local-seed.sbx.test.ts` and
+**Current state: Milestone 11 is complete.** Rivet can now be watched, and it defends itself.
+Traces, metrics and correlated logs flow through a `Telemetry` port to an OTLP collector; every
+durable write passes a `Redactor`; every API route is guarded by a session whose coverage is a test
+rather than a convention; the unauthenticated edges and the spend are rate limited and the limiter
+fails closed; every prompt boundary fences untrusted text; and a startup probe refuses to boot a
+worker whose control plane a sandbox container can reach. **M11's entire schema footprint is one
+nullable `text` column**, `jobs.trace_context` - no new table, no job status, no job event type and
+no failure category. Its acceptance runs are A-H, mapped to their implementations in
+`docs/plans/milestone-11-acceptance.md`; A-F need no Docker and run in `pnpm test`, G is
+`apps/worker/tests/sandbox/network-isolation.sbx.test.ts`, and H is
+`benchmarks/prompt-injection-bait/` plus `pnpm demo:observability`. `docs/milestone-11-guide.md` is
+the tour.
+
+**Milestone 10 is complete.** Rivet measures itself. A benchmark case is git-tracked files that
+build into a lock-pinned local bare repository; an evaluation run **is** an ordinary job, created
+through `createJob()` and executed by a real worker under a real lease; and a second container
+grades the job's last checkpoint against hidden tests the job never saw. `evaluation_suites`,
+`evaluation_runs` and the `benchmark_cases` registry hold the results, `/evaluations/:id` renders
+them, and `docs/experiments/reviewer-value.md` is the first experiment run over them. **M10 adds no
+job status, no job event type and no job failure category**, which is the milestone's central claim:
+a job under evaluation must be indistinguishable from one created in the web form, or the harness is
+measuring a different system than production runs. Its acceptance runs are A-G
+(`packages/core/src/evaluation/case-loader.test.ts` and `apps/worker/src/eval-corpus.test.ts` for
+the builder and the corpus, `apps/worker/tests/integration/evaluation.int.test.ts` for
+classification and metrics, `apps/worker/tests/sandbox/local-seed.sbx.test.ts` and
 `apps/worker/tests/sandbox/evaluation.sbx.test.ts` for the container-level ones) plus run H,
 `pnpm demo:eval`. `docs/plans/milestone-10-acceptance.md` is the contract they implement and
 `docs/milestone-10-guide.md` is the tour.
@@ -218,6 +230,8 @@ pnpm demo:agent          # one real Pi session against a disposable Docker fixtu
 pnpm demo:job            # full job against rivet-fixture-node with Pi, Postgres, Redis and Docker
 pnpm demo:recovery       # kill a worker mid-job and prove the replacement resumes; no model key
 pnpm demo:pr             # one real job against the throwaway GitHub repo, ending in a real PR
+pnpm obs:up             # the local Grafana/Tempo/Prometheus/collector stack
+pnpm demo:observability  # one real job with telemetry on, printing its Grafana trace URL
 pnpm eval:build          # build every benchmark case into .rivet/benchmarks, verifying its lockfile
 pnpm eval:run --dry-run  # print the case x arm x repetition matrix; no Postgres, Redis, Docker or spend
 pnpm eval:run            # execute the matrix against real workers; costs model calls
@@ -567,6 +581,74 @@ typecheck there until it is given a color.
 lazily behind a Proxy specifically so typecheck, lint, and unit-test runs work with no env. Do not
 move construction to module scope, and keep unit tests database-free.
 
+**Redaction reaches every durable write, not just the log path.** The `Redactor` port is applied
+inside `recordArtifact`, `appendEvent` and `recordCommand` - the three single writers - rather than
+by their callers, for the same reason the artifact cap lives there: no phase can forget it. Be
+honest about what it is. It is a **safety net, not a boundary**: nothing logs a token deliberately,
+`host-git.ts` redacts its own transcripts, and a token still never enters an argv, a remote URL or
+`SandboxSpec.env`. Redaction catches the mistake; it is not what the design rests on. Acceptance run
+D pairs the sentinel search with a non-secret sentinel written the same way, because a redaction
+test without a positive control passes identically against a search that has stopped searching.
+
+**`requireSession()` runs in every route handler, and that is a test.** `PUBLIC_ROUTES` in
+`apps/web/lib/auth/guard.ts` is the allowlist - the four `/api/auth/*` and `/api/github/setup`
+entries - and `apps/web/lib/auth/routes.test.ts` walks every `route.ts` under `app/api` and fails
+`pnpm test` when a new one neither guards itself nor is listed. **Adding a route means adding a
+guard**, and you will find out at unit-test time rather than in review. Coverage is not behaviour,
+though, so `apps/web/lib/auth/live-guard.test.ts` also _invokes_ every non-public handler
+unauthenticated and requires a 401 or a redirect. It runs with no `DATABASE_URL` on purpose: a
+handler that reads Postgres before it checks the session cannot answer 401, it throws, and the suite
+fails. That is how "refuses before it reads" is asserted rather than assumed.
+
+**The owner allowlist is re-checked on every request.** There is no session table, so a validly
+signed cookie for a login that is no longer `RIVET_OWNER_GITHUB_LOGIN` must be refused at use time -
+that re-check is the only revocation mechanism the system has. Rotating `RIVET_SESSION_SECRET` is
+the other one, and it invalidates everybody.
+
+**The rate limiter fails closed.** Redis being unreachable removes durability, never permission to
+spend: `POST /api/jobs` answers 503 rather than creating the job. Do not "improve" this into a
+fallback that allows the request - the limiter guards model spend and the active-job cap, and an
+outage is exactly when an unbounded creation loop is most expensive. The route half matters as much
+as the limiter half: a limiter returning "denied" into a handler that writes the row anyway has
+refused nothing, which is what `apps/web/app/api/jobs/rate-limit.test.ts` asserts by requiring
+`createJob` was never called.
+
+**Untrusted text is fenced at every prompt boundary - and `edit`'s read deliberately is not.**
+Repository content, file reads, command output and **the GitHub issue title and body** enter prompts
+inside explicitly delimited untrusted blocks with a stated trust preamble. The issue body is
+attacker-controlled on any public repository, arrives through M9's issue picker, and becomes the
+task description, which makes it the highest-value injection surface in the system and the least
+obvious. The exception is `edit`'s read of the file it is about to modify: **that buffer goes back
+to disk**, and fencing it wrote the wrapper into the files (fixed in `4032663`). It would be an easy
+and destructive thing to reintroduce while "making fencing consistent".
+
+**Injection detection never fails a job.** The bounded scanner raises `security.injection_suspected`
+with a pattern class and a location, and the job proceeds. Pattern matching over repository prose
+produces false positives - a repository that merely _discusses_ prompt injection would be
+unrunnable, including this one - and **the capability boundary is the defense**. Detection here is
+observability. If it is failing a job, the bug is in the code, not the repository.
+
+**The startup network probe refuses to boot, and `enable_icc=false` is verified rather than
+assumed.** Under `RIVET_SANDBOX=docker` the worker runs one short-lived probe container per
+control-plane endpoint and `process.exit(1)`s naming the one that answered. `ensureNetwork()`
+likewise _inspects_ the `rivet-sandbox` network's options instead of trusting that it created it, so
+a network made by hand without the flag is repaired when empty and refused when it is not. What is
+**not** hardened is the route to the host. On Docker Desktop a container reaches the host by alias
+and by raw address, including services bound to the host's own loopback, and it drops `ALL`
+capabilities so nothing inside it can filter routes either. Pinning the aliases away was tried and
+**reverted**: it removed the convenient path rather than the path, and this repository's own sandbox
+fixtures serve a git daemon on the host and clone it from inside containers through exactly that
+route. Do not reintroduce it without reading `docs/security-review.md` §6.9, which records the
+residual as an accepted risk and says what closing it would actually take.
+
+**A managed control plane is reachable by construction, so `RIVET_SANDBOX=docker` cannot run against
+Neon and Upstash.** The probe is right and the refusal is correct - a container running arbitrary
+cloned code would otherwise be one connection string away from the database holding every job - but
+it means the Docker demos need a **local** Postgres and Redis, the same ones the test suites use.
+`assertLocalControlPlane()` in `apps/worker/src/demo-preflight.ts` is what every Docker demo calls
+first so that failure names its real cause and costs nothing. `pnpm build`, `pnpm test`, `pnpm lint`
+and `pnpm typecheck` are unaffected; they create no containers.
+
 **TypeScript is pinned at 5.9.3.** typescript-eslint 8.x hard-throws on TS 7. Do not upgrade
 TypeScript until typescript-eslint supports it.
 
@@ -632,6 +714,17 @@ pure function of an env object.
   deliberately shorter than any phase, because that budget is spent inside a shutdown).
   `RIVET_SERVICE_VERSION` becomes `service.version` on every span and metric and should be something
   that changes when the code does.
+- `RIVET_AUTH` - `github` or `off`, `off` by default and **refused under `NODE_ENV=production`**,
+  the fifth member of the switch family. `github` additionally requires `GITHUB_APP_CLIENT_ID`,
+  `GITHUB_APP_CLIENT_SECRET`, `RIVET_OWNER_GITHUB_LOGIN` and `RIVET_SESSION_SECRET`; with the mode
+  on and any of them missing, guarded routes answer 503 rather than opening, which is the same
+  "refuse rather than degrade quietly" rule `RIVET_GITHUB` follows. There is one principal and no
+  session table, so `RIVET_OWNER_GITHUB_LOGIN` is re-read on every request and rotating
+  `RIVET_SESSION_SECRET` is the only way to invalidate everybody at once.
+- `RIVET_JOB_CREATION_LIMIT` / `RIVET_JOB_CREATION_WINDOW_MS` - the sliding window on
+  `POST /api/jobs`, per principal, evaluated by an atomic Redis script. `RIVET_ACTIVE_JOB_CAP`
+  bounds non-terminal jobs and is enforced by `createJob()` itself rather than by the route, so
+  nothing that writes a job row can skip it. All three refuse closed when Redis cannot answer.
 
 **`packages/telemetry` ships its own OTLP exporters, and that is not a preference.** The stock
 `@opentelemetry/exporter-*-otlp-http` exporters post through `http.request` with a keep-alive agent

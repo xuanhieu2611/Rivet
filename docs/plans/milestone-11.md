@@ -7,16 +7,16 @@ you can open.
 
 The PRD checklist (§2719):
 
-- [ ] Structured logging
-- [ ] tracing
-- [ ] job metrics
-- [ ] worker metrics
-- [ ] model metrics
-- [ ] resource monitoring
-- [ ] redaction
-- [ ] rate limiting
-- [ ] orphan cleanup
-- [ ] security review
+- [x] Structured logging
+- [x] tracing
+- [x] job metrics
+- [x] worker metrics
+- [x] model metrics
+- [x] resource monitoring
+- [x] redaction
+- [x] rate limiting
+- [x] orphan cleanup
+- [x] security review
 
 Plus the standing constraints: §26 (the telemetry list and the OpenTelemetry preference), §27 (the
 security minimum), §21 (prompt injection and the repository threat model), §15 (sandbox network and

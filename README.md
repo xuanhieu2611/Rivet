@@ -25,14 +25,17 @@ claim: a job under evaluation must be indistinguishable from one created in the 
 [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md) is the first experiment run
 over it.
 
-Milestone 11 is in progress and all twelve of its stages have landed: the telemetry port, OTLP
-export, traces, metrics, a local OpenTelemetry Collector, Prometheus, Tempo and Grafana stack,
-container resource monitoring, sandbox network isolation, redaction across every durable write,
-authentication, CSRF protection, rate limiting, prompt-injection fencing and detection, and a
-written security review with its own CI workflow. M11 adds one nullable column, no new table, no new
-job status and no new job failure category. Run `pnpm obs:up` and follow
-[docs/milestone-11-guide.md](docs/milestone-11-guide.md) for the walkthrough, or
-[docs/security-review.md](docs/security-review.md) for the security half.
+**Milestone 11 - observability and hardening - is complete.** Rivet can be watched, and it defends
+itself. A `Telemetry` port carries traces, metrics and correlated logs to an OpenTelemetry
+Collector, Prometheus, Tempo and Grafana; every durable write passes a redactor; every API route is
+guarded by a session whose coverage is a failing test rather than a convention; the unauthenticated
+edges and the model spend are rate limited and the limiter fails closed; every prompt boundary
+fences untrusted text; and a startup probe refuses to boot a worker whose control plane a sandbox
+container can reach. M11 adds one nullable column, no new table, no new job status and no new job
+failure category. Run `pnpm obs:up && pnpm demo:observability` for a real job and a link to its
+trace, follow [docs/milestone-11-guide.md](docs/milestone-11-guide.md) for the walkthrough,
+[docs/plans/milestone-11-acceptance.md](docs/plans/milestone-11-acceptance.md) for the acceptance
+contract, or [docs/security-review.md](docs/security-review.md) for the security half.
 
 Milestone 9 ends a job in a real pull request. A GitHub App, repository and issue pickers,
 short-lived installation tokens that never enter a container, an authenticated host clone, and
@@ -85,7 +88,14 @@ real Pi session against a tiny fixture, `pnpm demo:job` runs a complete job with
 `pnpm demo:recovery` kills a worker mid-job and checks every fact the recovery claim rests on.
 `pnpm demo:pr` runs the Milestone 9 definition of done: a job created from a real GitHub issue that
 ends in a real pull request on a throwaway repository. `pnpm demo:eval` runs Milestone 10's: two
-benchmark cases across two review arms and two repetitions, graded in containers of their own.
+benchmark cases across two review arms and two repetitions, graded in containers of their own. And
+`pnpm obs:up && pnpm demo:observability` runs Milestone 11's: one real job with telemetry on, ending
+in a Grafana link that opens its populated trace.
+
+Every demo that creates a container needs a **local** Postgres and Redis rather than Neon and
+Upstash. That is not a convenience: a managed endpoint is reachable from inside a sandbox by
+construction, so M11's startup probe correctly refuses to boot a worker whose control plane cloned
+code could reach. The demos check the same fact first and say so before they spend anything.
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit together,
 [docs/plans/milestone-10.md](docs/plans/milestone-10.md) for the committed M10 plan,
@@ -375,27 +385,28 @@ run with no environment at all, which is what CI relies on.
 
 Every command is run from the repository root. Turborepo fans them out across the workspaces.
 
-| Command                 | What it does                                                                    |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| `pnpm dev`              | Runs the Next.js dev server **and** the worker                                  |
-| `pnpm demo:agent`       | Runs one real Pi session against a disposable fixture in Docker                 |
-| `pnpm demo:job`         | Runs a full job against `rivet-fixture-node` with a real Pi session             |
-| `pnpm demo:recovery`    | Kills a worker mid-job and proves the replacement resumes from its checkpoint   |
-| `pnpm demo:pr`          | Runs one bound job against the demo repository and opens a real pull request    |
-| `pnpm obs:up`           | Starts the local Collector, Prometheus, Tempo and Grafana stack                 |
-| `pnpm obs:down`         | Stops the local observability stack without deleting its volumes                |
-| `pnpm build`            | Production build of every workspace. Needs no database and no Redis             |
-| `pnpm lint`             | ESLint across every workspace                                                   |
-| `pnpm typecheck`        | `tsc --noEmit` across every workspace                                           |
-| `pnpm test`             | Vitest unit tests. No database, no Redis                                        |
-| `pnpm test:integration` | The `*.int.test.ts` suite, against a local Postgres and Redis                   |
-| `pnpm test:streaming`   | The web SSE suite, against local Postgres only                                  |
-| `pnpm test:sandbox`     | The `*.sbx.test.ts` suite, against Docker, local Postgres and Redis             |
-| `pnpm format`           | Prettier, writing changes                                                       |
-| `pnpm format:check`     | Prettier in check mode - this is what CI runs                                   |
-| `pnpm db:generate`      | Generates a migration from the Drizzle schema into `packages/database/drizzle/` |
-| `pnpm db:migrate`       | Applies pending migrations                                                      |
-| `pnpm db:studio`        | Opens Drizzle Studio against the database                                       |
+| Command                   | What it does                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------- |
+| `pnpm dev`                | Runs the Next.js dev server **and** the worker                                  |
+| `pnpm demo:agent`         | Runs one real Pi session against a disposable fixture in Docker                 |
+| `pnpm demo:job`           | Runs a full job against `rivet-fixture-node` with a real Pi session             |
+| `pnpm demo:recovery`      | Kills a worker mid-job and proves the replacement resumes from its checkpoint   |
+| `pnpm demo:pr`            | Runs one bound job against the demo repository and opens a real pull request    |
+| `pnpm demo:observability` | Runs one real job with telemetry on and prints its Grafana trace URL            |
+| `pnpm obs:up`             | Starts the local Collector, Prometheus, Tempo and Grafana stack                 |
+| `pnpm obs:down`           | Stops the local observability stack without deleting its volumes                |
+| `pnpm build`              | Production build of every workspace. Needs no database and no Redis             |
+| `pnpm lint`               | ESLint across every workspace                                                   |
+| `pnpm typecheck`          | `tsc --noEmit` across every workspace                                           |
+| `pnpm test`               | Vitest unit tests. No database, no Redis                                        |
+| `pnpm test:integration`   | The `*.int.test.ts` suite, against a local Postgres and Redis                   |
+| `pnpm test:streaming`     | The web SSE suite, against local Postgres only                                  |
+| `pnpm test:sandbox`       | The `*.sbx.test.ts` suite, against Docker, local Postgres and Redis             |
+| `pnpm format`             | Prettier, writing changes                                                       |
+| `pnpm format:check`       | Prettier in check mode - this is what CI runs                                   |
+| `pnpm db:generate`        | Generates a migration from the Drizzle schema into `packages/database/drizzle/` |
+| `pnpm db:migrate`         | Applies pending migrations                                                      |
+| `pnpm db:studio`          | Opens Drizzle Studio against the database                                       |
 
 ## Repository layout
 
@@ -471,7 +482,10 @@ built before any agent behaviour.
       a separate container, run metrics and a results dashboard. Five cases; the PRD's "expand to
       20" and "eventually 30-50" entries stay open as authoring work. The first experiment is
       written up in [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md).
-- [ ] **M11 - Observability and hardening.** Structured logging, tracing, job and worker metrics,
-      redaction, rate limiting, orphan cleanup, security review.
+- [x] **M11 - Observability and hardening.** Structured logging, tracing, job, worker and model
+      metrics, container resource monitoring, redaction across every durable write, authentication
+      and CSRF, rate limiting that fails closed, sandbox network isolation, prompt-injection fencing
+      and detection, orphan cleanup and a written security review. `pnpm demo:observability` runs a
+      real job and prints its Grafana trace.
 - [ ] **M12 - Public demo polish.** Landing page, timeline animation, diff viewer, evaluation
       dashboard, a seeded demo repository and issue.
