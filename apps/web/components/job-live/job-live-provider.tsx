@@ -9,6 +9,7 @@ import {
   type SerializedJobCommandSummary,
   type SerializedJobEvent,
 } from "@rivet/contracts";
+import { useReducedMotion } from "motion/react";
 import { useRouter } from "next/navigation";
 import {
   createContext,
@@ -29,8 +30,10 @@ import {
   parseStreamEnd,
   selectJobLiveCommands,
   selectJobLiveEvents,
+  selectTimelineMotion,
   type LiveCommand,
   type StreamConnectionState,
+  type TimelineMotion,
 } from "./stream-state";
 
 const STREAM_PROTOCOL_RETRY_MS = 2_000;
@@ -42,6 +45,7 @@ interface JobLiveContextValue {
   commands: readonly LiveCommand[];
   usage: LiveAgentUsage;
   lastEventId: number | null;
+  timelineMotion: TimelineMotion;
   requestCommandDetails: (commandId: number) => void;
   retryCommandDetails: (commandId: number) => void;
 }
@@ -267,6 +271,11 @@ export function JobLiveProvider({
 
   const events = useMemo(() => selectJobLiveEvents(state), [state]);
   const commands = useMemo(() => selectJobLiveCommands(state), [state]);
+  const reduceMotion = useReducedMotion() === true;
+  const timelineMotion = useMemo(
+    () => selectTimelineMotion(state, { reduceMotion }),
+    [reduceMotion, state],
+  );
   const usage = useMemo(
     () =>
       deriveLiveAgentUsage(
@@ -292,6 +301,7 @@ export function JobLiveProvider({
       commands,
       usage,
       lastEventId: state.lastEventId,
+      timelineMotion,
       requestCommandDetails,
       retryCommandDetails,
     }),
@@ -304,6 +314,7 @@ export function JobLiveProvider({
       usage,
       state.lastEventId,
       state.status,
+      timelineMotion,
     ],
   );
 

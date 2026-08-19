@@ -1,4 +1,7 @@
+"use client";
+
 import type { JobEvent } from "@rivet/contracts";
+import { motion } from "motion/react";
 import type { ReactNode } from "react";
 
 import { commandAnchorId } from "@/components/job-live/command-anchor";
@@ -22,6 +25,11 @@ interface AgentToolTimelineItem {
 
 type TimelineItem = { kind: "event"; event: JobEvent } | AgentToolTimelineItem;
 
+const TIMELINE_ENTER_TRANSITION = {
+  duration: 0.2,
+  ease: [0.23, 1, 0.32, 1],
+} as const;
+
 /**
  * The job's own history, straight out of `job_events`.
  *
@@ -31,8 +39,18 @@ type TimelineItem = { kind: "event"; event: JobEvent } | AgentToolTimelineItem;
  * the live reducer's incrementally appended events.
  *
  * Events arrive oldest-first and are rendered that way. A run reads downwards.
+ * Live enter animations are gated by `animateEventIds` from the mount cursor;
+ * omitted, nothing moves, which is what a static render and a reconnect want.
  */
-export function ExecutionTimeline({ events }: { events: readonly JobEvent[] }) {
+export function ExecutionTimeline({
+  events,
+  animateEventIds,
+  pulseActive = false,
+}: {
+  events: readonly JobEvent[];
+  animateEventIds?: ReadonlySet<number>;
+  pulseActive?: boolean;
+}) {
   if (events.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
@@ -49,13 +67,27 @@ export function ExecutionTimeline({ events }: { events: readonly JobEvent[] }) {
           at the first and last dot rather than floating past them. */}
       <span aria-hidden className="bg-border absolute top-2 bottom-2 left-[3.5px] w-px" />
 
-      {items.map((item) =>
-        item.kind === "agent-tool" ? (
-          <AgentToolRow key={item.started.id} item={item} />
+      {items.map((item, index) => {
+        const eventId = item.kind === "agent-tool" ? item.started.id : item.event.id;
+        const animateEnter = animateEventIds?.has(eventId) === true;
+        const pulse = pulseActive && index === items.length - 1;
+
+        return item.kind === "agent-tool" ? (
+          <AgentToolRow
+            key={item.started.id}
+            item={item}
+            animateEnter={animateEnter}
+            pulse={pulse}
+          />
         ) : (
-          <TimelineEventRow key={item.event.id} event={item.event} />
-        ),
-      )}
+          <TimelineEventRow
+            key={item.event.id}
+            event={item.event}
+            animateEnter={animateEnter}
+            pulse={pulse}
+          />
+        );
+      })}
     </ol>
   );
 }
@@ -86,18 +118,34 @@ function buildTimelineItems(events: readonly JobEvent[]): TimelineItem[] {
   return items;
 }
 
-function TimelineEventRow({ event }: { event: JobEvent }) {
+function TimelineEventRow({
+  event,
+  animateEnter,
+  pulse,
+}: {
+  event: JobEvent;
+  animateEnter: boolean;
+  pulse: boolean;
+}) {
   const detail = describeEventData(event);
 
   return (
-    <TimelineRow event={event} tone={timelineTone(event)}>
+    <TimelineRow event={event} tone={timelineTone(event)} animateEnter={animateEnter} pulse={pulse}>
       <EventContent event={event} />
       {detail ? <p className="text-muted-foreground text-xs">{detail}</p> : null}
     </TimelineRow>
   );
 }
 
-function AgentToolRow({ item }: { item: AgentToolTimelineItem }) {
+function AgentToolRow({
+  item,
+  animateEnter,
+  pulse,
+}: {
+  item: AgentToolTimelineItem;
+  animateEnter: boolean;
+  pulse: boolean;
+}) {
   const startedData = item.started.data;
   const completedData = item.completed?.data;
   const toolName = completedData?.toolName ?? startedData?.toolName ?? "tool";
@@ -111,6 +159,8 @@ function AgentToolRow({ item }: { item: AgentToolTimelineItem }) {
     <TimelineRow
       event={item.started}
       tone={failed ? "bg-red-500" : JOB_EVENT_TONE["agent.tool_started"]}
+      animateEnter={animateEnter}
+      pulse={pulse}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <span className="text-foreground font-medium">{toolName}</span>
@@ -155,19 +205,39 @@ function AgentToolRow({ item }: { item: AgentToolTimelineItem }) {
 function TimelineRow({
   event,
   tone,
+  animateEnter,
+  pulse,
   children,
 }: {
   event: JobEvent;
   tone: string;
+  animateEnter: boolean;
+  pulse: boolean;
   children: ReactNode;
 }) {
   return (
-    <li
+    <motion.li
       className="relative grid grid-cols-[auto_1fr_auto] items-start gap-3"
       data-event-id={String(event.id)}
       data-event-type={event.type}
+      data-animate-enter={animateEnter ? "true" : undefined}
+      initial={animateEnter ? { opacity: 0, transform: "translateY(8px)" } : false}
+      animate={{ opacity: 1, transform: "translateY(0px)" }}
+      transition={TIMELINE_ENTER_TRANSITION}
     >
-      <span aria-hidden className={cn("mt-1.5 size-2 shrink-0 rounded-full", tone)} />
+      <motion.span
+        aria-hidden
+        data-pulse-active={pulse ? "true" : undefined}
+        className={cn("mt-1.5 size-2 shrink-0 rounded-full", tone)}
+        animate={
+          pulse
+            ? { opacity: [1, 0.5, 1], transform: ["scale(1)", "scale(1.35)", "scale(1)"] }
+            : { opacity: 1, transform: "scale(1)" }
+        }
+        transition={
+          pulse ? { duration: 1.6, ease: "linear", repeat: Infinity } : TIMELINE_ENTER_TRANSITION
+        }
+      />
       <div className="min-w-0 space-y-1">{children}</div>
       <time
         dateTime={event.createdAt.toISOString()}
@@ -175,7 +245,7 @@ function TimelineRow({
       >
         {formatTimeOfDay(event.createdAt)}
       </time>
-    </li>
+    </motion.li>
   );
 }
 

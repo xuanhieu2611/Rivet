@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatePresence, motion } from "motion/react";
+
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/status-badge";
 import { useJobLive } from "./job-live-provider";
@@ -31,12 +33,36 @@ const CONNECTION_PRESENTATION: Record<
   },
 };
 
+const STATUS_ENTER_TRANSITION = {
+  duration: 0.2,
+  ease: [0.23, 1, 0.32, 1],
+} as const;
+
 /** A status badge backed by the reducer rather than the server snapshot. */
 export function LiveStatusBadge() {
-  const { status } = useJobLive();
+  const { status, timelineMotion } = useJobLive();
+
+  if (timelineMotion.reduceMotion) {
+    return (
+      <span aria-live="polite">
+        <StatusBadge status={status} className="transition-none" />
+      </span>
+    );
+  }
+
   return (
     <span aria-live="polite">
-      <StatusBadge status={status} />
+      <AnimatePresence initial={false}>
+        <motion.span
+          key={status}
+          className="inline-flex"
+          initial={{ opacity: 0, transform: "translateY(4px)" }}
+          animate={{ opacity: 1, transform: "translateY(0px)" }}
+          transition={STATUS_ENTER_TRANSITION}
+        >
+          <StatusBadge status={status} />
+        </motion.span>
+      </AnimatePresence>
     </span>
   );
 }

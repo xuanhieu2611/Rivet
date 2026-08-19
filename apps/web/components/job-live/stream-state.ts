@@ -1,4 +1,5 @@
 import {
+  isTerminal,
   jobStatusSchema,
   type JobCommand,
   type JobCommandSummary,
@@ -55,9 +56,27 @@ export interface JobLiveState {
   connection: StreamConnectionState;
   eventsById: ReadonlyMap<number, JobEvent>;
   lastEventId: number | null;
+  /**
+   * The newest durable id present when this state was created from the server
+   * snapshot. Live appends above it may enter-animate; everything at or below
+   * it is history, including a reconnect that redelivers those ids.
+   */
+  mountCursor: number | null;
+  /** Status after applying the server snapshot. The first paint is not a change. */
+  mountStatus: JobStatus;
   commandsById: ReadonlyMap<number, JobCommandSummary | JobCommand>;
   commandRunsByExecutionId: ReadonlyMap<string, CommandRun>;
   commandDetailsById: ReadonlyMap<number, CommandDetailState>;
+}
+
+export interface TimelineMotion {
+  /** Event ids that may play an enter animation. Empty under reduced motion. */
+  animateEventIds: ReadonlySet<number>;
+  /** Whether the current in-progress timeline marker may pulse. */
+  pulseActive: boolean;
+  /** Whether the live status badge may transition after a post-mount change. */
+  animateStatus: boolean;
+  reduceMotion: boolean;
 }
 
 export type JobLiveAction =
@@ -74,6 +93,15 @@ export interface StreamEndPayload {
 }
 
 const IDLE_COMMAND_DETAIL: CommandDetailState = { status: "idle", error: null };
+
+const NO_ANIMATE_EVENT_IDS: ReadonlySet<number> = new Set();
+
+const REDUCED_TIMELINE_MOTION: TimelineMotion = {
+  animateEventIds: NO_ANIMATE_EVENT_IDS,
+  pulseActive: false,
+  animateStatus: false,
+  reduceMotion: true,
+};
 
 /**
  * Builds the initial reducer state from server-rendered events and summaries.
@@ -97,6 +125,8 @@ export function createJobLiveState(
     connection: "connecting",
     eventsById: new Map(),
     lastEventId: null,
+    mountCursor: null,
+    mountStatus: initialStatus,
     commandsById,
     commandRunsByExecutionId: new Map(),
     commandDetailsById: new Map(),
@@ -107,7 +137,39 @@ export function createJobLiveState(
     state = applyEvent(state, event, false);
   }
 
-  return state;
+  return {
+    ...state,
+    mountCursor: state.lastEventId,
+    mountStatus: state.status,
+  };
+}
+
+/**
+ * Decides what may move on the live timeline and status badge.
+ *
+ * The mount cursor is the whole defense against reconnect and refresh
+ * replay: only ids that arrived after the snapshot are eligible, and
+ * `prefers-reduced-motion` clears the budget entirely.
+ */
+export function selectTimelineMotion(
+  state: JobLiveState,
+  options: { reduceMotion: boolean },
+): TimelineMotion {
+  if (options.reduceMotion) return REDUCED_TIMELINE_MOTION;
+
+  const animateEventIds = new Set<number>();
+  for (const id of state.eventsById.keys()) {
+    if (state.mountCursor === null || id > state.mountCursor) {
+      animateEventIds.add(id);
+    }
+  }
+
+  return {
+    animateEventIds,
+    pulseActive: !isTerminal(state.status) && state.eventsById.size > 0,
+    animateStatus: state.status !== state.mountStatus,
+    reduceMotion: false,
+  };
 }
 
 /** Reduces durable events and command lifecycle state idempotently. */

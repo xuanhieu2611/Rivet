@@ -8,6 +8,7 @@ import {
   parseStreamEnd,
   selectJobLiveCommands,
   selectJobLiveEvents,
+  selectTimelineMotion,
 } from "./stream-state";
 
 const JOB_ID = "11111111-2222-3333-4444-555555555555";
@@ -250,3 +251,132 @@ describe("job event stream helpers", () => {
     expect(() => parseStreamEnd({ cursor: 1, status: "running" })).toThrow();
   });
 });
+
+describe("timeline motion", () => {
+  it("freezes the mount cursor on the server snapshot", () => {
+    const state = createJobLiveState("queued", [event(1), event(3, { to: "testing" })]);
+    expect(state.mountCursor).toBe(3);
+    expect(state.mountStatus).toBe("testing");
+
+    const next = jobLiveReducer(state, {
+      type: "event.received",
+      event: event(4, { to: "implementing" }),
+    });
+    expect(next.mountCursor).toBe(3);
+    expect(next.mountStatus).toBe("testing");
+  });
+
+  it("does not enter-animate server-rendered events", () => {
+    const state = createJobLiveState("queued", [event(1), event(3)]);
+    expect(motionOf(state)).toEqual({
+      ids: [],
+      pulseActive: true,
+      animateStatus: false,
+    });
+  });
+
+  it("enter-animates a genuinely new event above the mount cursor", () => {
+    const initial = createJobLiveState("queued", [event(1)]);
+    const next = jobLiveReducer(initial, {
+      type: "event.received",
+      event: event(2, { to: "implementing" }),
+    });
+
+    expect(motionOf(next)).toEqual({
+      ids: [2],
+      pulseActive: true,
+      animateStatus: true,
+    });
+  });
+
+  it("does not enter-animate a replayed reconnect of already-seen ids", () => {
+    let state = createJobLiveState("queued", [event(1), event(2)]);
+    state = jobLiveReducer(state, { type: "event.received", event: event(1) });
+    state = jobLiveReducer(state, { type: "event.received", event: event(2) });
+    state = jobLiveReducer(state, {
+      type: "connection.changed",
+      connection: "live",
+    });
+
+    expect(motionOf(state).ids).toEqual([]);
+    expect(state.mountCursor).toBe(2);
+  });
+
+  it("does not enter-animate an older event delivered after mount", () => {
+    const initial = createJobLiveState("testing", [event(8, { to: "testing" })]);
+    const next = jobLiveReducer(initial, {
+      type: "event.received",
+      event: event(4, { to: "provisioning" }),
+    });
+
+    expect(motionOf(next).ids).toEqual([]);
+    expect(next.mountCursor).toBe(8);
+  });
+
+  it("animates every live append when the snapshot was empty", () => {
+    let state = createJobLiveState("queued", []);
+    expect(state.mountCursor).toBeNull();
+    expect(motionOf(state)).toEqual({
+      ids: [],
+      pulseActive: false,
+      animateStatus: false,
+    });
+
+    state = jobLiveReducer(state, { type: "event.received", event: event(1) });
+    expect(motionOf(state)).toEqual({
+      ids: [1],
+      pulseActive: true,
+      animateStatus: false,
+    });
+  });
+
+  it("stops the active-marker pulse when the stream finishes", () => {
+    let state = createJobLiveState("implementing", [event(1)]);
+    expect(motionOf(state).pulseActive).toBe(true);
+
+    state = jobLiveReducer(state, {
+      type: "stream.finished",
+      cursor: 1,
+      status: "completed",
+    });
+
+    expect(motionOf(state)).toEqual({
+      ids: [],
+      pulseActive: false,
+      animateStatus: true,
+    });
+  });
+
+  it("does not treat a terminal snapshot as animating", () => {
+    const state = createJobLiveState("completed", [event(1), event(2, { to: "completed" })]);
+    expect(motionOf(state)).toEqual({
+      ids: [],
+      pulseActive: false,
+      animateStatus: false,
+    });
+  });
+
+  it("disables enters, the badge transition, and the pulse under reduced motion", () => {
+    let state = createJobLiveState("queued", [event(1)]);
+    state = jobLiveReducer(state, {
+      type: "event.received",
+      event: event(2, { to: "implementing" }),
+    });
+
+    expect(motionOf(state, true)).toEqual({
+      ids: [],
+      pulseActive: false,
+      animateStatus: false,
+    });
+    expect(motionOf(state, false).ids).toEqual([2]);
+  });
+});
+
+function motionOf(state: ReturnType<typeof createJobLiveState>, reduceMotion = false) {
+  const motion = selectTimelineMotion(state, { reduceMotion });
+  return {
+    ids: [...motion.animateEventIds].sort((left, right) => left - right),
+    pulseActive: motion.pulseActive,
+    animateStatus: motion.animateStatus,
+  };
+}

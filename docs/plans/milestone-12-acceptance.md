@@ -10,7 +10,7 @@ and no model and run in `pnpm test`. G needs Docker. H is the milestone's demo.
 | A   | `apps/web/app/(public)/page.test.ts`                                                           |
 | B   | `apps/web/lib/auth/pages.test.ts` (static), `apps/web/lib/auth/live-page-guard.test.ts` (live) |
 | C   | `apps/web/components/diff-viewer/diff-viewer.test.ts`                                          |
-| D   | not yet (work item 3)                                                                          |
+| D   | `apps/web/components/job-live/stream-state.test.ts`                                            |
 | E   | not yet (work item 4)                                                                          |
 | F   | not yet (work item 4)                                                                          |
 | G   | not yet (work item 5)                                                                          |
@@ -109,8 +109,17 @@ starts collapsed.
 
 ## D - Motion animates appends only
 
-Work item 3. A replayed reconnect produces no enter animations; a genuinely new event does;
-`prefers-reduced-motion` disables both. Asserted in `stream-state.test.ts` rather than hoped.
+**`apps/web/components/job-live/stream-state.test.ts`.**
+
+Work item 3. `selectTimelineMotion()` is the gate. `createJobLiveState()` freezes a mount cursor at
+the newest server-snapshot id; only ids above that cursor are eligible to enter-animate. A replayed
+reconnect of already-seen ids, an older event delivered after mount, and a terminal snapshot all
+produce an empty animate set. A genuinely new id does not.
+
+`prefers-reduced-motion` disables the whole budget: row enters, the live status-badge transition,
+and the in-progress marker pulse. The live provider reads the media query and passes it into the
+selector, so a reconnect or `router.refresh()` cannot restart motion that the snapshot already
+contained.
 
 ---
 
