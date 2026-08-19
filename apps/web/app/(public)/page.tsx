@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 
 import { ArchitectureDiagram } from "@/components/landing/architecture-diagram";
@@ -24,34 +25,41 @@ export const metadata: Metadata = {
 export default function LandingPage() {
   return (
     <main>
-      <section className="landing-shell space-y-6 py-16 sm:py-24">
-        <p className="font-landing-mono text-landing-muted text-[11px] tracking-[0.18em] uppercase">
-          Autonomous engineering jobs
-        </p>
-        <h1 className="font-landing-display max-w-3xl text-4xl font-semibold tracking-tight text-pretty sm:text-5xl">
-          You describe a task. Rivet runs the job to a pull request.
-        </h1>
-        <p className="max-w-2xl text-lg leading-relaxed text-pretty">
-          Rivet is an autonomous software engineering platform. Point it at a repository, write the
-          task the way you would write a GitHub issue, and it reads, plans, edits, tests, reviews
-          and opens a pull request.
-        </p>
-        <p className="text-landing-muted max-w-2xl text-lg leading-relaxed text-pretty">
-          The interesting part is not the code generation. It is the job-execution system around the
-          coding agent: a sandbox the container cannot talk to the control plane through, a worker
-          that can die and be replaced, and a timeline that is true because Postgres is the log.
-        </p>
-        <p>
-          <Link href="/sign-in" className="landing-cta inline-block">
-            Sign in
-          </Link>
-        </p>
+      <section className="min-h-[calc(100dvh-4rem)]">
+        <div className="landing-shell grid items-center gap-10 py-12 lg:grid-cols-2 lg:gap-16 lg:py-16">
+          <div className="landing-hero-copy space-y-6">
+            <h1 className="max-w-xl text-4xl font-semibold tracking-tight text-pretty sm:text-5xl lg:text-6xl lg:leading-[1.08]">
+              You describe a task. Rivet ships the pull request.
+            </h1>
+            <p className="text-landing-muted max-w-[36rem] text-lg leading-relaxed text-pretty">
+              Point it at a repository. Rivet plans, edits, tests, reviews, and opens a pull
+              request.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Link href="/sign-in" className="landing-cta">
+                Sign in
+              </Link>
+              <a href="#run" className="landing-cta-ghost">
+                See a run
+              </a>
+            </div>
+          </div>
+          <div className="landing-hero-asset relative aspect-[4/3] w-full overflow-hidden rounded-[var(--radius)]">
+            <Image
+              src="/landing/hero-rivet.jpg"
+              alt="A steel rivet fastening two overlapping metal plates"
+              fill
+              priority
+              sizes="(min-width: 1024px) 34rem, 100vw"
+              className="object-cover"
+            />
+          </div>
+        </div>
       </section>
 
       <section className="landing-rule-t">
-        <div className="landing-shell space-y-6 py-16">
-          <SectionKicker>Sixty seconds</SectionKicker>
-          <h2 className="font-landing-display text-2xl font-semibold tracking-tight">
+        <div className="landing-shell space-y-8 py-20">
+          <h2 className="max-w-2xl text-3xl font-semibold tracking-tight text-pretty">
             The demo that does not depend on a model
           </h2>
           <VideoSlot />
@@ -59,47 +67,47 @@ export default function LandingPage() {
       </section>
 
       <section className="landing-rule-t">
-        <div className="landing-shell space-y-6 py-16">
-          <SectionKicker>Architecture</SectionKicker>
-          <h2 className="font-landing-display text-2xl font-semibold tracking-tight">
+        <div className="landing-shell space-y-8 py-20">
+          <h2 className="max-w-2xl text-3xl font-semibold tracking-tight text-pretty">
             Two processes, one library, four ports
           </h2>
           <ArchitectureDiagram />
         </div>
       </section>
 
-      <section className="landing-rule-t">
-        <div className="landing-shell space-y-6 py-16">
-          <SectionKicker>A run</SectionKicker>
-          <h2 className="font-landing-display text-2xl font-semibold tracking-tight">
-            The sixty-second beats, as a ledger
-          </h2>
-          <p className="text-landing-muted max-w-2xl text-[15px] leading-relaxed">
-            Stills below are labeled frames until a captured run replaces them. The sequence is the
-            public demo script, including the first-attempt failure.
-          </p>
+      <section id="run" className="landing-rule-t scroll-mt-24">
+        <div className="landing-shell space-y-8 py-20">
+          <div className="max-w-2xl space-y-3">
+            <h2 className="text-3xl font-semibold tracking-tight text-pretty">
+              Sixty seconds, as a ledger
+            </h2>
+            <p className="text-landing-muted text-base leading-relaxed">
+              Stills are labeled frames until a captured run replaces them. The sequence includes
+              the first-attempt failure.
+            </p>
+          </div>
           <RunWalkthrough />
         </div>
       </section>
 
       <section className="landing-rule-t">
-        <div className="landing-shell space-y-6 py-16">
-          <SectionKicker>Experiment 1</SectionKicker>
-          <h2 className="font-landing-display text-2xl font-semibold tracking-tight">
-            Independent review versus none
-          </h2>
-          <p className="text-landing-muted max-w-2xl text-[15px] leading-relaxed">
-            Numbers from a completed evaluation suite, written into the page at authoring time. Not
-            queried live, so this page still builds on a machine with no database.
-          </p>
+        <div className="landing-shell space-y-8 py-20">
+          <div className="max-w-2xl space-y-3">
+            <h2 className="text-3xl font-semibold tracking-tight text-pretty">
+              Independent review versus none
+            </h2>
+            <p className="text-landing-muted text-base leading-relaxed">
+              Numbers from a completed evaluation suite, written into the page at authoring time.
+              Not queried live, so this page still builds with no database.
+            </p>
+          </div>
           <ExperimentNumbers />
         </div>
       </section>
 
       <section className="landing-rule-t">
-        <div className="landing-shell space-y-6 py-16">
-          <SectionKicker>Tradeoffs</SectionKicker>
-          <h2 className="font-landing-display text-2xl font-semibold tracking-tight">
+        <div className="landing-shell space-y-10 py-20">
+          <h2 className="max-w-2xl text-3xl font-semibold tracking-tight text-pretty">
             What the system is actually arguing
           </h2>
           <Tradeoffs />
@@ -107,23 +115,15 @@ export default function LandingPage() {
       </section>
 
       <footer className="landing-rule-t">
-        <div className="landing-shell flex flex-col gap-4 py-10 sm:flex-row sm:items-end sm:justify-between">
-          <p className="text-landing-muted max-w-xl text-sm leading-relaxed">
+        <div className="landing-shell flex flex-col gap-5 py-12 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-landing-muted max-w-xl text-base leading-relaxed">
             Local only. There is no public job surface. Sign in if you own the box.
           </p>
-          <Link href="/sign-in" className="landing-cta inline-block w-fit">
+          <Link href="/sign-in" className="landing-cta w-fit">
             Sign in
           </Link>
         </div>
       </footer>
     </main>
-  );
-}
-
-function SectionKicker({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="font-landing-mono text-landing-muted text-[11px] tracking-[0.18em] uppercase">
-      {children}
-    </p>
   );
 }

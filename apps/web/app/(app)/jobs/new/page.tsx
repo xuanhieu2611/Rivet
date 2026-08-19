@@ -20,7 +20,7 @@ export default async function NewJobPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <div className="space-y-2">
-        <Link href="/jobs" className="text-muted-foreground text-xs hover:underline">
+        <Link href="/jobs" className="text-muted-foreground text-sm hover:underline">
           Back to jobs
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight">New job</h1>

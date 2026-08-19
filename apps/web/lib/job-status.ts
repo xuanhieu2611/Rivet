@@ -25,15 +25,15 @@ export const JOB_STATUS_PRESENTATION: Record<JobStatus, StatusPresentation> = {
   },
   provisioning: {
     label: "Provisioning",
-    className: "border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+    className: "border-teal-600/30 bg-teal-500/10 text-teal-800 dark:text-teal-200",
   },
   analyzing: {
     label: "Analyzing",
-    className: "border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+    className: "border-teal-600/30 bg-teal-500/10 text-teal-800 dark:text-teal-200",
   },
   planning: {
     label: "Planning",
-    className: "border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+    className: "border-teal-600/30 bg-teal-500/10 text-teal-800 dark:text-teal-200",
   },
   implementing: {
     label: "Implementing",
@@ -135,7 +135,7 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "job.created": "bg-muted-foreground/40",
   "job.enqueued": "bg-muted-foreground/40",
   "job.enqueue_failed": "bg-amber-500",
-  "job.claimed": "bg-violet-500",
+  "job.claimed": "bg-teal-500",
   "job.status_changed": "bg-sky-500",
   "phase.started": "bg-sky-500",
   "phase.completed": "bg-sky-500/40",
@@ -145,9 +145,9 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "job.lease_lost": "bg-amber-500",
   "job.failed": "bg-red-500",
   "job.completed": "bg-emerald-500",
-  "sandbox.created": "bg-violet-500",
+  "sandbox.created": "bg-teal-500",
   "sandbox.destroyed": "bg-muted-foreground/40",
-  "sandbox.resources_recorded": "bg-violet-500",
+  "sandbox.resources_recorded": "bg-teal-500",
   "repo.cloned": "bg-sky-500",
   "deps.installed": "bg-sky-500",
   "command.started": "bg-sky-500",
@@ -159,7 +159,7 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   // Only the two that end something get a colour of their own, and a tool call
   // that errored is deliberately not one of them: the model reads the error and
   // tries something else, which is the loop working rather than failing.
-  "agent.session_started": "bg-violet-500",
+  "agent.session_started": "bg-teal-500",
   "agent.turn_started": "bg-sky-500/40",
   "agent.turn_completed": "bg-sky-500/40",
   "agent.message": "bg-sky-500",
@@ -171,25 +171,25 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   // A deferred plan is deliberately quiet: it says a phase decided to do
   // nothing, which is the opposite of something the reader needs to notice.
   "plan.deferred": "bg-muted-foreground/40",
-  "artifact.recorded": "bg-violet-500",
+  "artifact.recorded": "bg-teal-500",
   "validation.check_recorded": "bg-sky-500/40",
   // Neutral rather than green or red, because the outcome is in the payload:
   // `regressed` and `fixed` are the same event type. Stage 7 colours the row
   // by `data.validation`; the marker only says the comparison happened.
   "validation.recorded": "bg-sky-500",
   // The closing line, and the only entry a reader who scrolled to the bottom
-  // needs. Violet rather than green for the same reason `validation.recorded`
+  // needs. Teal rather than green for the same reason `validation.recorded`
   // is not green: this row states an outcome, and `job.completed` is the one
   // that says the outcome was a good one.
-  "run.summarized": "bg-violet-500",
-  "plan.recorded": "bg-violet-500",
-  "checkpoint.created": "bg-violet-500",
+  "run.summarized": "bg-teal-500",
+  "plan.recorded": "bg-teal-500",
+  "checkpoint.created": "bg-teal-500",
   "checkpoint.restored": "bg-emerald-500",
   "checkpoint.rejected": "bg-red-500",
   "run.resumed": "bg-amber-500",
   // Neutral for the same reason `validation.recorded` is neutral: `approve` and
   // `revise` are the same event type and the verdict is in the payload.
-  "review.recorded": "bg-violet-500",
+  "review.recorded": "bg-teal-500",
   // The row that makes a looping timeline readable. Amber because it is the
   // marker that explains why a second `testing` block follows a first one.
   "review.revision_requested": "bg-amber-500",
@@ -199,13 +199,13 @@ export const JOB_EVENT_TONE: Record<JobEventType, string> = {
   "review.skipped": "bg-muted-foreground/40",
   // Publication events are progress markers; their payload carries the
   // branch, receipt, or pull request details shown by the M9 timeline work.
-  "github.repository_bound": "bg-violet-500",
-  "branch.created": "bg-violet-500",
+  "github.repository_bound": "bg-teal-500",
+  "branch.created": "bg-teal-500",
   "commit.created": "bg-sky-500",
   "push.completed": "bg-emerald-500",
   "pull_request.opened": "bg-emerald-500",
   "pull_request.adopted": "bg-emerald-500",
   "publication.skipped": "bg-muted-foreground/40",
-  "external_effect.recorded": "bg-violet-500",
+  "external_effect.recorded": "bg-teal-500",
   "security.injection_suspected": "bg-amber-500",
 };

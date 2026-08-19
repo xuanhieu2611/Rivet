@@ -38,16 +38,24 @@ const TOPICS = [
 ] as const;
 
 export function Tradeoffs() {
+  const [lead, ...rest] = TOPICS;
+
   return (
-    <div className="grid gap-x-12 gap-y-10 md:grid-cols-2">
-      {TOPICS.map((topic) => (
-        <section key={topic.title} className="space-y-2">
-          <h3 className="font-landing-display text-base font-semibold tracking-tight">
-            {topic.title}
-          </h3>
-          <p className="text-[15px] leading-relaxed">{topic.body}</p>
+    <div className="space-y-12">
+      {lead ? (
+        <section className="max-w-2xl space-y-3">
+          <h3 className="text-xl font-semibold tracking-tight">{lead.title}</h3>
+          <p className="text-base leading-relaxed">{lead.body}</p>
         </section>
-      ))}
+      ) : null}
+      <div className="grid gap-x-16 gap-y-10 md:grid-cols-2">
+        {rest.map((topic) => (
+          <section key={topic.title} className="space-y-2">
+            <h3 className="text-lg font-semibold tracking-tight">{topic.title}</h3>
+            <p className="text-base leading-relaxed">{topic.body}</p>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

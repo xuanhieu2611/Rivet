@@ -76,14 +76,14 @@ export default async function DashboardPage() {
                       {job.title}
                     </Link>
                   </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-xs">
+                  <TableCell className="text-muted-foreground font-mono text-sm">
                     {shortenRepoUrl(job.repoUrl)}
-                    <span className="text-muted-foreground/70"> @ {job.baseBranch}</span>
+                    <span> @ {job.baseBranch}</span>
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={job.status} />
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap">
+                  <TableCell className="text-muted-foreground text-right text-sm whitespace-nowrap">
                     {formatDateTime(job.createdAt)}
                   </TableCell>
                 </TableRow>

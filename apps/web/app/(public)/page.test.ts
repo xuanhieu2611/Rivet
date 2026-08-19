@@ -15,6 +15,9 @@ vi.mock("next/link", () => ({
   default: ({ children, href }: { children: ReactNode; href: string }) =>
     createElement("a", { href }, children),
 }));
+vi.mock("next/image", () => ({
+  default: ({ alt, src }: { alt: string; src: string }) => createElement("img", { alt, src }),
+}));
 
 const LANDING_DIR = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(LANDING_DIR, "../..");

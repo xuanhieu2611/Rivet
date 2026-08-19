@@ -89,11 +89,11 @@ export default async function EvaluationsPage() {
                       {suite.status}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">
+                  <TableCell className="text-muted-foreground text-sm">
                     {suite.caseIds.length} cases x {suite.arms.length} arms x {suite.repetitions}
                     {" reps"}
                   </TableCell>
-                  <TableCell className="text-xs">
+                  <TableCell className="text-sm">
                     <span className="font-medium">{formatSuccessRate(counts.successRate)}</span>{" "}
                     <span className="text-muted-foreground">{formatSuccessFraction(counts)}</span>
                   </TableCell>

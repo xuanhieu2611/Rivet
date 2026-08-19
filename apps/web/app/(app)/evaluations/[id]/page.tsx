@@ -65,11 +65,11 @@ export default async function EvaluationSuitePage({ params }: PageProps) {
           = {expected} expected runs, {runs.length} recorded. Started{" "}
           {formatDateTime(suite.startedAt)}, finished {formatDateTime(suite.completedAt)}.
         </p>
-        <p className="text-muted-foreground text-xs">
+        <p className="text-muted-foreground text-sm">
           <Link href="/evaluations" className="hover:underline">
             All suites
           </Link>
-          {" · "}
+          {" / "}
           <span className="font-mono">{suite.id}</span>
         </p>
       </header>

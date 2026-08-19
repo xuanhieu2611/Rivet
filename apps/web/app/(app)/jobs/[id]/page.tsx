@@ -94,18 +94,18 @@ export default async function JobDetailPage({ params }: PageProps) {
       <div className="space-y-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="space-y-3">
-            <Link href="/jobs" className="text-muted-foreground text-xs hover:underline">
+            <Link href="/jobs" className="text-muted-foreground text-sm hover:underline">
               Back to jobs
             </Link>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold tracking-tight">{job.title}</h1>
               <LiveStatusBadge />
             </div>
-            <p className="text-muted-foreground font-mono text-xs">{job.id}</p>
+            <p className="text-muted-foreground font-mono text-sm">{job.id}</p>
           </div>
 
-          <div className="border-border/70 bg-muted/20 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border px-3 py-2">
-            <div className="flex items-baseline gap-2 text-xs">
+          <div className="border-border bg-muted/40 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[var(--radius)] border px-3 py-2">
+            <div className="flex items-baseline gap-2 text-sm">
               <span className="text-muted-foreground">Duration</span>
               <span className="font-mono tabular-nums">
                 {formatElapsed(job.startedAt, job.completedAt)}
