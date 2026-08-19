@@ -1,6 +1,7 @@
 import "server-only";
 
 import { listJobs } from "@rivet/core";
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/status-badge";
@@ -15,6 +16,8 @@ import {
 } from "@/components/ui/table";
 import { requirePageSession } from "@/lib/auth/page-guard";
 import { formatDateTime, shortenRepoUrl } from "@/lib/format";
+
+export const metadata: Metadata = { title: "Jobs" };
 
 /**
  * Reads Postgres on every request, so it must never be prerendered - `next build`

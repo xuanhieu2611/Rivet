@@ -28,7 +28,7 @@ export const GET = withRoute(
   async (request: Request, telemetry: RouteTelemetry) => {
     const config = resolveWebAuthConfig();
     assertWebAuthModeAllowed(config.mode, process.env.NODE_ENV);
-    if (config.mode === "off") return redirect(request, "/");
+    if (config.mode === "off") return redirect(request, "/jobs");
     if (!config.enabled) {
       return NextResponse.json({ error: AUTH_UNCONFIGURED_MESSAGE }, { status: 503 });
     }
@@ -112,7 +112,7 @@ export const GET = withRoute(
       }
 
       const token = await createSessionToken(login, config.sessionSecret);
-      const response = redirect(request, "/");
+      const response = redirect(request, "/jobs");
       // Expire the one-time OAuth state, but preserve the newly issued session.
       clearOAuthStateCookie(response, process.env.NODE_ENV === "production");
       setSessionCookie(response, token, process.env.NODE_ENV === "production");

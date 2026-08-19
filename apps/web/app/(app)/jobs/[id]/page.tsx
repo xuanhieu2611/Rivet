@@ -94,7 +94,7 @@ export default async function JobDetailPage({ params }: PageProps) {
       <div className="space-y-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="space-y-3">
-            <Link href="/" className="text-muted-foreground text-xs hover:underline">
+            <Link href="/jobs" className="text-muted-foreground text-xs hover:underline">
               Back to jobs
             </Link>
             <div className="flex flex-wrap items-center gap-3">

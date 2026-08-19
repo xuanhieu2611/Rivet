@@ -47,7 +47,7 @@ describe("GET /api/auth/callback", () => {
     );
 
     expect(response.status).toBe(303);
-    expect(new URL(response.headers.get("location") ?? "").pathname).toBe("/");
+    expect(new URL(response.headers.get("location") ?? "").pathname).toBe("/jobs");
     expect(response.headers.get("set-cookie")).toContain("rivet_session=");
     expect(response.headers.get("set-cookie")).not.toContain("temporary-token");
     expect(fetchMock).toHaveBeenCalledTimes(2);

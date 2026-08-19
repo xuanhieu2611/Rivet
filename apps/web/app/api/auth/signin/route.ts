@@ -25,7 +25,7 @@ export const GET = withRoute(
     await Promise.resolve();
     const config = resolveWebAuthConfig();
     assertWebAuthModeAllowed(config.mode, process.env.NODE_ENV);
-    if (config.mode === "off") return redirect(request, "/");
+    if (config.mode === "off") return redirect(request, "/jobs");
     if (!config.enabled) {
       return NextResponse.json({ error: AUTH_UNCONFIGURED_MESSAGE }, { status: 503 });
     }

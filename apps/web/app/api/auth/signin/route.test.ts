@@ -41,10 +41,10 @@ describe("GET /api/auth/signin", () => {
     expect(response.headers.get("set-cookie")).toContain("rivet_oauth_state=");
   });
 
-  it("redirects home when authentication is explicitly off", async () => {
+  it("redirects to jobs when authentication is explicitly off", async () => {
     vi.stubEnv("RIVET_AUTH", "off");
     const response = await GET(new Request("http://localhost/api/auth/signin"));
     expect(response.status).toBe(303);
-    expect(new URL(response.headers.get("location") ?? "").pathname).toBe("/");
+    expect(new URL(response.headers.get("location") ?? "").pathname).toBe("/jobs");
   });
 });

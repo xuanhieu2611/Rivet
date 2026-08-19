@@ -61,7 +61,7 @@ export default async function GitHubSettingsPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-1">
-        <Link href="/" className="text-muted-foreground text-xs hover:underline">
+        <Link href="/jobs" className="text-muted-foreground text-xs hover:underline">
           Back to jobs
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight">GitHub</h1>

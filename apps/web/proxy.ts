@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { PUBLIC_PAGES } from "./lib/auth/public-pages";
 import { assertWebAuthModeAllowed, resolveWebAuthConfig } from "./lib/auth/config";
 
 /**
@@ -11,7 +12,7 @@ export function proxy(request: NextRequest): NextResponse {
   const config = resolveWebAuthConfig();
   assertWebAuthModeAllowed(config.mode, process.env.NODE_ENV);
 
-  if (config.mode === "off" || request.nextUrl.pathname === "/sign-in") {
+  if (config.mode === "off" || PUBLIC_PAGES.has(request.nextUrl.pathname)) {
     return NextResponse.next();
   }
 
