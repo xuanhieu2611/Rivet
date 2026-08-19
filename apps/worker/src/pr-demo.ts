@@ -9,6 +9,7 @@ import { createGitHubClient } from "@rivet/github";
 import { closeJobQueue, closeRedis, getBullJobQueue, type BullJobQueue } from "@rivet/queue";
 
 import { DEFAULT_MODEL, DEFAULT_MODEL_PROVIDER, loadRootEnv, parseWorkerConfig } from "./config";
+import { assertLocalControlPlane } from "./demo-preflight";
 import { selectDemoTask } from "./demo-tasks";
 
 /**
@@ -116,6 +117,8 @@ async function main(): Promise<void> {
  * to report a missing environment variable.
  */
 function assertDemoConfiguration(): void {
+  assertLocalControlPlane("pnpm demo:pr");
+
   const missing: string[] = [];
   if (process.env.RIVET_GITHUB !== "app") {
     missing.push("RIVET_GITHUB=app (publication is skipped under `off`)");

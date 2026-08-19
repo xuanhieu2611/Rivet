@@ -18,6 +18,7 @@ import { closeDb } from "@rivet/database";
 import { closeJobQueue, closeRedis, getBullJobQueue, type BullJobQueue } from "@rivet/queue";
 
 import { loadRootEnv } from "./config";
+import { assertLocalControlPlane } from "./demo-preflight";
 import { assertMilestone6RecoveryEventSequence } from "./recovery-trace";
 
 /**
@@ -170,6 +171,8 @@ async function main(): Promise<void> {
  * provider outage look like a recovery failure.
  */
 function assertDemoConfiguration(): void {
+  assertLocalControlPlane("pnpm demo:recovery");
+
   if (process.env.RIVET_SANDBOX === "off") {
     throw new Error(
       "pnpm demo:recovery needs RIVET_SANDBOX=docker: with no sandbox there is no workspace to " +

@@ -15,6 +15,7 @@ import { closeDb } from "@rivet/database";
 import { closeJobQueue, closeRedis, getBullJobQueue, type BullJobQueue } from "@rivet/queue";
 
 import { DEFAULT_MODEL, DEFAULT_MODEL_PROVIDER, loadRootEnv, parseWorkerConfig } from "./config";
+import { assertLocalControlPlane } from "./demo-preflight";
 import { selectDemoTask } from "./demo-tasks";
 
 const FIXTURE_REPOSITORY = "https://github.com/xuanhieu2611/rivet-fixture-node";
@@ -86,6 +87,8 @@ async function main(): Promise<void> {
 }
 
 function assertDemoConfiguration(): void {
+  assertLocalControlPlane("pnpm demo:job");
+
   if (process.env.RIVET_SANDBOX === "off") {
     throw new Error("pnpm demo:job needs RIVET_SANDBOX=docker so it can edit a real repository.");
   }

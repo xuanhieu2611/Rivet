@@ -14,6 +14,7 @@
     "demo:job": "pnpm --filter @rivet/worker exec tsx src/job-demo.ts",
     "demo:recovery": "pnpm --filter @rivet/worker exec tsx src/recovery-demo.ts",
     "demo:pr": "pnpm --filter @rivet/worker exec tsx src/pr-demo.ts",
+    "demo:observability": "pnpm --filter @rivet/worker exec tsx src/observability-demo.ts",
     "eval:build": "pnpm --filter @rivet/worker eval:build",
     "eval:run": "pnpm --filter @rivet/worker eval:run",
     "eval:grade": "pnpm --filter @rivet/worker eval:grade",
