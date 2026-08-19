@@ -33,6 +33,13 @@ describe("page proxy", () => {
     }
   });
 
+  it("lets landing photographs through without a session", () => {
+    githubMode();
+    const response = proxy(request("/landing/hero-rivet.jpg"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
   it("redirects an unauthenticated visitor away from /jobs", () => {
     githubMode();
     const response = proxy(request("/jobs"));

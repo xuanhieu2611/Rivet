@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 
 import { ArchitectureDiagram } from "@/components/landing/architecture-diagram";
@@ -45,13 +44,17 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="landing-hero-asset relative aspect-[4/3] w-full overflow-hidden rounded-[var(--radius)]">
-            <Image
+            {/*
+             * Native img, not next/image. The optimizer fetches the file as a
+             * second request and was reading a sign-in redirect as the body.
+             */}
+            <img
               src="/landing/hero-rivet.jpg"
               alt="A steel rivet fastening two overlapping metal plates"
-              fill
-              priority
-              sizes="(min-width: 1024px) 34rem, 100vw"
-              className="object-cover"
+              width={1536}
+              height={1024}
+              fetchPriority="high"
+              className="h-full w-full object-cover"
             />
           </div>
         </div>

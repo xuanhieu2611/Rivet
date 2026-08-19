@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { PUBLIC_PAGES } from "./lib/auth/public-pages";
+import { isPublicStaticPath, PUBLIC_PAGES } from "./lib/auth/public-pages";
 import { assertWebAuthModeAllowed, resolveWebAuthConfig } from "./lib/auth/config";
 
 /**
@@ -12,7 +12,11 @@ export function proxy(request: NextRequest): NextResponse {
   const config = resolveWebAuthConfig();
   assertWebAuthModeAllowed(config.mode, process.env.NODE_ENV);
 
-  if (config.mode === "off" || PUBLIC_PAGES.has(request.nextUrl.pathname)) {
+  if (
+    config.mode === "off" ||
+    PUBLIC_PAGES.has(request.nextUrl.pathname) ||
+    isPublicStaticPath(request.nextUrl.pathname)
+  ) {
     return NextResponse.next();
   }
 
@@ -26,5 +30,5 @@ export function proxy(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|landing/).*)"],
 };

@@ -1,15 +1,13 @@
-import Image from "next/image";
-
 export function VideoSlot() {
   return (
     <figure className="space-y-3">
       <div className="relative aspect-video w-full overflow-hidden rounded-[var(--radius)]">
-        <Image
+        <img
           src="/landing/demo-poster.jpg"
           alt="Steel plates and rivets on a fabrication bench"
-          fill
-          sizes="(min-width: 1024px) 70rem, 100vw"
-          className="object-cover"
+          width={1536}
+          height={1024}
+          className="h-full w-full object-cover"
         />
         <div className="absolute inset-0 bg-[color-mix(in_oklch,var(--landing-paper)_58%,transparent)]" />
         <div className="absolute inset-0 flex flex-col justify-end p-6 sm:p-8">
