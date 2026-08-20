@@ -1,65 +1,80 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, at the end of Milestone 10, and names the
-places where the current shape is a deliberate shortcut rather than the intended end state. It is
-updated as each milestone lands rather than describing a system that does not exist yet.
+This document describes Rivet **as it exists today**, after Milestone 11 and during Milestone 12's
+presentation pass. It names the places where the current shape is a deliberate shortcut rather than
+the intended end state. It is updated as each milestone lands rather than describing a system that
+does not exist yet.
 
-## The target, in one picture
+## The system, in one picture
 
-The system Rivet is being built towards is a control plane that owns job lifecycle, with workers
-that run a coding agent inside disposable sandboxes:
+```mermaid
+flowchart TB
+    Browser["Browser + Next.js web<br/>pages, routes, SSE"]
+    Core["@rivet/core<br/>one shared domain library"]
+    Postgres[("Postgres<br/>authoritative state + event ledger")]
 
-```text
-   Web UI  ──HTTPS/SSE──▶  Control plane  ──▶  Postgres (state)
-                                │
-                                └──▶  Redis queue  ──▶  Workers
-                                                          │
-                                                          ▼
-                                               Orchestrator + sandbox
-                                                          │
-                                          clone · edit · test · review · PR
+    QueuePort["JobQueue port"]
+    SandboxPort["Sandbox port"]
+    AgentPort["CodingAgent port"]
+    TelemetryPort["Telemetry port"]
+    BullMQ["BullMQ adapter"]
+    Redis[("Redis<br/>job ids + delivery only")]
+    Docker["dockerode adapter"]
+    OTLP["OpenTelemetry adapter<br/>OTLP collector"]
+
+    subgraph Host["Trusted worker host"]
+        Worker["Worker<br/>leases, pipeline, recovery"]
+        Pi["Pi sessions<br/>planner, implementer, reviewer"]
+        Key["Model provider key"]
+        Pi --- Key
+    end
+
+    subgraph Boundary["Untrusted disposable container"]
+        Repo["Repository + dependencies + tests<br/>no model key, database URL, or Redis URL"]
+    end
+
+    Browser --> Core
+    Worker --> Core
+    Core --> Postgres
+    Core --> QueuePort --> BullMQ --> Redis
+    Core --> SandboxPort --> Docker --> Repo
+    Core --> AgentPort --> Pi
+    Core --> TelemetryPort --> OTLP
+    Pi -->|sandbox-backed tools only| Repo
 ```
 
-Milestone 0 built the leftmost column: a UI, an API, and durable job state. Milestone 1 built the
-queue, the worker, and everything that makes a job survive the worker dying. Milestone 2 built the
-Docker sandbox and made provisioning and baseline testing real. Milestone 3 made the append-only
-event log observable through a resumable SSE stream, live status, timeline, and command log.
-Milestone 4 added the Pi adapter and made `implementing` real: Pi runs in the trusted worker while
-its four tools operate inside the job's sandbox. Milestone 5 moved the baseline to `analyzing`,
-where it runs before anything is edited, made `planning` say plainly that it produced nothing, and
-turned `testing` into validation: it keeps the session's diff as an artifact, re-runs the baseline's
-own suite, and compares the two. `finalizing` then keeps the session's own account of the change as
-an `implementation_summary` artifact and closes the timeline with a `run.summarized` event carrying
-the outcome and the diff totals. The job detail page lists those artifacts, renders the latest
-summary and diff, and gives the new event types their own timeline presentation. Milestone 6 made
-the attempt itself durable: `planning` runs a real read-only planner session and persists a
-structured plan, every completed phase and every completed model turn captures a lossless workspace
-patch, and a reclaimed job is restored into a **new** container at the original commit and continues
-from where it stopped. Milestone 7 generalized the one-suite baseline into deterministic test,
-typecheck and lint checks, added diff-derived targeted tests, parsed Vitest and Jest reports for
-named failure attribution, and persisted canonical baseline and validation reports that the job page
-renders. Milestone 8 added an independent read-only reviewer, durable review reports and findings, a
-bounded revision and revalidation cycle, and recovery that preserves the review loop counter.
-Milestone 9 gave a job an effect outside Rivet: a GitHub App, an authenticated host clone, and a
-branch, commit and pull request landed exactly once through a durable receipt protocol. Milestone 10
-turned the system's own behaviour into numbers: git-tracked benchmark cases seeded from local bare
-repositories, hidden tests graded in a second container after the job is over, and a run store the
-`/evaluations` pages aggregate.
+The diagram carries four claims. The Next.js web process and long-lived worker call the same core
+library directly, with no HTTP hop between either process and domain logic. Postgres owns every
+durable fact, while Redis carries replaceable delivery messages. Queue, sandbox, coding-agent, and
+telemetry integrations sit behind ports declared by core. Finally, Pi and its provider credential
+stay on the trusted worker host, while repository code and every tool operation stay inside the
+untrusted disposable container.
+
+Milestone 0 built the web surface and durable job state. M1 through M3 added Redis delivery, worker
+leases, Docker sandboxes, the append-only event log, and resumable SSE. M4 and M5 embedded Pi in the
+trusted worker and completed the first autonomous coding loop. M6 made work recoverable through
+checksum-verified Git patches, M7 added deterministic validation, and M8 added an independent
+read-only reviewer with a bounded revision loop. M9 made GitHub publication idempotent through a
+receipt ledger. M10 made ordinary jobs measurable through lock-pinned benchmarks and a second,
+hidden-test grading container. M11 added OpenTelemetry, correlated logs, redaction, authentication,
+rate limits, prompt fencing, and startup network probes. M12 changes the presentation and demo path
+without changing the schema or the execution model.
 
 ## What exists today
 
-| Component     | Where                | Responsibility                                                                               |
-| ------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| Web UI        | `apps/web/app`       | Dashboard, new-job form, job detail with live status, timeline, logs and artifacts           |
-| HTTP API      | `apps/web/app/api`   | `GET`/`POST /api/jobs`, `GET /api/jobs/:id`, `/events`, `/commands`, `/artifacts`, `/cancel` |
-| Worker        | `apps/worker`        | BullMQ consumer: claim, heartbeat, run the pipeline, finalize, sweep                         |
-| Domain logic  | `packages/core`      | Jobs, transitions, claims, cancellation, the event log, the pipeline                         |
-| Queue adapter | `packages/queue`     | BullMQ over Redis behind core's `JobQueue` port, plus an in-memory fake                      |
-| Sandbox       | `packages/sandbox`   | Dockerode behind core's `SandboxProvider` port, plus a scripted fake                         |
-| Coding agent  | `packages/agent`     | Pi adapter, scripted fake, event mapper, and sandbox-backed tools                            |
-| Contracts     | `packages/contracts` | Zod schemas, job/event/command contracts, and the status enum                                |
-| Data access   | `packages/database`  | Drizzle schema, generated migrations, the `pg` pool                                          |
-| Shared config | `packages/config`    | The tsconfig and ESLint bases every workspace extends                                        |
+| Component         | Where                | Responsibility                                                                           |
+| ----------------- | -------------------- | ---------------------------------------------------------------------------------------- |
+| Web UI            | `apps/web/app`       | Landing page, dashboard, job detail, evaluation pages, live timeline, logs and artifacts |
+| HTTP API          | `apps/web/app/api`   | Session-guarded job, GitHub, benchmark, evaluation, artifact and event endpoints         |
+| Worker            | `apps/worker`        | BullMQ consumer: claim, heartbeat, run the pipeline, publish, finalize, sweep            |
+| Domain logic      | `packages/core`      | Jobs, transitions, artifacts, replay, evaluation, GitHub workflows, telemetry ports      |
+| Queue adapter     | `packages/queue`     | BullMQ over Redis behind core's `JobQueue` port, plus an in-memory fake                  |
+| Sandbox adapter   | `packages/sandbox`   | Dockerode behind core's `SandboxProvider` port, plus a scripted fake                     |
+| Coding agent      | `packages/agent`     | Pi adapter, scripted fake, event mapper, and sandbox-backed tools                        |
+| Telemetry adapter | `packages/telemetry` | OTLP/HTTP traces and metrics behind core's `Telemetry` port                              |
+| Contracts         | `packages/contracts` | Zod schemas, job/event/command contracts, and the status enum                            |
+| Data access       | `packages/database`  | Drizzle schema, generated migrations, and the `pg` pool                                  |
+| Shared config     | `packages/config`    | The tsconfig and ESLint bases every workspace extends                                    |
 
 Five tables. `jobs` holds the domain model: the task, repository and base branch, the full status
 machine, budget ceilings, cumulative model spend, the immutable deadline, lease and retry state, the
@@ -913,24 +928,27 @@ ending in a suite page whose aggregates can be checked by hand.
 
 ## What is deliberately absent
 
-Named so their absence reads as a decision rather than an oversight: no authentication or `user_id`
-(Milestone 9 brings GitHub identity), no `repository_id` foreign key (there is no Repository table
-to point at, so the job stores a plain `repo_url`), no external-effect receipt table (M9, when there
-is a GitHub call whose fingerprint it could store), no object storage for artifacts or checkpoint
-payloads, no transactional outbox (see the dual-write section for why), and no deployment. The Pi
-implementation and planning sessions are real, analysis establishes a baseline and a killed job
-resumes from its checkpoint, and review is an independent durable phase, but the bridge network is
-not the hardened isolation boundary a production worker needs - Rivet can restore repository state
-after a crash, but it cannot tell whether repository code called an external service before the
-worker died.
+Named so their absence reads as a decision rather than an oversight: no `users` or `repositories`
+table for a single-operator application, no object storage for artifacts or checkpoint payloads, no
+transactional outbox, no public job route, and no deployment. GitHub owns repository and
+installation truth; Rivet caches installation metadata and binds a job directly to a repository URL
+and optional installation id. The external-effect receipt table exists only for publication actions
+whose idempotency requires it.
 
-The stream targets a long-lived Node.js host. Native EventSource reconnect makes interruptions safe,
-but a deployment platform that buffers or caps long responses can still terminate it. Before public
-deployment, Rivet needs a streaming-capable host or a dedicated event gateway. That hosting decision
-must not move event authority out of Postgres.
+The Docker bridge is a useful local execution boundary, not hardened hostile-code isolation. A
+production worker still needs a stronger boundary such as gVisor or Firecracker and an egress proxy
+with an explicit allowlist. The startup network probe refuses a worker whose container can reach its
+Postgres or Redis control plane, but Docker Desktop still permits routes to other host services and
+the public internet. Those residual risks are accepted and detailed in
+[`docs/security-review.md`](security-review.md).
 
-Milestone 1's simulation knobs now have a narrower job: phase durations and `RIVET_PIPELINE_SPEED`
-remain for the phases that are still simulated, while the fault modes also exercise real sandbox and
-coding-agent failure categories. The `simulated_failure` category is gone. Everything around them -
-claiming, leasing, heartbeating, transitioning, retrying, cancelling, recovering - is designed to
-survive the real phase bodies unchanged, which is the actual deliverable of the milestone.
+The SSE stream targets a long-lived Node.js host. Native EventSource reconnect makes interruptions
+safe, but a deployment platform that buffers or caps long responses can still terminate it. Before
+public deployment, Rivet needs a streaming-capable host or a dedicated event gateway. That hosting
+decision must not move event authority out of Postgres.
+
+Simulation and replay are local-only tools. `RIVET_SANDBOX=off`, `RIVET_AGENT=off`,
+`RIVET_GITHUB=off`, `RIVET_EVAL=on`, and `RIVET_REPLAY=on` are refused in production whenever their
+cheap or widened behavior could make a process look healthy while skipping real work. Replay creates
+ordinary jobs through the production writers and is a deterministic UI fallback, not a second job
+model.

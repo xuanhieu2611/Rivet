@@ -11,10 +11,10 @@ export function VideoSlot() {
         />
         <div className="absolute inset-0 bg-[color-mix(in_oklch,var(--landing-paper)_58%,transparent)]" />
         <div className="absolute inset-0 flex flex-col justify-end p-6 sm:p-8">
-          <p className="text-2xl font-semibold tracking-tight sm:text-3xl">Recording forthcoming</p>
+          <p className="text-2xl font-semibold tracking-tight sm:text-3xl">Demo video</p>
           <p className="text-landing-muted mt-2 max-w-md text-[15px] leading-relaxed">
-            The public artifact is a recording of a real job, so a stranger watching never depends
-            on a model behaving well.
+            Added during acceptance run H. The recording will show a real job, so a stranger
+            watching never depends on a model behaving well.
           </p>
         </div>
       </div>

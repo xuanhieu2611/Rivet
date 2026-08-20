@@ -1,19 +1,111 @@
 # Rivet
 
-Rivet is an autonomous software engineering platform. You point it at a repository and describe an
-engineering task the way you would write a GitHub issue - "users can double-book the same room when
-two requests arrive at once; fix the race condition and add regression tests" - and Rivet runs the
-whole workflow on its own: read the code, form a plan, edit files, run the tests, read the failures,
-iterate, review the resulting diff, and open a pull request.
+**An autonomous software engineering platform that turns a GitHub issue into a tested pull
+request.**
 
-The interesting part is not the code generation. Rivet is a job-execution system, not a chat
-application: the coding agent is a narrow dependency that owns the inner read/write/edit/bash loop,
-and Rivet owns everything around it - job lifecycle, queueing, workers, sandbox provisioning,
-persistent state, checkpoints and recovery, budgets and timeouts, event streaming, deterministic
-validation, an independent review pass, GitHub side effects, evaluation and observability. That
-boundary is the point of the project, and it is what the architecture is organized around.
+Point Rivet at a repository and describe an engineering task. It plans the change, edits code inside
+a disposable sandbox, runs deterministic validation, sends the patch through an independent review,
+and opens a pull request. The coding model owns the inner read, write, edit, and command loop. Rivet
+owns the system that makes that loop durable, isolated, observable, recoverable, and measurable.
 
-## Status
+## Architecture
+
+```mermaid
+flowchart TB
+    Browser["Browser + Next.js web<br/>pages, routes, SSE"]
+    Core["@rivet/core<br/>one shared domain library"]
+    Postgres[("Postgres<br/>authoritative state + event ledger")]
+
+    QueuePort["JobQueue port"]
+    SandboxPort["Sandbox port"]
+    AgentPort["CodingAgent port"]
+    TelemetryPort["Telemetry port"]
+    BullMQ["BullMQ adapter"]
+    Redis[("Redis<br/>job ids + delivery only")]
+    Docker["dockerode adapter"]
+    OTLP["OpenTelemetry adapter<br/>OTLP collector"]
+
+    subgraph Host["Trusted worker host"]
+        Worker["Worker<br/>leases, pipeline, recovery"]
+        Pi["Pi sessions<br/>planner, implementer, reviewer"]
+        Key["Model provider key"]
+        Pi --- Key
+    end
+
+    subgraph Boundary["Untrusted disposable container"]
+        Repo["Repository + dependencies + tests<br/>no model key, database URL, or Redis URL"]
+    end
+
+    Browser --> Core
+    Worker --> Core
+    Core --> Postgres
+    Core --> QueuePort --> BullMQ --> Redis
+    Core --> SandboxPort --> Docker --> Repo
+    Core --> AgentPort --> Pi
+    Core --> TelemetryPort --> OTLP
+    Pi -->|sandbox-backed tools only| Repo
+```
+
+The web app and worker call the same domain library directly. Postgres holds every durable fact;
+Redis carries replaceable delivery messages, so flushing Redis loses no job. Pi and the provider key
+stay on the trusted worker host, while repository code and every agent tool operation stay inside
+the container. See [the architecture guide](docs/architecture.md) for the leases, checkpoints,
+replay, publication receipts, evaluation, and telemetry paths.
+
+## Demo
+
+> [!NOTE] **Demo video - added during acceptance run H.**
+
+The final sixty-second recording will show a real booking-race job investigate, fail its first
+attempt, revise the patch, pass validation and review, and open a pull request. Rivet's capture and
+replay path drives the production writers and SSE UI so the public demo never depends on a model
+sampling well on demand.
+
+## Measured results
+
+The first controlled experiment ran five lock-pinned benchmark cases three times per arm with the
+same model, sandbox, budgets, validation, and hidden-test grader.
+
+| Measure          | Independent review | No review | Difference              |
+| ---------------- | -----------------: | --------: | ----------------------- |
+| Graded success   |     15/15 (100.0%) |     14/15 | +6.67 percentage points |
+| Mean score       |             1.0000 |    0.9778 | +0.0222                 |
+| Total model cost |            $0.0675 |   $0.0469 | +$0.0206                |
+| Mean runtime     |             158.1s |    106.3s | +51.9s                  |
+
+This is a useful signal, not proof that review caused the improvement: the sample has only 15 runs
+per arm, and the single no-review failure may be sampling variance. The complete method, per-case
+results, token counts, and caveats are in
+[Experiment 1: independent review versus no review](docs/experiments/reviewer-value.md).
+
+## Quick start
+
+Rivet requires Node.js 24 and pnpm 10.32.0. Configure the connection strings and local operating
+modes in `.env.local`; no environment is needed for build, lint, typecheck, or unit tests.
+
+```bash
+git clone https://github.com/xuanhieu2611/Rivet.git
+cd Rivet
+corepack enable
+pnpm install
+cp .env.example .env.local
+# Fill in DATABASE_URL, DATABASE_URL_UNPOOLED, REDIS_URL, and the modes you intend to run.
+pnpm db:migrate
+pnpm dev
+```
+
+`pnpm dev` starts the Next.js app and worker together. A real coding run additionally needs local
+Postgres and Redis, Docker, a model provider key, and the GitHub App setup. Managed Neon and Upstash
+are suitable for control-plane-only development, but the Docker worker correctly refuses them
+because cloned code could reach those public endpoints. Follow [Setup](#setup) for both modes, or
+run `pnpm test` to exercise the database-free suite immediately.
+
+## Project status
+
+**Milestone 12 - public demo polish - is in progress.** The static public landing page, structured
+diff viewer, append-only timeline motion, capture and replay path, two graded demo repositories, and
+architecture diagrams are implemented. The public recording remains acceptance run H, and its
+placeholder is deliberately isolated in the [Demo](#demo) section.
 
 **Milestone 10 - the evaluation harness - is complete.** Rivet now measures itself. A benchmark case
 is git-tracked files that build into a lock-pinned local bare repository; an evaluation run **is**
@@ -151,15 +243,21 @@ git clone https://github.com/xuanhieu2611/Rivet.git
 cd Rivet
 pnpm install
 
-# Fill in the two Neon connection strings and the Upstash URL.
 cp .env.example .env.local
+
+# For control-plane-only development with Neon and Upstash, also set:
+# RIVET_SANDBOX="off"
+# RIVET_AGENT="off"
+# Real Docker jobs instead require local Postgres and Redis plus RIVET_AGENT="pi".
 
 pnpm db:migrate
 pnpm dev
 ```
 
-`pnpm dev` starts two processes: the Next.js app on <http://localhost:3000> and the worker. For the
-Milestone 9 GitHub App prerequisites, follow
+`pnpm dev` starts two processes: the Next.js app on <http://localhost:3000> and the worker. The
+simulated modes above are local-only and refused in production. A real Docker worker must use local
+Postgres and Redis because its startup probe refuses any control plane reachable from cloned code.
+For the Milestone 9 GitHub App prerequisites, follow
 [`docs/milestone-9-setup.md`](docs/milestone-9-setup.md). The current application is local-only and
 single-operator; read [`SECURITY.md`](SECURITY.md) before installing an App, and
 [`docs/security-review.md`](docs/security-review.md) for the control-by-control walk of PRD §27 and
@@ -364,6 +462,11 @@ documents every worker tuning variable with the reasoning behind its default.
 | `WORKER_*`              | no                 | the worker                          | Concurrency, lease, heartbeat, sweep interval, attempt ceiling, shutdown grace. Defaults are in `.env.example`           |
 | `RIVET_SANDBOX`         | no                 | the worker                          | `docker` or `off`; `off` selects the simulated sandbox pipeline                                                          |
 | `RIVET_AGENT`           | no                 | the worker                          | `pi` or `off`; `off` keeps `implementing` simulated and is refused in production                                         |
+| `RIVET_GITHUB`          | no                 | app and worker                      | `app` enables GitHub selection and publication; `off` is refused in production                                           |
+| `RIVET_EVAL`            | no                 | worker                              | `on` permits opaque `rivet-local:` benchmark seeds and is refused in production                                          |
+| `RIVET_TELEMETRY`       | no                 | app and worker                      | `otlp` exports traces and metrics; `off` remains legal in production                                                     |
+| `RIVET_AUTH`            | no                 | app                                 | `github` enables the single-owner session; `off` is refused in production                                                |
+| `RIVET_REPLAY`          | no                 | replay command                      | `on` permits local fixture replay and is refused in production                                                           |
 | `RIVET_MODEL`           | no                 | the worker                          | Model id; defaults to `deepseek/deepseek-v4-flash`                                                                       |
 | `RIVET_MODEL_PROVIDER`  | no                 | the worker                          | Provider id; defaults to `openrouter`                                                                                    |
 | `OPENROUTER_API_KEY`    | when agent is `pi` | the worker host                     | Provider credential; never passed into a sandbox                                                                         |
@@ -393,6 +496,12 @@ Every command is run from the repository root. Turborepo fans them out across th
 | `pnpm demo:recovery`      | Kills a worker mid-job and proves the replacement resumes from its checkpoint   |
 | `pnpm demo:pr`            | Runs one bound job against the demo repository and opens a real pull request    |
 | `pnpm demo:observability` | Runs one real job with telemetry on and prints its Grafana trace URL            |
+| `pnpm demo:capture`       | Captures a terminal job as a redacted replay fixture                            |
+| `pnpm demo:replay`        | Replays a fixture through production job, event and artifact writers            |
+| `pnpm eval:build`         | Builds lock-pinned benchmark repositories                                       |
+| `pnpm eval:run`           | Runs the configured case, arm and repetition matrix                             |
+| `pnpm eval:grade`         | Re-grades stored evaluation patches without model calls                         |
+| `pnpm demo:eval`          | Runs the small model-backed evaluation demonstration                            |
 | `pnpm obs:up`             | Starts the local Collector, Prometheus, Tempo and Grafana stack                 |
 | `pnpm obs:down`           | Stops the local observability stack without deleting its volumes                |
 | `pnpm build`              | Production build of every workspace. Needs no database and no Redis             |
@@ -422,9 +531,11 @@ packages/
   database/            Drizzle schema, migrations and the pg client
   queue/               the BullMQ adapter, an in-memory fake, and the Redis connection
   sandbox/             the dockerode adapter, scripted fake, and lazy Docker client
-docs/
-  architecture.md
-.github/workflows/     CI, and the per-pull-request Neon database branch
+  telemetry/           OpenTelemetry SDK and OTLP/HTTP adapters
+benchmarks/             lock-pinned public cases and hidden tests
+demo/replays/           redacted captured-run fixtures
+docs/                   architecture, plans, guides, experiments, and security review
+.github/workflows/      CI and the per-pull-request Neon database branch
 ```
 
 `apps/web` and `apps/worker` are two deployables sharing one copy of the domain logic in
@@ -487,5 +598,6 @@ built before any agent behaviour.
       and CSRF, rate limiting that fails closed, sandbox network isolation, prompt-injection fencing
       and detection, orphan cleanup and a written security review. `pnpm demo:observability` runs a
       real job and prints its Grafana trace.
-- [ ] **M12 - Public demo polish.** Landing page, timeline animation, diff viewer, evaluation
-      dashboard, a seeded demo repository and issue.
+- [ ] **M12 - Public demo polish.** Landing page, polished job and evaluation UI, timeline motion,
+      structured diff viewer, capture and replay, graded demo repositories, architecture diagrams,
+      and a visitor-first README. Acceptance run H still owns the recorded public demo.
