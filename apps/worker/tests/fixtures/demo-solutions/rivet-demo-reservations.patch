@@ -1,0 +1,57 @@
+diff --git a/src/cancellation-service.js b/src/cancellation-service.js
+index 4af4844143820893cdd09161b3b0a71c8a9f718f..4b747d08428a267122e098ab0624dca71c998329 100644
+--- a/src/cancellation-service.js
++++ b/src/cancellation-service.js
+@@ -18,7 +18,7 @@ export class CancellationService {
+   }
+ 
+   cancel(customerId, reference) {
+-    const reservation = this.store.findByReference(reference);
++    const reservation = this.store.findByCustomerAndReference(customerId, reference);
+     if (!reservation) throw new ReservationNotFoundError();
+     if (reservation.status === "cancelled") throw new ReservationAlreadyCancelledError();
+     return this.store.cancel(reservation.id);
+diff --git a/src/reservation-store.js b/src/reservation-store.js
+index 9836a2fa73de9d0be8fe830e3ad6733a01695507..ea0787e62883fe950714db4569baf6051742624f 100644
+--- a/src/reservation-store.js
++++ b/src/reservation-store.js
+@@ -3,8 +3,13 @@ export class ReservationStore {
+     this.reservations = reservations.map((reservation) => ({ ...reservation }));
+   }
+ 
+-  findByReference(reference) {
+-    return this.reservations.find((reservation) => reservation.reference === reference) ?? null;
++  findByCustomerAndReference(customerId, reference) {
++    return (
++      this.reservations.find(
++        (reservation) =>
++          reservation.customerId === customerId && reservation.reference === reference,
++      ) ?? null
++    );
+   }
+ 
+   cancel(id) {
+diff --git a/test/cancellation.test.js b/test/cancellation.test.js
+index b60e757b10f8df972e2587601c01a322adc3a2ff..0e8cbdd3da7338eb65b2397b3087a76c1fca053b 100644
+--- a/test/cancellation.test.js
++++ b/test/cancellation.test.js
+@@ -41,3 +41,19 @@ test("returns 409 when the reservation is already cancelled", () => {
+ 
+   assert.equal(response.status, 409);
+ });
++
++test("scopes duplicate references to the customer", () => {
++  const app = createReservationApp([
++    { id: "r-alice", customerId: "alice", reference: "SHARED", status: "confirmed" },
++    { id: "r-bob", customerId: "bob", reference: "SHARED", status: "confirmed" },
++  ]);
++
++  const response = app.handleRequest({
++    method: "POST",
++    path: "/customers/bob/reservations/SHARED/cancel",
++  });
++
++  assert.equal(response.status, 200);
++  assert.equal(response.body.reservation.id, "r-bob");
++  assert.equal(app.store.snapshot()[0].status, "confirmed");
++});

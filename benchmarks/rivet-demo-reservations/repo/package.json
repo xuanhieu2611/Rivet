@@ -1,0 +1,14 @@
+{
+  "name": "rivet-demo-reservations",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/cancellation.test.js",
+    "typecheck": "node --check src/reservation-store.js && node --check src/cancellation-service.js && node --check src/app.js && node --check test/cancellation.test.js",
+    "lint": "node --check src/reservation-store.js && node --check src/cancellation-service.js && node --check src/app.js && node --check test/cancellation.test.js"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

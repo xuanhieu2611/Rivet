@@ -1,0 +1,112 @@
+diff --git a/migrations/001_initial.sql b/migrations/001_initial.sql
+index dd9a38b5340570b010b59c8b0b38fae7d9f67d96..2c85f49e63bfc0337616937ec3700809f9df5ae3 100644
+--- a/migrations/001_initial.sql
++++ b/migrations/001_initial.sql
+@@ -11,5 +11,6 @@ CREATE TABLE bookings (
+ CREATE TABLE booking_slots (
+   booking_id INTEGER NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+   room_id TEXT NOT NULL,
+-  starts_at TEXT NOT NULL
++  starts_at TEXT NOT NULL,
++  UNIQUE (room_id, starts_at)
+ );
+diff --git a/src/booking-repository.js b/src/booking-repository.js
+index e320bd0b580b5d34b3dd7b6e9a56154cd78700b3..b594292917c59c956344b268ab83d4bfbb8fa37e 100644
+--- a/src/booking-repository.js
++++ b/src/booking-repository.js
+@@ -11,18 +11,27 @@ export class BookingRepository {
+   }
+ 
+   createBooking(booking, slotStarts) {
+-    const inserted = this.database
+-      .prepare("INSERT INTO bookings (room_id, guest_name, starts_at, ends_at) VALUES (?, ?, ?, ?)")
+-      .run(booking.roomId, booking.guestName, booking.startsAt, booking.endsAt);
+-    const bookingId = Number(inserted.lastInsertRowid);
+-    const insertSlot = this.database.prepare(
+-      "INSERT INTO booking_slots (booking_id, room_id, starts_at) VALUES (?, ?, ?)",
+-    );
++    this.database.exec("BEGIN IMMEDIATE");
++    try {
++      const inserted = this.database
++        .prepare(
++          "INSERT INTO bookings (room_id, guest_name, starts_at, ends_at) VALUES (?, ?, ?, ?)",
++        )
++        .run(booking.roomId, booking.guestName, booking.startsAt, booking.endsAt);
++      const bookingId = Number(inserted.lastInsertRowid);
++      const insertSlot = this.database.prepare(
++        "INSERT INTO booking_slots (booking_id, room_id, starts_at) VALUES (?, ?, ?)",
++      );
+ 
+-    for (const startsAt of slotStarts) {
+-      insertSlot.run(bookingId, booking.roomId, startsAt);
+-    }
++      for (const startsAt of slotStarts) {
++        insertSlot.run(bookingId, booking.roomId, startsAt);
++      }
+ 
+-    return { id: bookingId, ...booking };
++      this.database.exec("COMMIT");
++      return { id: bookingId, ...booking };
++    } catch (error) {
++      this.database.exec("ROLLBACK");
++      throw error;
++    }
+   }
+ }
+diff --git a/src/booking-service.js b/src/booking-service.js
+index e0bdcdc5d4bcdda775efae98711ab84d43d2179d..35232cf1ef35c0404760fc307e5f23e489db49d1 100644
+--- a/src/booking-service.js
++++ b/src/booking-service.js
+@@ -22,7 +22,14 @@ export class BookingService {
+     }
+ 
+     await this.afterAvailabilityCheck();
+-    return this.repository.createBooking(booking, slots);
++    try {
++      return this.repository.createBooking(booking, slots);
++    } catch (error) {
++      if (error instanceof Error && /unique constraint/i.test(error.message)) {
++        throw new BookingConflictError();
++      }
++      throw error;
++    }
+   }
+ }
+ 
+diff --git a/test/booking.test.js b/test/booking.test.js
+index 32cf9215f8b96aecfa2c6b25bf803013e6095842..de612ba91d933963220ee727cd454f11c458ba35 100644
+--- a/test/booking.test.js
++++ b/test/booking.test.js
+@@ -58,3 +58,32 @@ test("rejects a sequential overlapping booking", async (t) => {
+ 
+   assert.equal(conflict.status, 409);
+ });
++
++test("allows only one of two concurrent overlapping bookings", async (t) => {
++  let arrivals = 0;
++  let release;
++  const ready = new Promise((resolve) => {
++    release = resolve;
++  });
++  const app = createBookingApp({
++    hooks: {
++      afterAvailabilityCheck: async () => {
++        arrivals += 1;
++        if (arrivals === 2) release();
++        await ready;
++      },
++    },
++  });
++  t.after(() => app.close());
++
++  const results = await Promise.all([
++    app.handleRequest({ method: "POST", path: "/bookings", body: MORNING }),
++    app.handleRequest({
++      method: "POST",
++      path: "/bookings",
++      body: { ...MORNING, guestName: "Grace" },
++    }),
++  ]);
++
++  assert.deepEqual(results.map(({ status }) => status).sort(), [201, 409]);
++});

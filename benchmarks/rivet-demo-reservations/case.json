@@ -1,0 +1,23 @@
+{
+  "id": "rivet-demo-reservations",
+  "title": "Scope reservation cancellation to the customer",
+  "category": "bug_fix",
+  "difficulty": 4,
+  "issue": "A cancellation request is looked up by reservation reference alone. References are only unique within a customer account, so when two customers have the same reference the endpoint can cancel the wrong reservation. Scope the lookup to both the customer id from the route and the reservation reference. Add regression tests covering duplicate references and prove that a customer cannot cancel another customer's reservation. Keep the existing 404 response for a reservation that does not belong to that customer.",
+  "setupCommand": null,
+  "validationCommand": [
+    "node",
+    "--test",
+    "test/cancellation.test.js",
+    "hidden/cancellation.hidden.test.js"
+  ],
+  "expectedBehavior": "Cancellation identifies a reservation by customer id and reference together, duplicate references across accounts remain isolated, and missing or cross-account reservations return HTTP 404 without changing data.",
+  "reviewMode": "independent",
+  "maxCostUsd": "2.50",
+  "maxDurationSeconds": 900,
+  "commit": {
+    "author": "Rivet Demo",
+    "email": "demo@rivet.local",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

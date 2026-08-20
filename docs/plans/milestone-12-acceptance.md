@@ -14,7 +14,7 @@ G needs Docker. H is the milestone's demo.
 | D   | `apps/web/components/job-live/stream-state.test.ts`                                            |
 | E   | `apps/worker/tests/integration/replay.int.test.ts`                                             |
 | F   | `packages/core/src/replay/capture.test.ts`, `apps/worker/src/config.test.ts`                   |
-| G   | not yet (work item 5)                                                                          |
+| G   | `apps/worker/tests/sandbox/demo-repositories.sbx.test.ts`                                      |
 | H   | not yet (work item 4 / recording)                                                              |
 
 M12 adds no table, no column, no job status, no job event type and no failure category. A replayed
@@ -156,8 +156,13 @@ These run in `pnpm test` with no database.
 
 ## G - The demo repositories build and grade
 
-Work item 5. Both cases build through `pnpm eval:build` and grade through the M10 harness, so "the
-demo task is solvable" is a measured claim and not a hope. Docker.
+**`apps/worker/tests/sandbox/demo-repositories.sbx.test.ts`.**
+
+Work item 5. `rivet-demo-booking` and `rivet-demo-reservations` build through the fixture builder,
+then checked-in known-good patches pass their hidden tests through the production M10 grader in real
+containers. The public repositories are pushed from those built bare repositories, so their `main`
+commits exactly match the benchmark lockfiles. "The demo task is solvable" is therefore a measured
+claim and not a hope. No database and no model; Docker.
 
 ---
 

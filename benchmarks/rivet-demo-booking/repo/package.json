@@ -1,0 +1,14 @@
+{
+  "name": "rivet-demo-booking",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test test/booking.test.js",
+    "typecheck": "node --check src/database.js && node --check src/booking-repository.js && node --check src/booking-service.js && node --check src/app.js && node --check test/booking.test.js",
+    "lint": "node --check src/database.js && node --check src/booking-repository.js && node --check src/booking-service.js && node --check src/app.js && node --check test/booking.test.js"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

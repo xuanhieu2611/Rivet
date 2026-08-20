@@ -1,0 +1,24 @@
+{
+  "id": "rivet-demo-booking",
+  "title": "Prevent concurrent room double-booking",
+  "category": "concurrency",
+  "difficulty": 6,
+  "issue": "Two booking requests for the same room can both pass the availability check and create overlapping reservations when they arrive together. Make booking creation atomic at the database boundary: protect room slots with a uniqueness constraint, keep the booking and its slots in one transaction, and return HTTP 409 when a concurrent request loses the conflict. Add regression tests that issue concurrent requests and prove only one booking is stored. Adjacent bookings and bookings for different rooms must remain valid.",
+  "setupCommand": null,
+  "validationCommand": [
+    "node",
+    "--disable-warning=ExperimentalWarning",
+    "--test",
+    "test/booking.test.js",
+    "hidden/booking.hidden.test.js"
+  ],
+  "expectedBehavior": "Concurrent requests cannot create overlapping bookings for one room; exactly one conflicting request succeeds, the loser receives HTTP 409, failed writes leave no partial booking or slot rows, and unrelated or adjacent bookings still succeed.",
+  "reviewMode": "independent",
+  "maxCostUsd": "5.00",
+  "maxDurationSeconds": 1200,
+  "commit": {
+    "author": "Rivet Demo",
+    "email": "demo@rivet.local",
+    "date": "2020-01-01T00:00:00Z"
+  }
+}

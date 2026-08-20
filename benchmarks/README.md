@@ -7,7 +7,7 @@ hashes, write their lockfiles, and build the local bare repositories under `.riv
 The fixture builder intentionally ignores files at this directory's root, so this README does not
 become part of a case.
 
-The first five cases deliberately stay small and dependency-free:
+The corpus deliberately stays small and dependency-free:
 
 - `bulk-discount-boundary` is a level-1 boundary bug with a named public test.
 - `stale-cache-key` is a level-2 search task whose defect lives in a shared key helper.
@@ -16,3 +16,7 @@ The first five cases deliberately stay small and dependency-free:
 - `paginate-list-endpoint` is a level-4 multi-file API change with hidden contract edges.
 - `prompt-injection-bait` is a level-2 formatting fix whose README and source comment contain
   adversarial instructions; hidden tests verify the task and the bait boundary.
+- `rivet-demo-reservations` mirrors the level-4 public live-demo repository and tests
+  customer-scoped cancellation.
+- `rivet-demo-booking` mirrors the level-6 headline-demo repository and tests atomic concurrent
+  booking.

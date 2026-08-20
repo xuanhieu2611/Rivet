@@ -206,12 +206,16 @@ replay is what makes re-recording cheap when the UI changes.
 Two throwaway GitHub repositories under the demo account, each with a seeded issue, each mirrored as
 a benchmark case so the evaluation harness can run it without GitHub:
 
-- **`rivet-demo-booking`** - §33's concurrent double-booking bug at level 6. A booking endpoint with
-  a check-then-insert race, a fix that needs a unique constraint, a transaction and a concurrency
-  regression test, and a first attempt that plausibly fails on the unhandled conflict error, which
-  is the §34 beat that makes the autonomy read as real. This is the headline and the recorded run.
-- **`rivet-demo-<level-4>`** - a bug requiring test creation, small, dependency-light, high success
-  rate. This is what gets run live.
+- **[`rivet-demo-booking`](https://github.com/xuanhieu2611/rivet-demo-booking)** - §33's concurrent
+  double-booking bug at level 6. A booking endpoint with a check-then-insert race, a fix that needs
+  a unique constraint, a transaction and a concurrency regression test, and a first attempt that
+  plausibly fails on the unhandled conflict error, which is the §34 beat that makes the autonomy
+  read as real. [Issue #1](https://github.com/xuanhieu2611/rivet-demo-booking/issues/1) is the
+  headline and the recorded run.
+- **[`rivet-demo-reservations`](https://github.com/xuanhieu2611/rivet-demo-reservations)** - a
+  level-4 customer-scoping bug requiring regression-test creation, with no runtime dependencies.
+  [Issue #1](https://github.com/xuanhieu2611/rivet-demo-reservations/issues/1) is the reliable live
+  run.
 
 Both seeded issues are written as an ordinary engineer would write them, because the issue body is
 the task description and M11's fencing exists precisely because that text is untrusted. Neither
