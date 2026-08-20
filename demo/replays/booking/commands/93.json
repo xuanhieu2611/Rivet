@@ -1,0 +1,13 @@
+{
+  "id": 93,
+  "phase": "provisioning",
+  "argv": ["npm", "--version"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 63,
+  "stdout": "11.17.0\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

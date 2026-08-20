@@ -1,0 +1,13 @@
+{
+  "id": 91,
+  "phase": "provisioning",
+  "argv": ["npm", "ci"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 188,
+  "stdout": "\nup to date in 123ms\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

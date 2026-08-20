@@ -1,0 +1,17 @@
+{
+  "id": 115,
+  "phase": "implementing",
+  "argv": [
+    "bash",
+    "-lc",
+    "node -e \"\nconst { DatabaseSync } = require('node:sqlite');\nconst db = new DatabaseSync(':memory:');\ndb.exec('CREATE TABLE t (a INTEGER UNIQUE)');\ndb.prepare('INSERT INTO t (a) VALUES (1)').run();\ntry {\n  db.prepare('INSERT INTO t (a) VALUES (1)').run();\n} catch (err) {\n  console.log('errcode:', err.errcode);\n  console.log('errstr:', err.errstr);\n}\n\""
+  ],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 61,
+  "stdout": "errcode: 2067\nerrstr: constraint failed\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

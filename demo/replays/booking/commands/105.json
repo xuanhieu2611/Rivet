@@ -1,0 +1,13 @@
+{
+  "id": 105,
+  "phase": "planning",
+  "argv": ["git", "grep", "-n", "--no-color", "-e", "DatabaseSync", "--", "."],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 61,
+  "stdout": "src/database.js:2:import { DatabaseSync } from \"node:sqlite\";\nsrc/database.js:10:  const database = new DatabaseSync(\":memory:\");\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

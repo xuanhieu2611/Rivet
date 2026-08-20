@@ -15,7 +15,7 @@ G needs Docker. H is the milestone's demo.
 | E   | `apps/worker/tests/integration/replay.int.test.ts`                                             |
 | F   | `packages/core/src/replay/capture.test.ts`, `apps/worker/src/config.test.ts`                   |
 | G   | `apps/worker/tests/sandbox/demo-repositories.sbx.test.ts`                                      |
-| H   | not yet (work item 4 / recording)                                                              |
+| H   | `demo/replays/booking/`; UI replay verified, recording pending                                 |
 
 M12 adds no table, no column, no job status, no job event type and no failure category. A replayed
 run is an ordinary job. The organising risk is a page that looks public while it is not, or a
@@ -168,5 +168,16 @@ claim and not a hope. No database and no model; Docker.
 
 ## H - `pnpm demo:replay booking` drives the real UI
 
-Work item 4 and the recording. End to end against the real UI, and the recorded sixty-second cut
-exists and matches the §34 beats. This is the milestone's demo.
+Work item 4 and the recording. `demo/replays/booking/` is a redacted capture of real job
+`9b3056ce-4cc9-490f-8a0e-854310af0ddf`, ending in
+[rivet-demo-booking#3](https://github.com/xuanhieu2611/rivet-demo-booking/pull/3). On 2026-08-19,
+`pnpm demo:replay booking --speed 0.1` replayed all 344 events through the production writers in 46
+seconds while a real browser loaded the production job page. The replay ended `completed` with the
+same pull-request identity.
+
+The recording is still open, so H has not passed. Two real model attempts both solved the repository
+without a failed test or reviewer-requested revision. The checked-in capture's honest recovery beat
+is instead a first `submit_plan` call rejected by the structured-plan schema, followed by a
+corrected submission on the next turn. The sixty-second cut must show that event rather than
+manufacture the specific database-conflict failure in §34. This is the milestone's remaining
+deliverable.

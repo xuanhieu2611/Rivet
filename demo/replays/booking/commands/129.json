@@ -1,0 +1,13 @@
+{
+  "id": 129,
+  "phase": "reviewing",
+  "argv": ["git", "ls-files"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 14,
+  "stdout": ".npmrc\nREADME.md\nmigrations/001_initial.sql\npackage-lock.json\npackage.json\nsrc/app.js\nsrc/booking-repository.js\nsrc/booking-service.js\nsrc/database.js\nsrc/errors.js\ntest/booking.test.js\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

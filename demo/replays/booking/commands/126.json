@@ -1,0 +1,13 @@
+{
+  "id": 126,
+  "phase": "testing",
+  "argv": ["npm", "run", "typecheck"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 130,
+  "stdout": "\n> rivet-demo-booking@1.0.0 typecheck\n> node --check src/database.js && node --check src/booking-repository.js && node --check src/booking-service.js && node --check src/app.js && node --check test/booking.test.js\n\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

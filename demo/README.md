@@ -14,4 +14,12 @@ Acceptance run G applies the known-good patches under `apps/worker/tests/fixture
 and grades both cases through the production M10 grader in real containers. Those patches are test
 evidence only and are never pushed to either seed repository.
 
-Replay fixtures live under [`replays/`](replays/).
+The real booking run is captured under [`replays/booking/`](replays/booking/) and published as
+[pull request #3](https://github.com/xuanhieu2611/rivet-demo-booking/pull/3). Replay it through the
+production writers and UI in about 45 seconds with:
+
+```bash
+RIVET_REPLAY=on pnpm demo:replay booking --speed 0.1
+```
+
+Stop the worker first so it cannot claim the ordinary queued row before the replay process does.

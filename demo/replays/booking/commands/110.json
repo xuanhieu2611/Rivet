@@ -1,0 +1,13 @@
+{
+  "id": 110,
+  "phase": "implementing",
+  "argv": ["bash", "-lc", "node --version"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 48,
+  "stdout": "v24.19.0\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

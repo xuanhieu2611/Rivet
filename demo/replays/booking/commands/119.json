@@ -1,0 +1,13 @@
+{
+  "id": 119,
+  "phase": "testing",
+  "argv": ["git", "diff", "--cached", "--numstat"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 15,
+  "stdout": "2\t0\tmigrations/001_initial.sql\n2\t1\tsrc/app.js\n23\t11\tsrc/booking-repository.js\n2\t7\tsrc/booking-service.js\n6\t0\tsrc/errors.js\n112\t0\ttest/booking.test.js\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

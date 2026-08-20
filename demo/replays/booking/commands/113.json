@@ -1,0 +1,17 @@
+{
+  "id": 113,
+  "phase": "implementing",
+  "argv": [
+    "bash",
+    "-lc",
+    "node -e \"\nconst { DatabaseSync } = require('node:sqlite');\nconst db = new DatabaseSync(':memory:');\ndb.exec('CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)');\ndb.exec('BEGIN');\nconst stmt = db.prepare('INSERT INTO test (val) VALUES (?)');\nstmt.run('hello');\ndb.exec('COMMIT');\nconst r = db.prepare('SELECT * FROM test').all();\nconsole.log(JSON.stringify(r));\n\""
+  ],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 66,
+  "stdout": "[{\"id\":1,\"val\":\"hello\"}]\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

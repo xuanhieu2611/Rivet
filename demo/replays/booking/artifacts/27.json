@@ -1,0 +1,26 @@
+{
+  "id": 27,
+  "type": "resource_report",
+  "phase": "finalizing",
+  "content": "{\n  \"version\": 1,\n  \"samplingIntervalMs\": 1000,\n  \"sampleCount\": 224,\n  \"samplingErrors\": 0,\n  \"inspectionErrors\": 0,\n  \"durationMs\": 449015,\n  \"memory\": {\n    \"peakBytes\": 36200448,\n    \"limitBytes\": 2147483648,\n    \"peakAtMs\": 352597\n  },\n  \"cpu\": {\n    \"peakPercent\": 64.62914911541702,\n    \"limitNanoCpus\": 2000000000,\n    \"peakAtMs\": 1006\n  },\n  \"pids\": {\n    \"peak\": 14,\n    \"limit\": 512,\n    \"peakAtMs\": 352597\n  },\n  \"oomKilled\": false,\n  \"collectedAt\": \"2026-08-20T06:14:04.295Z\"\n}\n",
+  "byteSize": 491,
+  "truncated": false,
+  "metadata": {
+    "version": 1,
+    "pidsPeak": 14,
+    "oomKilled": false,
+    "pidsLimit": 512,
+    "durationMs": 449015,
+    "cpuPeakAtMs": 1006,
+    "sampleCount": 224,
+    "pidsPeakAtMs": 352597,
+    "cpuPeakPercent": 64.62914911541702,
+    "memoryPeakAtMs": 352597,
+    "samplingErrors": 0,
+    "memoryPeakBytes": 36200448,
+    "cpuLimitNanoCpus": 2000000000,
+    "inspectionErrors": 0,
+    "memoryLimitBytes": 2147483648,
+    "samplingIntervalMs": 1000
+  }
+}

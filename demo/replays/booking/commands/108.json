@@ -1,0 +1,13 @@
+{
+  "id": 108,
+  "phase": "implementing",
+  "argv": ["head", "-c", "4096", "README.md"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 14,
+  "stdout": "# Rivet demo booking service\n\nA small room-booking API used for Rivet's public concurrency demo. It stores bookings and their\n30-minute room slots in SQLite through Node's built-in database module.\n\n## Run the tests\n\n```bash\nnpm test\n```\n\nThe repository intentionally starts at the commit referenced by the seeded GitHub issue. The public\ntest suite covers ordinary, adjacent and sequential-conflict requests.\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

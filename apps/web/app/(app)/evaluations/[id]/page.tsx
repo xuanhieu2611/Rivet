@@ -6,6 +6,7 @@ import {
   listBenchmarkCases,
   listEvaluationRuns,
   summarizeEvaluationRuns,
+  type EvaluationSuiteSummary,
 } from "@rivet/core";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -17,14 +18,16 @@ import { EvaluationMatrixTable } from "@/components/evaluation-matrix-table";
 import { EvaluationMetricsPanel } from "@/components/evaluation-metrics-panel";
 import { EvaluationRunTable } from "@/components/evaluation-run-table";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   formatCategory,
+  formatScore,
   formatSuccessFraction,
   formatSuccessRate,
+  formatRuntimeSeconds,
   suiteStatusClassName,
 } from "@/lib/evaluation-presentation";
-import { formatDateTime } from "@/lib/format";
+import { formatAgentCost, formatDateTime } from "@/lib/format";
 import { requirePageSession } from "@/lib/auth/page-guard";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +52,13 @@ export default async function EvaluationSuitePage({ params }: PageProps) {
     cases.map((entry) => [entry.id, entry.category]),
   );
   const summary = summarizeEvaluationRuns(runs, { categories });
+  const armSummaries = suite.arms.map((arm) => ({
+    label: arm.label,
+    summary: summarizeEvaluationRuns(
+      runs.filter((run) => run.arm === arm.label),
+      { categories },
+    ),
+  }));
   const expected = suite.caseIds.length * suite.arms.length * suite.repetitions;
 
   return (
@@ -74,46 +84,38 @@ export default async function EvaluationSuitePage({ params }: PageProps) {
         </p>
       </header>
 
-      <section className="grid gap-4 sm:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Success rate</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">
-              {formatSuccessRate(summary.overall.successRate)}
-            </p>
-            <p className="text-muted-foreground mt-1 text-xs">
-              {formatSuccessFraction(summary.overall)} graded runs
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Excluded from the rate</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">
-              {summary.overall.errored + summary.overall.ungraded}
-            </p>
-            <p className="text-muted-foreground mt-1 text-xs">
-              {summary.overall.errored} errored (Rivet or its environment),{" "}
-              {summary.overall.ungraded} ungraded (grading itself broke)
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Unlabelled failures</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">{summary.unlabeledFailures}</p>
-            <p className="text-muted-foreground mt-1 text-xs">
-              Not machine-decidable; <code>pnpm eval:label</code> assigns these by hand.
-            </p>
-          </CardContent>
-        </Card>
+      <section id="evaluation-summary" className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryMetric
+            label="Graded success"
+            value={formatSuccessRate(summary.overall.successRate)}
+            hint={formatSuccessFraction(summary.overall)}
+          />
+          <SummaryMetric
+            label="Typical runtime"
+            value={formatRuntimeSeconds(summary.efficiency.medianRuntimeSeconds)}
+            hint={`mean ${formatRuntimeSeconds(summary.efficiency.meanRuntimeSeconds)}`}
+          />
+          <SummaryMetric
+            label="Mean model cost"
+            value={formatAgentCost(summary.efficiency.meanCostUsd)}
+            hint={`${formatAgentCost(summary.efficiency.totalCostUsd)} across ${String(summary.efficiency.runCount)} runs`}
+          />
+          <SummaryMetric
+            label="Hidden tests"
+            value={`${String(summary.quality.hiddenTestsPassed)}/${String(summary.quality.hiddenTestsTotal)}`}
+            hint="assertions passed across graded runs"
+          />
+        </div>
+        <p className="text-muted-foreground max-w-3xl text-xs leading-relaxed">
+          {summary.overall.errored + summary.overall.ungraded} runs are excluded from the success
+          rate: {summary.overall.errored} errored because Rivet or its environment failed and{" "}
+          {summary.overall.ungraded} could not be graded. {summary.unlabeledFailures} failures still
+          need a human label.
+        </p>
       </section>
+
+      <ArmComparison arms={armSummaries} />
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold tracking-tight">Case x arm</h2>
@@ -178,5 +180,72 @@ export default async function EvaluationSuitePage({ params }: PageProps) {
         </ul>
       </section>
     </div>
+  );
+}
+
+function SummaryMetric({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="rounded-xl bg-muted/25 p-4 ring-1 ring-foreground/10">
+      <p className="text-muted-foreground text-xs">{label}</p>
+      <p className="mt-2 font-mono text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+      <p className="text-muted-foreground mt-1 text-xs">{hint}</p>
+    </div>
+  );
+}
+
+function ArmComparison({
+  arms,
+}: {
+  arms: readonly { label: string; summary: EvaluationSuiteSummary }[];
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="space-y-1">
+        <h2 className="text-lg font-semibold tracking-tight">Arm comparison</h2>
+        <p className="text-muted-foreground max-w-2xl text-sm">
+          What each workflow bought, and what it cost. Differences are descriptive rather than a
+          causal claim.
+        </p>
+      </div>
+      <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
+        <div className="bg-muted/40 text-muted-foreground hidden grid-cols-[minmax(10rem,1.4fr)_repeat(4,minmax(7rem,1fr))] gap-4 px-4 py-2 text-xs md:grid">
+          <span>Workflow</span>
+          <span>Success</span>
+          <span>Mean score</span>
+          <span>Mean cost</span>
+          <span>Mean runtime</span>
+        </div>
+        {arms.map(({ label, summary }) => (
+          <div
+            key={label}
+            className="grid gap-3 border-t border-foreground/10 px-4 py-4 first:border-t-0 md:grid-cols-[minmax(10rem,1.4fr)_repeat(4,minmax(7rem,1fr))] md:items-baseline md:gap-4"
+          >
+            <p className="font-medium">{label}</p>
+            <ArmMetric
+              label="Success"
+              value={`${formatSuccessRate(summary.overall.successRate)} ${formatSuccessFraction(summary.overall)}`}
+            />
+            <ArmMetric
+              label="Mean score"
+              value={formatScore(summary.byArm[0]?.meanScore ?? null)}
+            />
+            <ArmMetric label="Mean cost" value={formatAgentCost(summary.efficiency.meanCostUsd)} />
+            <ArmMetric
+              label="Mean runtime"
+              value={formatRuntimeSeconds(summary.efficiency.meanRuntimeSeconds)}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ArmMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <p className="text-sm">
+      <span className="text-muted-foreground mr-2 md:hidden">{label}</span>
+      <span className="font-mono tabular-nums">{value}</span>
+    </p>
   );
 }

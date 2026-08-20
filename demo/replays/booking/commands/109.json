@@ -1,0 +1,13 @@
+{
+  "id": 109,
+  "phase": "implementing",
+  "argv": ["cat", "package.json"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 15,
+  "stdout": "{\n  \"name\": \"rivet-demo-booking\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"test\": \"node --disable-warning=ExperimentalWarning --test test/booking.test.js\",\n    \"typecheck\": \"node --check src/database.js && node --check src/booking-repository.js && node --check src/booking-service.js && node --check src/app.js && node --check test/booking.test.js\",\n    \"lint\": \"node --check src/database.js && node --check src/booking-repository.js && node --check src/booking-service.js && node --check src/app.js && node --check test/booking.test.js\"\n  },\n  \"engines\": {\n    \"node\": \">=24\"\n  }\n}\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

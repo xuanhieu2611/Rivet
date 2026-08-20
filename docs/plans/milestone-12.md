@@ -6,16 +6,16 @@ depend on a model behaving well while a stranger watches.
 
 The PRD checklist (§2734):
 
-- [ ] Landing page
-- [ ] polished job UI
-- [ ] timeline animation
-- [ ] diff viewer
-- [ ] test result cards
-- [ ] evaluation dashboard
-- [ ] architecture diagram
-- [ ] README
-- [ ] demo repository
-- [ ] seeded demo issue
+- [x] Landing page
+- [x] polished job UI
+- [x] timeline animation
+- [x] diff viewer
+- [x] test result cards
+- [x] evaluation dashboard
+- [x] architecture diagram
+- [x] README
+- [x] demo repository
+- [x] seeded demo issue
 - [ ] backup prerecorded successful run
 
 Plus the standing constraints: §32 (task difficulty progression), §33 (the public demo scenario),

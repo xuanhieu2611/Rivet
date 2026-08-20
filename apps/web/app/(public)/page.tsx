@@ -85,8 +85,8 @@ export default function LandingPage() {
               Sixty seconds, as a ledger
             </h2>
             <p className="text-landing-muted text-base leading-relaxed">
-              Stills are labeled frames until a captured run replaces them. The sequence includes
-              the first-attempt failure.
+              Frames from the real booking job, condensed into the sequence a public recording needs
+              to make legible.
             </p>
           </div>
           <RunWalkthrough />

@@ -1,0 +1,13 @@
+{
+  "id": 22,
+  "type": "diff_stat",
+  "phase": "testing",
+  "content": "2\t0\tmigrations/001_initial.sql\n2\t1\tsrc/app.js\n23\t11\tsrc/booking-repository.js\n2\t7\tsrc/booking-service.js\n6\t0\tsrc/errors.js\n112\t0\ttest/booking.test.js\n",
+  "byteSize": 150,
+  "truncated": false,
+  "metadata": {
+    "deletions": 19,
+    "insertions": 147,
+    "filesChanged": 6
+  }
+}

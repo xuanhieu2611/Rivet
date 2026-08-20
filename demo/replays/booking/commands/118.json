@@ -1,0 +1,13 @@
+{
+  "id": 118,
+  "phase": "testing",
+  "argv": ["git", "add", "-A"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 14,
+  "stdout": "",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

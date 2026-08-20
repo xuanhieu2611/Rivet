@@ -1,0 +1,13 @@
+{
+  "id": 89,
+  "phase": "provisioning",
+  "argv": ["git", "rev-parse", "HEAD"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 30,
+  "stdout": "3e925b753637c20f718995ab7632a26270072131\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

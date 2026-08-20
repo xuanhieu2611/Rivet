@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "name": "booking",
+  "capturedAt": "2026-08-20T06:14:30.171Z",
+  "sourceJobId": "9b3056ce-4cc9-490f-8a0e-854310af0ddf",
+  "created": {
+    "title": "Prevent concurrent room double-booking",
+    "description": "We have seen overlapping reservations created when two booking requests for the same room arrive at nearly the same time. Both requests can pass the availability check before either writes its room slots.\n\nPlease make booking creation atomic at the database boundary:\n\n- protect each room slot with a database uniqueness constraint\n- keep the booking row and all of its slot rows in one transaction\n- return HTTP 409 when a concurrent request loses the conflict\n- add a regression test that issues concurrent requests and proves only one booking is stored\n\nAdjacent bookings and bookings for different rooms must remain valid.",
+    "repoUrl": "https://github.com/xuanhieu2611/rivet-demo-booking",
+    "baseBranch": "main",
+    "reviewMode": "independent",
+    "maxReviewLoops": 2,
+    "maxDurationSeconds": 3600,
+    "maxCostUsd": "5.00",
+    "maxModelCalls": 200,
+    "maxToolCalls": 500,
+    "githubInstallationId": 154047237,
+    "repoOwner": "xuanhieu2611",
+    "repoName": "rivet-demo-booking",
+    "issueNumber": 1,
+    "issueUrl": "https://github.com/xuanhieu2611/rivet-demo-booking/issues/1"
+  },
+  "facts": {
+    "status": "completed",
+    "baseCommitSha": "3e925b753637c20f718995ab7632a26270072131",
+    "envFingerprint": {
+      "node": "v24.19.0",
+      "image": "node@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584",
+      "limits": {
+        "nanoCpus": 2000000000,
+        "pidsLimit": 512,
+        "memoryBytes": 2147483648
+      },
+      "repoUrl": "https://github.com/xuanhieu2611/rivet-demo-booking",
+      "lockfile": "package-lock.json",
+      "commitSha": "3e925b753637c20f718995ab7632a26270072131",
+      "baseBranch": "main",
+      "recordedAt": "2026-08-20T06:06:35.720Z",
+      "lockfileSha256": "8d3bdd84c01a578a782536c14a9b3ddda4975e18904b6ad4d1e52bc2024c4536",
+      "packageManager": {
+        "name": "npm",
+        "version": "11.17.0"
+      }
+    },
+    "finalBranch": "rivet/job-9b3056ce-prevent-concurrent-room-double-booking",
+    "pullRequestUrl": "https://github.com/xuanhieu2611/rivet-demo-booking/pull/3",
+    "pullRequestNumber": 3,
+    "failureReason": null,
+    "failureCategory": null,
+    "reviewDecision": "approve",
+    "reviewLoops": 0,
+    "reviewBlockingCount": 0,
+    "totalInputTokens": 85087,
+    "totalOutputTokens": 18037,
+    "totalCostUsd": "0.0141",
+    "totalTurns": 24,
+    "totalModelCalls": 24,
+    "totalToolCalls": 46
+  }
+}

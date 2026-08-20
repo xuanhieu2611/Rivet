@@ -1,0 +1,9 @@
+{
+  "id": 24,
+  "type": "review_report",
+  "phase": "reviewing",
+  "content": "{\"decision\":\"approve\",\"blockingIssues\":[],\"nonBlockingIssues\":[],\"confidence\":1,\"summary\":\"The diff correctly implements all four requirements from the issue: a UNIQUE index on booking_slots(room_id, starts_at) provides the database-level constraint; createBooking wraps booking+slots inserts in a manual BEGIN/COMMIT/ROLLBACK transaction; SQLITE_CONSTRAINT (errcode 2067) is caught and re-thrown as BookingConflictError, which app.js maps to HTTP 409; three new concurrent regression tests cover same-room conflict, different-room success, and adjacent-room success. All validations (test suite, typecheck, lint) pass. No blocking or significant non-blocking issues exist.\"}",
+  "byteSize": 675,
+  "truncated": false,
+  "metadata": null
+}

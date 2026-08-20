@@ -11,7 +11,7 @@ export function ValidationPanel({ artifact }: { artifact: JobArtifact | null }) 
   const report = readValidationReport(artifact);
 
   return (
-    <Card id="validation">
+    <Card id="validation" className="scroll-mt-24">
       <CardHeader>
         <CardTitle>Validation</CardTitle>
         <CardDescription>
@@ -27,9 +27,9 @@ export function ValidationPanel({ artifact }: { artifact: JobArtifact | null }) 
               <ValidationOutcomeBadge outcome={report.outcome} />
             </div>
 
-            <ol className="divide-border/60 divide-y overflow-hidden rounded-lg border">
+            <ol className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {report.checks.map((check) => (
-                <ValidationCheckRow key={check.kind} check={check} />
+                <ValidationCheckCard key={check.kind} check={check} />
               ))}
             </ol>
 
@@ -55,22 +55,42 @@ export function ValidationPanel({ artifact }: { artifact: JobArtifact | null }) 
   );
 }
 
-function ValidationCheckRow({ check }: { check: CheckComparison }) {
+function ValidationCheckCard({ check }: { check: CheckComparison }) {
   return (
-    <li className="space-y-3 px-3 py-3" data-check-kind={check.kind}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-medium">{CHECK_KIND_LABELS[check.kind]}</h3>
-          <p className="text-muted-foreground mt-0.5 text-xs">
-            Baseline{" "}
-            {check.baseline ? CHECK_STATUS_LABELS[check.baseline].toLowerCase() : "unknown"}
-            {" · "}
-            after {CHECK_STATUS_LABELS[check.status].toLowerCase()}
-            {check.tests ? ` · ${plural(check.tests.total, "test")}` : ""}
-          </p>
-        </div>
+    <li
+      className="flex min-w-0 flex-col gap-4 rounded-xl bg-muted/25 p-4 ring-1 ring-foreground/10"
+      data-check-kind={check.kind}
+    >
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <h3 className="text-sm font-medium">{CHECK_KIND_LABELS[check.kind]}</h3>
         <ValidationOutcomeBadge outcome={check.outcome} />
       </div>
+
+      {check.tests ? (
+        <div>
+          <p className="font-mono text-2xl font-semibold tracking-tight tabular-nums">
+            {check.tests.passed}/{check.tests.total}
+          </p>
+          <p className="text-muted-foreground mt-1 text-xs">
+            tests passed
+            {check.tests.skipped > 0 ? ` · ${plural(check.tests.skipped, "skip")}` : ""}
+          </p>
+        </div>
+      ) : (
+        <div>
+          <p className="text-lg font-semibold tracking-tight">
+            {CHECK_STATUS_LABELS[check.status]}
+          </p>
+          <p className="text-muted-foreground mt-1 text-xs">Repository check</p>
+        </div>
+      )}
+
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        Baseline {check.baseline ? CHECK_STATUS_LABELS[check.baseline].toLowerCase() : "unknown"}
+        {" · "}
+        after {CHECK_STATUS_LABELS[check.status].toLowerCase()}
+        {check.tests ? ` · ${plural(check.tests.total, "test")}` : ""}
+      </p>
 
       {check.reason ? <p className="text-muted-foreground text-xs">{check.reason}</p> : null}
       {check.attribution ? <AttributionDetails attribution={check.attribution} /> : null}

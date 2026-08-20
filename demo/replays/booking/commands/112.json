@@ -1,0 +1,17 @@
+{
+  "id": 112,
+  "phase": "implementing",
+  "argv": [
+    "bash",
+    "-lc",
+    "node -e \"const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(':memory:'); console.log(Object.getOwnPropertyNames(Object.getPrototypeOf(db)));\""
+  ],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 68,
+  "stdout": "[\n  'open',                'close',\n  'prepare',             'exec',\n  'function',            'createTagStore',\n  'location',            'aggregate',\n  'createSession',       'applyChangeset',\n  'enableLoadExtension', 'enableDefensive',\n  'loadExtension',       'serialize',\n  'deserialize',         'setAuthorizer',\n  'constructor'\n]\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

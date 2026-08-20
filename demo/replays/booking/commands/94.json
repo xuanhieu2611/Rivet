@@ -1,0 +1,13 @@
+{
+  "id": 94,
+  "phase": "provisioning",
+  "argv": ["sha256sum", "package-lock.json"],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 37,
+  "stdout": "8d3bdd84c01a578a782536c14a9b3ddda4975e18904b6ad4d1e52bc2024c4536  package-lock.json\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

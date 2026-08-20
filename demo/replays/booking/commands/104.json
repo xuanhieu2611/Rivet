@@ -1,0 +1,13 @@
+{
+  "id": 104,
+  "phase": "planning",
+  "argv": ["git", "grep", "-n", "--no-color", "-e", "transaction", "--", "."],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 1,
+  "durationMs": 50,
+  "stdout": "",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

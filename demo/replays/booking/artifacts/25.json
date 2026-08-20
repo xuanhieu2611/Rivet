@@ -1,0 +1,11 @@
+{
+  "id": 25,
+  "type": "implementation_summary",
+  "phase": "finalizing",
+  "content": "All 6 tests pass. Here is a summary of the changes and why:\n\n### Problem\nTwo concurrent booking requests for the same room could both pass the availability check before either wrote its slots, causing duplicate `(room_id, starts_at)` rows in `booking_slots`.\n\n### Changes made\n\n**`migrations/001_initial.sql`** — Added a `UNIQUE` index on `booking_slots(room_id, starts_at)`. This is the database-level guarantee that prevents duplicate slots from ever being stored, regardless of application logic.\n\n**`src/errors.js`** (new) — Extracted `BookingConflictError` into its own module so both `booking-repository.js` and `booking-service.js` can import it without a circular dependency.\n\n**`src/booking-repository.js`** — Wrapped `createBooking` in a manual SQL transaction (`BEGIN` / `COMMIT` / `ROLLBACK`). The booking row and all its slot rows are now inserted atomically. If a `UNIQUE constraint` violation (SQLite errcode 2067) occurs, it rolls back the transaction and throws `BookingConflictError` to signal the conflict to the caller. The `hasConflictingSlot` check is kept as an early-exit optimization for sequential requests, but the transaction is the real guarantee.\n\n**`src/booking-service.js`** — Imports `BookingConflictError` from `errors.js` instead of defining it locally.\n\n**`src/app.js`** — Imports `BookingConflictError` from `errors.js` instead of from `booking-service.js`. The HTTP 409 mapping is unchanged.\n\n**`test/booking.test.js`** — Added three new tests:\n- **Concurrent same-room**: Two requests for the same slot race via an `afterAvailabilityCheck` gate; one gets 201 and the other gets 409. Verifies only one booking's worth of slots (2 rows) was stored and no duplicate `(room_id, starts_at)` rows exist.\n- **Concurrent different-room**: Same timing but different rooms — both succeed (201).\n- **Concurrent adjacent**: Same room, adjacent time blocks — both succeed (201).",
+  "byteSize": 1920,
+  "truncated": false,
+  "metadata": {
+    "present": true
+  }
+}

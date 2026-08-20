@@ -56,10 +56,12 @@ replay, publication receipts, evaluation, and telemetry paths.
 
 > [!NOTE] **Demo video - added during acceptance run H.**
 
-The final sixty-second recording will show a real booking-race job investigate, fail its first
-attempt, revise the patch, pass validation and review, and open a pull request. Rivet's capture and
-replay path drives the production writers and SSE UI so the public demo never depends on a model
-sampling well on demand.
+The final sixty-second recording will show the captured booking-race job investigate, recover after
+Rivet rejects its first oversized structured plan, implement the database fix, pass validation and
+independent review, and open
+[pull request #3](https://github.com/xuanhieu2611/rivet-demo-booking/pull/3). The checked-in replay
+drives the production writers and SSE UI, so the public demo never depends on a model sampling well
+on demand.
 
 ## Measured results
 
@@ -102,10 +104,11 @@ run `pnpm test` to exercise the database-free suite immediately.
 
 ## Project status
 
-**Milestone 12 - public demo polish - is in progress.** The static public landing page, structured
-diff viewer, append-only timeline motion, capture and replay path, two graded demo repositories, and
-architecture diagrams are implemented. The public recording remains acceptance run H, and its
-placeholder is deliberately isolated in the [Demo](#demo) section.
+**Milestone 12 - public demo polish - is in progress.** The static public landing page, real run
+stills, structured diff viewer, validation cards, evaluation summary, append-only timeline motion,
+real booking capture, replay path, two graded demo repositories, and architecture diagrams are
+implemented. The replay has driven the real UI end to end. The public recording remains acceptance
+run H, and its placeholder is deliberately isolated in the [Demo](#demo) section.
 
 **Milestone 10 - the evaluation harness - is complete.** Rivet now measures itself. A benchmark case
 is git-tracked files that build into a lock-pinned local bare repository; an evaluation run **is**

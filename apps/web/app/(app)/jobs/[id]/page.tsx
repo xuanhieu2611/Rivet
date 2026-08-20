@@ -133,7 +133,7 @@ export default async function JobDetailPage({ params }: PageProps) {
 
             <ReviewPanel artifact={review} job={job} />
 
-            <Card>
+            <Card id="timeline" className="scroll-mt-24">
               <CardHeader>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <CardTitle>Execution timeline</CardTitle>
@@ -190,7 +190,7 @@ export default async function JobDetailPage({ params }: PageProps) {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card id="publication" className="scroll-mt-24">
               <CardHeader>
                 <CardTitle>Target</CardTitle>
               </CardHeader>

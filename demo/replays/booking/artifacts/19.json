@@ -1,0 +1,9 @@
+{
+  "id": 19,
+  "type": "baseline_report",
+  "phase": "analyzing",
+  "content": "{\"checks\":[{\"kind\":\"test\",\"status\":\"passed\",\"source\":\"package_json\",\"argv\":[\"npm\",\"run\",\"test\"],\"exitCode\":0,\"durationMs\":97,\"commandId\":97},{\"kind\":\"typecheck\",\"status\":\"passed\",\"source\":\"package_json\",\"argv\":[\"npm\",\"run\",\"typecheck\"],\"exitCode\":0,\"durationMs\":122,\"commandId\":98},{\"kind\":\"lint\",\"status\":\"passed\",\"source\":\"package_json\",\"argv\":[\"npm\",\"run\",\"lint\"],\"exitCode\":0,\"durationMs\":120,\"commandId\":99}]}",
+  "byteSize": 414,
+  "truncated": false,
+  "metadata": null
+}

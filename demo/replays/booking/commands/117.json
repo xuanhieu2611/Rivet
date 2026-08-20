@@ -1,0 +1,17 @@
+{
+  "id": 117,
+  "phase": "implementing",
+  "argv": [
+    "bash",
+    "-lc",
+    "cd /home/node/workspace/repo && node --disable-warning=ExperimentalWarning --test test/booking.test.js"
+  ],
+  "cwd": "/home/node/workspace/repo",
+  "exitCode": 0,
+  "durationMs": 104,
+  "stdout": "✔ creates a booking (1.089834ms)\n✔ allows adjacent bookings (0.34075ms)\n✔ rejects a sequential overlapping booking (0.47325ms)\n✔ concurrent requests for same room produce one 201 and one 409 (3.072917ms)\n✔ concurrent requests for different rooms both succeed (0.589542ms)\n✔ concurrent adjacent bookings for same room both succeed (0.425542ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 35.173834\n",
+  "stderr": "",
+  "truncated": false,
+  "timedOut": false,
+  "oomKilled": false
+}

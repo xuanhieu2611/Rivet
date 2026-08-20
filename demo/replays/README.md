@@ -9,6 +9,13 @@ detail page, not a sandbox restore.
 Names are lowercase kebab-case and are passed explicitly
 (`pnpm demo:capture <jobId> --name booking`). They are never inferred from a job title.
 
-The booking capture that drives the public demo is not here yet. It lands after the demo repository
-and seeded issue exist. Until then, acceptance run E builds a temporary fixture in the integration
-suite.
+`booking/` is a redacted capture of real job `9b3056ce-4cc9-490f-8a0e-854310af0ddf`, which completed
+against the level-6 booking issue and opened
+[pull request #3](https://github.com/xuanhieu2611/rivet-demo-booking/pull/3). Its 344 events include
+a rejected first `submit_plan` call, the corrected structured plan, six changed files, deterministic
+validation, independent approval and publication. The model did not produce a failed test or a
+review revision, and the fixture does not pretend otherwise.
+
+Recorded playback takes about 7 minutes 32 seconds. `pnpm demo:replay booking --speed 0.1`
+compresses it to roughly 45 seconds while preserving event order; `--speed 0` is the fast structural
+check.

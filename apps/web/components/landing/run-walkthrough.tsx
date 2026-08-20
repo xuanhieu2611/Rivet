@@ -3,19 +3,23 @@ const BEATS = [
     t: "00:00",
     title: "Hook",
     body: "A real bug in a repository the agent has not seen. The issue is an ordinary engineer writing: prevent concurrent double-booking.",
-    still: "Issue",
+    still: {
+      src: "/landing/run/issue.png",
+      alt: "GitHub issue describing the concurrent room double-booking bug",
+      caption: "Seeded GitHub issue #1",
+    },
   },
   {
     t: "00:05",
     title: "Start",
     body: "One job. The worker claims it, provisions a sandbox, clones, records a baseline. A red baseline is not a failed job.",
-    still: "Provision",
+    still: null,
   },
   {
     t: "00:10",
     title: "Investigate",
     body: "The planner is read-only. It can list, read, search and submit a plan. It cannot edit.",
-    still: "Timeline",
+    still: null,
   },
   {
     t: "00:18",
@@ -25,15 +29,23 @@ const BEATS = [
   },
   {
     t: "00:28",
-    title: "Fail on purpose",
-    body: "Targeted tests fail. Unhandled conflict error. The run revises. Autonomy that never misses is a commercial.",
-    still: "Validation",
+    title: "First attempt rejected",
+    body: "The planner's first structured submission exceeds Rivet's schema bounds. Rivet rejects it; the planner shortens the fields and submits a valid plan on the next turn.",
+    still: {
+      src: "/landing/run/timeline.png",
+      alt: "Rivet timeline showing a rejected submit plan tool call followed by a corrected submission",
+      caption: "Real schema rejection and recovery",
+    },
   },
   {
     t: "00:36",
     title: "Validate",
     body: "Targeted tests, full suite, typecheck, lint. New failures are named. Pre-existing ones stay pre-existing.",
-    still: null,
+    still: {
+      src: "/landing/run/validation.png",
+      alt: "Rivet validation cards showing verified tests, typecheck and lint",
+      caption: "Real validation and review",
+    },
   },
   {
     t: "00:43",
@@ -45,7 +57,11 @@ const BEATS = [
     t: "00:49",
     title: "Publish",
     body: "A branch, a commit, a pull request, once. Receipts in Postgres make the side effect idempotent.",
-    still: "Pull request",
+    still: {
+      src: "/landing/run/pull-request.png",
+      alt: "GitHub pull request opened by Rivet for the booking fix",
+      caption: "Pull request #3",
+    },
   },
   {
     t: "00:55",
@@ -68,26 +84,20 @@ export function RunWalkthrough() {
             <h3 className="text-lg font-semibold tracking-tight">{beat.title}</h3>
             <p className="text-base leading-relaxed">{beat.body}</p>
           </div>
-          {beat.still ? <Still label={beat.still} /> : <div className="hidden md:block" />}
+          {beat.still ? <Still {...beat.still} /> : <div className="hidden md:block" />}
         </li>
       ))}
     </ol>
   );
 }
 
-function Still({ label }: { label: string }) {
+function Still({ src, alt, caption }: { src: string; alt: string; caption: string }) {
   return (
     <figure className="space-y-2">
-      <div
-        className="flex aspect-[16/10] items-end rounded-[var(--radius)] p-4"
-        style={{
-          background: "var(--landing-still)",
-          border: "1px solid var(--landing-rule)",
-        }}
-      >
-        <p className="text-base font-semibold tracking-tight">{label}</p>
+      <div className="aspect-[16/10] overflow-hidden rounded-[var(--radius)] border border-[var(--landing-rule)] bg-[var(--landing-still)]">
+        <img src={src} alt={alt} width={1280} height={800} className="h-full w-full object-cover" />
       </div>
-      <figcaption className="text-landing-muted text-xs">Capture pending</figcaption>
+      <figcaption className="text-landing-muted text-xs">{caption}</figcaption>
     </figure>
   );
 }
