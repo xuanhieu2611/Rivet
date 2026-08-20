@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertArtifactReadLimits,
+  assertCaptureAllowed,
   assertLeaseInvariant,
+  assertReplayAllowed,
   DEFAULT_BENCHMARK_FIXTURE_ROOT,
   DEFAULT_BENCHMARK_ROOT,
   DEFAULT_MODEL,
@@ -97,6 +99,11 @@ describe("parseWorkerConfig", () => {
         cloneTimeoutMs: 180_000,
         seedMaxBytes: 268_435_456,
         concurrency: 1,
+      },
+      replay: {
+        // Off by default and refused in production: a process that can mint a
+        // convincing job timeline from a file must not exist in a deployment.
+        mode: "off",
       },
       telemetry: {
         // Off by default like GitHub and the harness, and unlike them, legal in
@@ -572,6 +579,55 @@ describe("evaluation harness", () => {
 
   it("rejects a mode that is neither on nor off", () => {
     expect(() => parseWorkerConfig({ RIVET_EVAL: "yes" })).toThrow(WorkerConfigError);
+  });
+});
+
+describe("replay", () => {
+  /** A production environment the other refused switches already accept. */
+  const PRODUCTION = {
+    NODE_ENV: "production",
+    RIVET_GITHUB: "app",
+    GITHUB_APP_ID: "123456",
+    GITHUB_APP_PRIVATE_KEY: Buffer.from(
+      "-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-key\n-----END RSA PRIVATE KEY-----\n",
+      "utf8",
+    ).toString("base64"),
+  };
+
+  it("is off by default, so a worker never mints a timeline from a file", () => {
+    expect(parseWorkerConfig().replay.mode).toBe("off");
+  });
+
+  it("refuses to manufacture timelines in production", () => {
+    const production = { ...PRODUCTION, RIVET_REPLAY: "on" };
+
+    expect(() => parseWorkerConfig(production)).toThrow(
+      /manufactures a job timeline from a fixture/,
+    );
+    expect(() => parseWorkerConfig(production)).toThrow(WorkerConfigError);
+    expect(() => parseWorkerConfig(PRODUCTION)).not.toThrow();
+  });
+
+  it("allows replay outside production", () => {
+    expect(parseWorkerConfig({ RIVET_REPLAY: "on" }).replay.mode).toBe("on");
+    expect(parseWorkerConfig({ RIVET_REPLAY: "on", NODE_ENV: "test" }).replay.mode).toBe("on");
+  });
+
+  it("rejects a mode that is neither on nor off", () => {
+    expect(() => parseWorkerConfig({ RIVET_REPLAY: "yes" })).toThrow(WorkerConfigError);
+  });
+
+  it("lets the replay CLI start only with an explicit on, never in production", () => {
+    expect(() => assertReplayAllowed({ RIVET_REPLAY: "on", NODE_ENV: "production" })).toThrow(
+      /NODE_ENV=production/,
+    );
+    expect(() => assertReplayAllowed({})).toThrow(/requires RIVET_REPLAY=on/);
+    expect(() => assertReplayAllowed({ RIVET_REPLAY: "on" })).not.toThrow();
+  });
+
+  it("lets capture run without the flag, but not in production", () => {
+    expect(() => assertCaptureAllowed({})).not.toThrow();
+    expect(() => assertCaptureAllowed({ NODE_ENV: "production" })).toThrow(/demo:capture/);
   });
 });
 

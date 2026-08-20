@@ -122,6 +122,11 @@ export const TEST_CONFIG: WorkerConfig = {
     seedMaxBytes: 64 * 1_024 * 1_024,
     concurrency: 1,
   },
+  // Off. Replay is a CLI, not a worker behaviour, and this suite never walks a
+  // fixture into Postgres.
+  replay: {
+    mode: "off",
+  },
   // `off` for the fifth time, and the only one of the five that is not a
   // safety decision: a suite that exported spans would need a collector to run
   // at all. A case with something to assert about spans hands

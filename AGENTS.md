@@ -238,6 +238,8 @@ pnpm eval:run            # execute the matrix against real workers; costs model 
 pnpm eval:grade <suite>  # re-score a completed suite from stored patches, with no model calls
 pnpm eval:label          # record a human §24.5 label on an unlabelled failure
 pnpm demo:eval           # run H: 2 cases x 2 arms x 2 repetitions with Docker and a real model
+pnpm demo:capture -- <jobId> --name booking  # write demo/replays/<name>/ from a terminal job
+pnpm demo:replay -- booking [--speed N]      # recreate that job through the production writers
 pnpm format              # prettier --write .
 pnpm format:check        # what CI runs
 
@@ -400,9 +402,9 @@ them here. A default limit in the package that is supposed to hold no policy is 
 up unbounded. Core declares the `JobQueue`, `Sandbox`, `CodingAgent` and `Telemetry` ports;
 `packages/queue`, `packages/sandbox`, `packages/agent` and `packages/telemetry` are the only
 packages that know Redis, Docker, Pi and OpenTelemetry exist. Every module lives under `agent/`,
-`artifacts/`, `checkpoints/`, `evaluation/`, `jobs/`, `events/`, `pipeline/`, `queue/`, `sandbox/`
-or `telemetry/` - a file at the top level next to `index.ts` is the first sign the package is
-becoming a junk drawer.
+`artifacts/`, `checkpoints/`, `evaluation/`, `jobs/`, `events/`, `pipeline/`, `queue/`, `replay/`,
+`sandbox/` or `telemetry/` - a file at the top level next to `index.ts` is the first sign the
+package is becoming a junk drawer.
 
 `Telemetry` is the one port whose fake lives in core rather than in its adapter package
 (`RecordingTelemetry`, beside `NOOP_TELEMETRY`), because core cannot depend on `packages/telemetry`
@@ -721,6 +723,11 @@ pure function of an env object.
   "refuse rather than degrade quietly" rule `RIVET_GITHUB` follows. There is one principal and no
   session table, so `RIVET_OWNER_GITHUB_LOGIN` is re-read on every request and rotating
   `RIVET_SESSION_SECRET` is the only way to invalidate everybody at once.
+- `RIVET_REPLAY` - `on` or `off`, `off` by default and **refused under `NODE_ENV=production`**, the
+  sixth member of the refused-in-production family. `pnpm demo:replay` requires `on` and walks a
+  captured fixture through `createJob()`, `claimJob()` and `transitionJob()`; `pnpm demo:capture` is
+  a read and does not need the flag, but both refuse production. Stop the worker before replaying so
+  it cannot race the queued row.
 - `RIVET_JOB_CREATION_LIMIT` / `RIVET_JOB_CREATION_WINDOW_MS` - the sliding window on
   `POST /api/jobs`, per principal, evaluated by an atomic Redis script. `RIVET_ACTIVE_JOB_CAP`
   bounds non-terminal jobs and is enforced by `createJob()` itself rather than by the route, so

@@ -137,6 +137,10 @@ if (localSeed) {
   );
 }
 
+if (config.replay.mode === "on") {
+  log.warn("RIVET_REPLAY=on: this process is allowed to manufacture a job timeline from a fixture");
+}
+
 /**
  * The pipeline this worker runs, and the provider behind it.
  *

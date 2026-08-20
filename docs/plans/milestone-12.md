@@ -168,15 +168,15 @@ durations at implementation time.
 
 The new engineering, and it is two commands.
 
-**`pnpm demo:capture <jobId>`** reads a completed job from the local database and writes a
-git-tracked fixture directory under `demo/replays/<name>/`: `job.json` (the creation input and the
-terminal facts), `events.ndjson` (every row in order, with its recorded offset from the first event
-in milliseconds), `artifacts/` and `commands/`. Every byte goes through the `Redactor` on the way
-out - the same port M11 put in front of the three durable writers - because a capture is a file that
-gets committed to a public repository, which is a stronger requirement than a database row, not a
-weaker one. Acceptance run F pairs the sentinel search with a non-secret sentinel written the same
-way, for the reason run D already documents: a redaction test without a positive control passes
-identically against a search that has stopped searching.
+**`pnpm demo:capture <jobId> --name <name>`** reads a completed job from the local database and
+writes a git-tracked fixture directory under `demo/replays/<name>/`: `job.json` (the creation input
+and the terminal facts), `events.ndjson` (every row in order, with its recorded offset from the
+first event in milliseconds), `artifacts/` and `commands/`. Every byte goes through the `Redactor`
+on the way out - the same port M11 put in front of the three durable writers - because a capture is
+a file that gets committed to a public repository, which is a stronger requirement than a database
+row, not a weaker one. Acceptance run F pairs the sentinel search with a non-secret sentinel written
+the same way, for the reason run D already documents: a redaction test without a positive control
+passes identically against a search that has stopped searching.
 
 **`pnpm demo:replay <name>`** creates a real job through `createJob()`, claims it under a synthetic
 lease owner, and walks the recorded stream: `transitionJob()` for each status change with the
@@ -232,7 +232,8 @@ how to run it. Everything currently there survives further down or in `docs/`.
 
 ## Acceptance runs
 
-A-F need no Docker, no database and no model and run in `pnpm test`. G and H are the expensive ones.
+A-D and F need no Docker, no database and no model and run in `pnpm test`. E is integration (real
+Postgres, no Docker, no model). G and H are the expensive ones.
 
 - **A. The landing page builds and renders with no database and no session.** An RSC test with
   `DATABASE_URL` unset. This is the CI-verify property, restated for the one page most likely to

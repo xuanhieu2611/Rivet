@@ -254,6 +254,26 @@ export interface EvalConfig {
 }
 
 /**
+ * Whether this process may manufacture a job timeline from a capture fixture.
+ *
+ * The sixth member of the switch family that is **refused under
+ * `NODE_ENV=production`**, alongside `RIVET_SANDBOX`, `RIVET_AGENT`,
+ * `RIVET_GITHUB`, `RIVET_EVAL` and `RIVET_AUTH`. A process that can write a
+ * convincing event log out of a file is exactly the kind of thing that must not
+ * exist in production, for the same reason a worker that completes jobs without
+ * touching a repository must not.
+ *
+ * Off by default. `pnpm demo:replay` requires `on`; `pnpm demo:capture` is a
+ * read and does not, but both refuse production.
+ */
+export const REPLAY_MODES = ["on", "off"] as const;
+export type ReplayMode = (typeof REPLAY_MODES)[number];
+
+export interface ReplayConfig {
+  mode: ReplayMode;
+}
+
+/**
  * Whether this worker exports traces and metrics, and where to.
  *
  * The fifth member of the `RIVET_SANDBOX`/`RIVET_AGENT`/`RIVET_GITHUB`/
@@ -420,6 +440,8 @@ export interface WorkerConfig {
   github: GitHubConfig;
   /** Whether this worker will seed a job from a local benchmark fixture. */
   eval: EvalConfig;
+  /** Whether this process may replay a captured job into Postgres. */
+  replay: ReplayConfig;
   /** Where spans and metrics go, when this worker has anywhere to send them. */
   telemetry: TelemetryConfig;
   /** How long to wait for in-flight jobs on SIGTERM before forcing an exit. */
@@ -530,6 +552,9 @@ const schema = z.object({
     .max(2_147_483_648)
     .default(268_435_456),
   RIVET_EVAL_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(1),
+
+  // --- capture / replay (M12) -------------------------------------------
+  RIVET_REPLAY: z.enum(REPLAY_MODES).default("off"),
 
   // --- telemetry (M11) --------------------------------------------------
   RIVET_TELEMETRY: z.enum(TELEMETRY_MODES).default("off"),
@@ -694,6 +719,9 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
       seedMaxBytes: parsed.data.RIVET_EVAL_SEED_MAX_BYTES,
       concurrency: parsed.data.RIVET_EVAL_CONCURRENCY,
     },
+    replay: {
+      mode: parsed.data.RIVET_REPLAY,
+    },
   };
 
   assertLeaseInvariant(config.heartbeatSeconds, config.leaseSeconds);
@@ -706,6 +734,7 @@ export function parseWorkerConfig(env: Record<string, string | undefined>): Work
   assertRealAgentInProduction(config.agent.mode, env.NODE_ENV);
   assertRealGitHubInProduction(config.github.mode, env.NODE_ENV);
   assertEvaluationDisabledInProduction(config.eval.mode, env.NODE_ENV);
+  assertReplayDisabledInProduction(config.replay.mode, env.NODE_ENV);
   assertModelKeyPresent(config.agent, parsed.data.OPENROUTER_API_KEY);
   return config;
 }
@@ -814,6 +843,51 @@ export function assertEvaluationDisabledInProduction(mode: EvalMode, nodeEnv?: s
       "RIVET_EVAL=on lets a job clone a local benchmark fixture instead of a repository, which " +
         "cannot be used with NODE_ENV=production: it widens what this worker will run against. " +
         "Set RIVET_EVAL=off, or run the evaluation harness outside production.",
+    ]);
+  }
+}
+
+/**
+ * A deployment may not manufacture job timelines from files.
+ *
+ * Capture is a read of the job store into a git-trackable directory. Replay
+ * walks that directory through `createJob()` and `transitionJob()`. Either one
+ * in production would let an operator mint a history that looks like a real
+ * run, which is the failure this switch exists to prevent.
+ */
+export function assertReplayDisabledInProduction(mode: ReplayMode, nodeEnv?: string): void {
+  if (mode === "on" && nodeEnv === "production") {
+    throw new WorkerConfigError([
+      "RIVET_REPLAY=on manufactures a job timeline from a fixture, which cannot be used with " +
+        "NODE_ENV=production. Set RIVET_REPLAY=off, or run capture and replay outside production.",
+    ]);
+  }
+}
+
+/** Capture is a read, but production is still not a source for git-tracked demos. */
+export function assertCaptureAllowed(env: Record<string, string | undefined>): void {
+  if (env.NODE_ENV === "production") {
+    throw new WorkerConfigError([
+      "pnpm demo:capture cannot run with NODE_ENV=production: a capture writes a fixture from " +
+        "the job store, and production is not a source for git-tracked demos.",
+    ]);
+  }
+}
+
+/**
+ * Replay requires an explicit `on` and never runs in production.
+ *
+ * Split from `parseWorkerConfig` so the CLI does not need a model key. The
+ * worker still parses the same variable, which is how production refusal is
+ * one check rather than two spellings.
+ */
+export function assertReplayAllowed(env: Record<string, string | undefined>): void {
+  assertReplayDisabledInProduction((env.RIVET_REPLAY ?? "off") as ReplayMode, env.NODE_ENV);
+  if ((env.RIVET_REPLAY ?? "off") !== "on") {
+    throw new WorkerConfigError([
+      "pnpm demo:replay requires RIVET_REPLAY=on. It creates a real job and walks a captured " +
+        "timeline through the production writers; that has to be a decision, not a default. " +
+        "Stop the worker first so it cannot race the queued row.",
     ]);
   }
 }

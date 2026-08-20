@@ -13,7 +13,7 @@
  * - No `process.env` reads. Configuration arrives as function arguments, which
  *   is what lets tests drive the pipeline with zero-millisecond phases.
  * - Every module lives under one of `agent/`, `artifacts/`, `checkpoints/`, `evaluation/`,
- *   `jobs/`, `events/`, `pipeline/`, `queue/`, `sandbox/`, `telemetry/`.
+ *   `jobs/`, `events/`, `pipeline/`, `queue/`, `replay/`, `sandbox/`, `telemetry/`.
  *   A file at the top level next to this one is the first sign the package is
  *   turning into a junk drawer.
  */
@@ -81,6 +81,9 @@ export * from "./pipeline/validation-phase";
 export * from "./pipeline/validation-config";
 export * from "./pipeline/test-report";
 export * from "./pipeline/targeted-tests";
+export * from "./replay/capture";
+export * from "./replay/fixture";
+export * from "./replay/replay";
 export * from "./sandbox/command-log";
 export * from "./sandbox/errors";
 export * from "./sandbox/sandbox-holder";

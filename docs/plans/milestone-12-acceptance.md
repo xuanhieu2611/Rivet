@@ -2,8 +2,9 @@
 
 **Status: in progress.** Written before the remaining M12 code, the way M8 through M10 were, so the
 code is measured against it rather than the other way around.
-[`docs/plans/milestone-12.md`](milestone-12.md) is the plan. Runs A-F need no Docker, no database
-and no model and run in `pnpm test`. G needs Docker. H is the milestone's demo.
+[`docs/plans/milestone-12.md`](milestone-12.md) is the plan. Runs A-D and F need no Docker, no
+database and no model and run in `pnpm test`. E is integration (real Postgres, no Docker, no model).
+G needs Docker. H is the milestone's demo.
 
 | run | where it lives                                                                                 |
 | --- | ---------------------------------------------------------------------------------------------- |
@@ -11,8 +12,8 @@ and no model and run in `pnpm test`. G needs Docker. H is the milestone's demo.
 | B   | `apps/web/lib/auth/pages.test.ts` (static), `apps/web/lib/auth/live-page-guard.test.ts` (live) |
 | C   | `apps/web/components/diff-viewer/diff-viewer.test.ts`                                          |
 | D   | `apps/web/components/job-live/stream-state.test.ts`                                            |
-| E   | not yet (work item 4)                                                                          |
-| F   | not yet (work item 4)                                                                          |
+| E   | `apps/worker/tests/integration/replay.int.test.ts`                                             |
+| F   | `packages/core/src/replay/capture.test.ts`, `apps/worker/src/config.test.ts`                   |
 | G   | not yet (work item 5)                                                                          |
 | H   | not yet (work item 4 / recording)                                                              |
 
@@ -125,17 +126,31 @@ contained.
 
 ## E - A replayed job is indistinguishable from the original
 
-Work item 4. Capture a completed job, replay it, and assert the projected event list, statuses and
-artifact digests match. Integration, real Postgres, no Docker and no model. The same comparison M10
-uses to prove a locally seeded job is indistinguishable from a GitHub-seeded one.
+**`apps/worker/tests/integration/replay.int.test.ts`.**
+
+Work item 4. Seeds a terminal job through the production writers only (`createJob`, `claimJob`,
+`transitionJob`, `appendEvent`, `recordArtifact`, `recordCommand`, and the status-free job writers),
+captures it with `captureJob()`, and replays it with `replayFixture({ speed: 0 })`. No worker, no
+enqueue, no Docker, no model. Real Postgres.
+
+The replayed job's projected event types, terminal status, artifact and command digests, and
+detail-page facts (`baseCommitSha`, `envFingerprint`, pull request identity, review decision, usage
+totals) must match the original. Serial ids are allowed to differ; that is why comparison is by
+digest and by type list, not by row identity.
 
 ---
 
 ## F - Capture redacts, with a positive control
 
-Work item 4. A sentinel secret planted in a job's events, command transcripts and artifact bodies
-does not appear anywhere under `demo/replays/`, while a non-secret sentinel written the same way
-does. Plus: `RIVET_REPLAY=on` is refused under `NODE_ENV=production`.
+**`packages/core/src/replay/capture.test.ts`** (redaction) and **`apps/worker/src/config.test.ts`**
+(production refusal).
+
+Work item 4. `writeReplayFixture` is handed a redactor and a source whose events, command
+transcripts and artifact bodies all contain `sentinel-secret-value` next to `public-sentinel`. The
+written tree must not contain the secret, and must contain the control. Plus: `RIVET_REPLAY=on` is
+refused under `NODE_ENV=production`, both by `parseWorkerConfig` and by `assertReplayAllowed`.
+
+These run in `pnpm test` with no database.
 
 ---
 
