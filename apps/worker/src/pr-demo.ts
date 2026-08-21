@@ -27,7 +27,7 @@ import { selectDemoTask } from "./demo-tasks";
  * between runs, or let the branches accumulate.
  */
 
-const DEFAULT_TARGET = "xuanhieu2611/rivet-demo-target";
+const DEFAULT_TARGET = "xuanhieu2611/rivet-demo-reservations";
 const TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set([
   "completed",
   "failed",

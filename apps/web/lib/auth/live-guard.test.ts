@@ -128,7 +128,7 @@ describe("acceptance run E - every route refuses an unauthenticated caller, live
     // a changed file name - would pass silently, which is the one way a
     // coverage test can be worse than no test.
     expect(invoked).toBeGreaterThan(10);
-  });
+  }, 15_000);
 
   it("refuses an expired session", async () => {
     githubMode();

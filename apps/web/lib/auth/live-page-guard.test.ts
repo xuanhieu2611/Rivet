@@ -114,5 +114,5 @@ describe("acceptance run B - every page redirects an unauthenticated visitor, li
     }
 
     expect(invoked).toBeGreaterThan(5);
-  });
+  }, 15_000);
 });

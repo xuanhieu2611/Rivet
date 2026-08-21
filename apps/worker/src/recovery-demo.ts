@@ -164,11 +164,12 @@ async function main(): Promise<void> {
 }
 
 /**
- * The demo runs against Docker and a scripted agent, and refuses substitutes.
+ * The demo runs against Docker and a scripted agent, and refuses a sandbox substitute.
  *
  * `RIVET_SANDBOX=off` would leave nothing to snapshot, so the whole
- * demonstration would pass while proving nothing; `RIVET_AGENT=pi` would make a
- * provider outage look like a recovery failure.
+ * demonstration would pass while proving nothing. `startWorker` always overrides
+ * the configured agent with the scripted recovery agent, so the normal
+ * `RIVET_AGENT=pi` development setting cannot introduce model sampling here.
  */
 function assertDemoConfiguration(): void {
   assertLocalControlPlane("pnpm demo:recovery");
@@ -177,12 +178,6 @@ function assertDemoConfiguration(): void {
     throw new Error(
       "pnpm demo:recovery needs RIVET_SANDBOX=docker: with no sandbox there is no workspace to " +
         "checkpoint and nothing for the replacement worker to restore.",
-    );
-  }
-  if (process.env.RIVET_AGENT && process.env.RIVET_AGENT !== "scripted") {
-    throw new Error(
-      `pnpm demo:recovery runs RIVET_AGENT=scripted, not ${process.env.RIVET_AGENT}. It ` +
-        "demonstrates recovery, not model sampling; pnpm demo:job is the real-session demo.",
     );
   }
   if (process.env.NODE_ENV === "production") {
