@@ -4,10 +4,10 @@
 # rules are maintained against real credential formats, and a hand-written
 # subset would silently stop covering whatever it forgot.
 #
-# The allowlist below is empty on purpose. Every entry added to it must carry a
-# comment saying either that the matched value is provably not a live credential
-# (a test fixture, a documented sentinel, a public key) or why it cannot be
-# removed. An entry with no comment is a bug - see docs/security-review.md §5.
+# Every entry below must carry a comment saying either that the matched value is
+# provably not a live credential (a test fixture, a documented sentinel, a public
+# key) or why it cannot be removed. An entry with no comment is a bug - see
+# docs/security-review.md §5.
 
 title = "Rivet"
 
@@ -15,7 +15,13 @@ title = "Rivet"
 useDefault = true
 
 [allowlist]
-description = "Paths that cannot contain a live credential."
+description = "Values and paths that cannot contain a live credential."
+
+regexes = [
+  # Acceptance run F writes this exact synthetic value through every durable
+  # redaction path. Keeping the literal in its tests is the positive control.
+  '''sentinel-secret-value''',
+]
 
 paths = [
   # Lockfiles carry integrity hashes, which are high-entropy by construction and

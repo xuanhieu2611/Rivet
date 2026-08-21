@@ -382,13 +382,14 @@ credentials - so gitleaks fails on anything and scans the full commit history (`
 still a leaked secret. It runs with `--redact`, so a detection does not become a second disclosure
 in a public build log.
 
-**Escape hatches, and what justifies one.** `.gitleaks.toml` carries the allowlist for gitleaks -
-currently one path entry, `pnpm-lock.yaml`, whose integrity hashes are high-entropy by construction
-and are not secrets - and advisory ignores would live inline in the workflow's audit step, where
-there are currently none. An entry in either is legitimate only when the finding is provably not a
-live credential (a test fixture, a documented sentinel, a public key) or when the advisory has no
-fixed version and does not reach a code path Rivet executes. Every entry carries a comment saying
-which of those it is. An entry with no comment is a bug.
+**Escape hatches, and what justifies one.** `.gitleaks.toml` carries the allowlist for gitleaks. It
+has one path entry, `pnpm-lock.yaml`, whose integrity hashes are high-entropy by construction, and
+one exact value, `sentinel-secret-value`, which acceptance run F deliberately writes through every
+durable redaction path as its positive control. Advisory ignores would live inline in the workflow's
+audit step, where there are currently none. An entry in either is legitimate only when the finding
+is provably not a live credential (a test fixture, a documented sentinel, a public key) or when the
+advisory has no fixed version and does not reach a code path Rivet executes. Every entry carries a
+comment saying which of those it is. An entry with no comment is a bug.
 
 CodeQL needs `security-events: write` to upload its SARIF, which is the one permission any Rivet
 workflow holds beyond `contents: read`; it is scoped to that job alone rather than to the workflow.
