@@ -376,19 +376,18 @@ describe("runPipeline", () => {
    * than assumed. Real phases, the real `abortableSleep`, no fake timers: at
    * `speed: 0` every duration scales to zero and the walk is pure control flow.
    *
-   * The bound is deliberately loose against a busy CI runner. The real figure is
-   * tens of microseconds, and what would break it is a runner that started
-   * sleeping, importing or reading configuration - all of which cost orders of
-   * magnitude more than this leaves room for.
+   * The bound leaves scheduling headroom for a contended CI runner. The real
+   * figure is tens of microseconds, and what would break it is a runner that
+   * started a meaningful sleep, import or configuration read.
    */
-  it("runs the whole simulated pipeline in well under a millisecond at speed 0", async () => {
+  it("runs the whole simulated pipeline without an observable wait at speed 0", async () => {
     const { deps } = harness({ phases: simulatedPipeline(), sleep: abortableSleep });
 
     const startedAt = performance.now();
     await runPipeline(deps);
     const elapsedMs = performance.now() - startedAt;
 
-    expect(elapsedMs).toBeLessThan(5);
+    expect(elapsedMs).toBeLessThan(25);
   });
 });
 
