@@ -604,3 +604,7 @@ built before any agent behaviour.
 - [ ] **M12 - Public demo polish.** Landing page, polished job and evaluation UI, timeline motion,
       structured diff viewer, capture and replay, graded demo repositories, architecture diagrams,
       and a visitor-first README. Acceptance run H still owns the recorded public demo.
+
+## License
+
+Rivet is available under the [MIT License](LICENSE).
