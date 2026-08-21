@@ -73,7 +73,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # `github.sha` rather than the pull request's head sha, and the
+          # difference is the whole bug this replaced. `actions/checkout`
+          # checks out `refs/pull/N/merge` on a pull request, so CodeQL
+          # analyses and indexes the MERGE commit - which is exactly what
+          # `github.sha` is on a `pull_request` event. Comparing against the
+          # head sha matched nothing, so the poll below timed out after 90s on
+          # every pull request while reporting it as an indexing failure. It
+          # stayed invisible because the gate is correct on `push`, where
+          # `github.sha` is the analysed commit, and every commit before this
+          # one went straight to main.
+          SHA: ${{ github.sha }}
           REF: ${{ github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
         run: |
           set -euo pipefail
