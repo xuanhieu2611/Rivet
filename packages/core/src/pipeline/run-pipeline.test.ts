@@ -376,18 +376,34 @@ describe("runPipeline", () => {
    * than assumed. Real phases, the real `abortableSleep`, no fake timers: at
    * `speed: 0` every duration scales to zero and the walk is pure control flow.
    *
-   * The bound leaves scheduling headroom for a contended CI runner. The real
-   * figure is tens of microseconds, and what would break it is a runner that
-   * started a meaningful sleep, import or configuration read.
+   * The assertion is on the durations the runner *asks* for rather than on the
+   * wall clock it happens to take. A shared CI runner can deschedule this
+   * process for tens of milliseconds between two adjacent statements, so an
+   * elapsed-time bound tight enough to catch a reintroduced sleep is also tight
+   * enough to fail on a busy machine - which is what it did, repeatedly. Every
+   * requested duration being zero is the same property, and it is exact: a
+   * phase that started sleeping for real would have to ask for a non-zero
+   * duration to do it. The elapsed bound stays as a loose backstop against a
+   * wait that never goes through `sleep` at all.
    */
   it("runs the whole simulated pipeline without an observable wait at speed 0", async () => {
-    const { deps } = harness({ phases: simulatedPipeline(), sleep: abortableSleep });
+    const requested: number[] = [];
+    const { deps } = harness({
+      phases: simulatedPipeline(),
+      sleep: (ms, signal) => {
+        requested.push(ms);
+        return abortableSleep(ms, signal);
+      },
+    });
 
     const startedAt = performance.now();
     await runPipeline(deps);
     const elapsedMs = performance.now() - startedAt;
 
-    expect(elapsedMs).toBeLessThan(25);
+    // The real `abortableSleep` ran, and every duration it was handed was zero.
+    expect(requested.length).toBeGreaterThan(0);
+    expect(requested.every((ms) => ms === 0)).toBe(true);
+    expect(elapsedMs).toBeLessThan(1_000);
   });
 });
 

@@ -128,6 +128,13 @@ describe("acceptance run E - every route refuses an unauthenticated caller, live
     // a changed file name - would pass silently, which is the one way a
     // coverage test can be worse than no test.
     expect(invoked).toBeGreaterThan(10);
+
+    // The timeout is explicit because this test's cost is dominated by module
+    // loading, not by assertion: it dynamically imports every route module and
+    // its transitive dependencies, and vitest charges that transform to the
+    // test body. It is under a second warm and several times that on a cold,
+    // contended CI runner, which is what the 5s default kept failing on. Do not
+    // drop it back to the default.
   }, 15_000);
 
   it("refuses an expired session", async () => {

@@ -114,5 +114,12 @@ describe("acceptance run B - every page redirects an unauthenticated visitor, li
     }
 
     expect(invoked).toBeGreaterThan(5);
+
+    // The timeout is explicit because this test's cost is dominated by module
+    // loading, not by assertion: it dynamically imports every route module and
+    // its transitive dependencies, and vitest charges that transform to the
+    // test body. It is under a second warm and several times that on a cold,
+    // contended CI runner, which is what the 5s default kept failing on. Do not
+    // drop it back to the default.
   }, 15_000);
 });
