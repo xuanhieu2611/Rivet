@@ -80,13 +80,18 @@ describe("capture and replay", () => {
       });
 
       const fixture = await loadReplayFixture(directory);
+      let eventsWhenCreated: readonly string[] = [];
       const replayed = await replayFixture(fixture, {
         leaseOwner: replayLeaseOwner("acceptance-e"),
         leaseSeconds: LEASE_SECONDS,
         speed: 0,
         artifactMaxBytes: 262_144,
+        onJobCreated: async (job) => {
+          eventsWhenCreated = projectedEventTypes(await listEvents(job.id, { limit: 200 }));
+        },
       });
 
+      expect(eventsWhenCreated).toEqual(["job.created"]);
       const originalEvents = await listEvents(original.id, { limit: 200 });
       const replayedEvents = await listEvents(replayed.job.id, { limit: 200 });
       expect(projectedEventTypes(replayedEvents)).toEqual(projectedEventTypes(originalEvents));

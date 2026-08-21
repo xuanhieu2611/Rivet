@@ -116,9 +116,11 @@ async function main(): Promise<void> {
       leaseSeconds: DEFAULT_LEASE_SECONDS,
       speed: args.speed,
       artifactMaxBytes: artifactMaxBytes(process.env),
+      onJobCreated: (job) => {
+        console.log(jobUrl(job.id, process.env));
+      },
     });
     console.log(`Replayed ${name} as job ${result.job.id}`);
-    console.log(jobUrl(result.job.id, process.env));
   } finally {
     await closeDb();
   }

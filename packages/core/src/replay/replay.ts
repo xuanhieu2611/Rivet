@@ -58,6 +58,8 @@ export interface ReplayFixtureOptions {
   artifactMaxBytes: number;
   database?: Database;
   redactor?: Redactor;
+  /** Called as soon as the replay job and its opening event are durable. */
+  onJobCreated?: (job: JobDetail) => void | Promise<void>;
   /** How often to renew the lease during paced playback. */
   heartbeatIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -113,6 +115,7 @@ export async function replayFixture(
   const commandIds = new Map<number, number>();
 
   const created = await createJob(toCreateJobInput(fixture.created), database);
+  await options.onJobCreated?.(created);
   let leaseHeld = false;
   let previousOffsetMs = 0;
 
