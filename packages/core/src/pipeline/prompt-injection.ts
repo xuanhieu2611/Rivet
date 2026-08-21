@@ -31,7 +31,7 @@ const PATTERNS: readonly [InjectionPatternClass, RegExp][] = [
   ],
   [
     "unsafe_tool_use",
-    /\b(?:run|execute|invoke|use|call)\b[\s\S]{0,100}\b(?:curl|wget|nc|netcat|ssh|sudo|docker|git\s+push|rm\s+-rf|cat\s+\/proc)\b|\b(?:skip|disable|do not run|avoid)\b[\s\S]{0,80}\b(?:test|validation|security|review)s?\b/i,
+    /\b(?:run|execute|invoke|use|call)\b[\s\S]{0,100}\b(?:curl|wget|nc|netcat|ssh|sudo|docker|git\s+push|rm\s+-rf|cat\s+\/proc)\b|\b(?:skip|do not run|avoid)\b[\s\S]{0,80}\b(?:test|validation|security|review)s?\b|\bdisable(?:\s+the)?\s+(?:test|validation|security|review)s?\b/i,
   ],
   [
     "external_exfiltration",

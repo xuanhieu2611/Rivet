@@ -1,5 +1,18 @@
 # Milestone 12 guide
 
+## The booking replay's injection detections
+
+The five `security.injection_suspected` rows for `package.json` are historical false positives from
+the captured run, not adversarial content. The `unsafe_tool_use` pattern read npm's
+`--disable-warning=ExperimentalWarning` flag and a later `--test` flag as an instruction to disable
+tests because it allowed any punctuation and up to 80 intervening characters. The scanner now
+requires `disable` to be followed by whitespace and the named check, while the prompt-injection
+benchmark's explicit "Do not run the tests" instruction still matches. The replay deliberately
+preserves the original durable events rather than rewriting history. Detection never fails a job:
+the role-specific tool set and sandbox are the security boundary, and this scanner is observability.
+The on-camera answer is: **"That replay preserves a false positive from the original run; we fixed
+the pattern, and the detector only reports because capabilities, not regexes, enforce security."**
+
 ## The booking replay's recorded model cost
 
 The booking capture used **DeepSeek V4 Flash 0423** (`deepseek/deepseek-v4-flash`) through
