@@ -1,5 +1,5 @@
 import type Docker from "dockerode";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   METRIC_SANDBOX_CPU_PEAK,
@@ -19,6 +19,8 @@ const SPEC = {
   nanoCpus: 2_000_000_000,
   pidsLimit: 64,
 };
+
+afterEach(() => vi.useRealTimers());
 
 function stats(input: {
   memory: number;
@@ -57,6 +59,7 @@ function container(samples: Docker.ContainerStats[], oomKilled = false): Docker.
 
 describe("SandboxResourceMonitor", () => {
   it("keeps peaks, reports when they occurred, and emits gauges plus distributions", async () => {
+    vi.useFakeTimers();
     let now = 0;
     const telemetry = new RecordingTelemetry();
     const monitor = new SandboxResourceMonitor({
@@ -79,10 +82,11 @@ describe("SandboxResourceMonitor", () => {
     });
 
     monitor.start();
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    await vi.advanceTimersByTimeAsync(1);
     now = 100;
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await vi.advanceTimersByTimeAsync(10);
     const report = await monitor.report();
+    vi.useRealTimers();
 
     expect(report.sampleCount).toBeGreaterThanOrEqual(2);
     expect(report).toMatchObject({
