@@ -39,7 +39,7 @@ export function ReviewPanel({
   const decision = report?.decision ?? job.reviewDecision;
 
   return (
-    <Card id="review">
+    <Card id="review" className="scroll-mt-24">
       <CardHeader>
         <CardTitle>Independent review</CardTitle>
         <CardDescription>

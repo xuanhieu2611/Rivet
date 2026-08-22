@@ -34,7 +34,7 @@ export function JobArtifactsPanel({ artifacts, summary, diff }: JobArtifactsPane
   const stats = diffStat ? readDiffStats(diffStat.metadata) : null;
 
   return (
-    <Card id="artifacts">
+    <Card id="artifacts" className="scroll-mt-24">
       <CardHeader>
         <CardTitle>Artifacts</CardTitle>
         <CardDescription>

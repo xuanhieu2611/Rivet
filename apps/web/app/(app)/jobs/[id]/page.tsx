@@ -116,14 +116,26 @@ export default async function JobDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <JobSectionNav hasPullRequest={job.pullRequestUrl !== null} />
+
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Description</CardTitle>
+            <Card id="timeline" className="scroll-mt-36">
+              <CardHeader className="border-b pb-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>Execution timeline</CardTitle>
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      Durable events from the worker, newest activity at the bottom.
+                    </p>
+                  </div>
+                  <LiveConnectionIndicator />
+                </div>
               </CardHeader>
               <CardContent>
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">{job.description}</p>
+                <div className="max-h-[60svh] min-h-80 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
+                  <LiveExecutionTimeline />
+                </div>
               </CardContent>
             </Card>
 
@@ -133,31 +145,44 @@ export default async function JobDetailPage({ params }: PageProps) {
 
             <ReviewPanel artifact={review} job={job} />
 
-            <Card id="timeline" className="scroll-mt-24">
+            <Card id="task" className="scroll-mt-24">
               <CardHeader>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <CardTitle>Execution timeline</CardTitle>
-                  <LiveConnectionIndicator />
-                </div>
+                <CardTitle>Task</CardTitle>
               </CardHeader>
               <CardContent>
-                <LiveExecutionTimeline />
+                <p className="text-sm leading-relaxed whitespace-pre-wrap">{job.description}</p>
               </CardContent>
             </Card>
 
             <JobArtifactsPanel artifacts={artifactSummaries} summary={summary} diff={diff} />
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Sandbox commands</CardTitle>
-              </CardHeader>
-              <CardContent>
+            <details
+              id="commands"
+              className="group scroll-mt-24 overflow-hidden rounded-xl bg-card text-sm text-card-foreground ring-1 ring-foreground/10"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-4 [&::-webkit-details-marker]:hidden">
+                <div>
+                  <h2 className="font-heading text-base leading-snug font-medium">
+                    Sandbox commands
+                  </h2>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Low-level command transcripts, hidden by default.
+                  </p>
+                </div>
+                <span
+                  aria-hidden
+                  className="text-muted-foreground transition-transform group-open:rotate-180"
+                >
+                  ▾
+                </span>
+              </summary>
+              <div className="border-t px-4 py-4">
                 <LiveCommandLog />
-              </CardContent>
-            </Card>
+              </div>
+            </details>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-6 lg:sticky lg:top-24">
             <Card>
               <CardHeader>
                 <CardTitle>Execution</CardTitle>
@@ -202,9 +227,9 @@ export default async function JobDetailPage({ params }: PageProps) {
                     [
                       "Base commit",
                       job.baseCommitSha ?? "resolved at run time",
-                      "font-mono text-xs",
+                      "break-all font-mono text-xs",
                     ],
-                    ["Final branch", job.finalBranch ?? "not yet", "font-mono text-xs"],
+                    ["Final branch", job.finalBranch ?? "not yet", "break-all font-mono text-xs"],
                     [
                       "Pull request",
                       // The deliverable, so it is a link the moment one exists
@@ -247,53 +272,59 @@ export default async function JobDetailPage({ params }: PageProps) {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Environment fingerprint</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {job.envFingerprint ? (
-                  <pre className="max-h-96 overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
-                    {JSON.stringify(job.envFingerprint, null, 2)}
-                  </pre>
-                ) : (
-                  <p className="text-muted-foreground text-sm">Not recorded yet.</p>
-                )}
-              </CardContent>
-            </Card>
+            <details className="group overflow-hidden rounded-xl bg-card text-sm text-card-foreground ring-1 ring-foreground/10">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-4 [&::-webkit-details-marker]:hidden">
+                <div>
+                  <h2 className="font-heading text-base leading-snug font-medium">Run metadata</h2>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Environment, budgets and timestamps
+                  </p>
+                </div>
+                <span
+                  aria-hidden
+                  className="text-muted-foreground transition-transform group-open:rotate-180"
+                >
+                  ▾
+                </span>
+              </summary>
+              <div className="space-y-5 border-t px-4 py-4">
+                <section className="space-y-2">
+                  <h3 className="text-xs font-medium">Environment fingerprint</h3>
+                  {job.envFingerprint ? (
+                    <pre className="max-h-64 overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
+                      {JSON.stringify(job.envFingerprint, null, 2)}
+                    </pre>
+                  ) : (
+                    <p className="text-muted-foreground text-xs">Not recorded yet.</p>
+                  )}
+                </section>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Budget</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <DetailList
-                  rows={[
-                    ["Max duration", formatDuration(job.maxDurationSeconds)],
-                    ["Max cost", formatUsd(job.maxCostUsd)],
-                    ["Max model calls", String(job.maxModelCalls)],
-                    ["Max tool calls", String(job.maxToolCalls)],
-                    ["Priority", String(job.priority)],
-                  ]}
-                />
-              </CardContent>
-            </Card>
+                <section className="space-y-3 border-t pt-4">
+                  <h3 className="text-xs font-medium">Budget</h3>
+                  <DetailList
+                    rows={[
+                      ["Max duration", formatDuration(job.maxDurationSeconds)],
+                      ["Max cost", formatUsd(job.maxCostUsd)],
+                      ["Max model calls", String(job.maxModelCalls)],
+                      ["Max tool calls", String(job.maxToolCalls)],
+                      ["Priority", String(job.priority)],
+                    ]}
+                  />
+                </section>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Timestamps</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <DetailList
-                  rows={[
-                    ["Created", formatDateTime(job.createdAt)],
-                    ["Updated", formatDateTime(job.updatedAt)],
-                    ["Started", formatDateTime(job.startedAt)],
-                    ["Completed", formatDateTime(job.completedAt)],
-                  ]}
-                />
-              </CardContent>
-            </Card>
+                <section className="space-y-3 border-t pt-4">
+                  <h3 className="text-xs font-medium">Timestamps</h3>
+                  <DetailList
+                    rows={[
+                      ["Created", formatDateTime(job.createdAt)],
+                      ["Updated", formatDateTime(job.updatedAt)],
+                      ["Started", formatDateTime(job.startedAt)],
+                      ["Completed", formatDateTime(job.completedAt)],
+                    ]}
+                  />
+                </section>
+              </div>
+            </details>
 
             {job.failureReason ? (
               <Card>
@@ -309,6 +340,34 @@ export default async function JobDetailPage({ params }: PageProps) {
         </div>
       </div>
     </JobLiveProvider>
+  );
+}
+
+function JobSectionNav({ hasPullRequest }: { hasPullRequest: boolean }) {
+  const links = [
+    ["Live run", "#timeline"],
+    ["Plan", "#plan"],
+    ["Validation", "#validation"],
+    ["Review", "#review"],
+    ["Changes", "#artifacts"],
+    [hasPullRequest ? "Pull request" : "Target", "#publication"],
+  ] as const;
+
+  return (
+    <nav
+      aria-label="Job sections"
+      className="border-border bg-card/70 flex gap-1 overflow-x-auto rounded-lg border p-1"
+    >
+      {links.map(([label, href]) => (
+        <a
+          key={href}
+          href={href}
+          className="hover:bg-muted focus-visible:ring-ring shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none"
+        >
+          {label}
+        </a>
+      ))}
+    </nav>
   );
 }
 
@@ -331,7 +390,7 @@ function DetailList({ rows }: { rows: readonly (readonly [string, React.ReactNod
       {rows.map(([label, value, valueClassName]) => (
         <div key={label} className="flex items-baseline justify-between gap-4">
           <dt className="text-muted-foreground shrink-0 text-xs">{label}</dt>
-          <dd className={valueClassName ?? "text-right"}>{value}</dd>
+          <dd className={`min-w-0 text-right ${valueClassName ?? ""}`}>{value}</dd>
         </div>
       ))}
     </dl>

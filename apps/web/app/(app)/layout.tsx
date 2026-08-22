@@ -4,7 +4,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-svh flex-col">
       <header className="border-border bg-background/85 sticky top-0 z-20 border-b backdrop-blur-md">
-        <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between px-6">
+        <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
           <Link href="/" className="flex items-center gap-2.5">
             <span
               aria-hidden="true"
@@ -43,10 +43,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-10">{children}</main>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">{children}</main>
 
       <footer className="border-border text-muted-foreground border-t">
-        <div className="mx-auto w-full max-w-5xl px-6 py-5 text-sm leading-relaxed">
+        <div className="mx-auto w-full max-w-6xl px-6 py-5 text-sm leading-relaxed">
           Jobs run with real sandbox provisioning, baseline testing, validation, and sandbox-backed
           coding agent sessions when the worker is configured for Pi.
         </div>

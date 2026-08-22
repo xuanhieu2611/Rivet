@@ -23,7 +23,23 @@ interface AgentToolTimelineItem {
   completed: JobEvent | null;
 }
 
-type TimelineItem = { kind: "event"; event: JobEvent } | AgentToolTimelineItem;
+interface CommandTimelineItem {
+  kind: "command";
+  started: JobEvent;
+  finished: JobEvent | null;
+}
+
+interface CommandClusterTimelineItem {
+  kind: "command-cluster";
+  phase: string;
+  commands: CommandTimelineItem[];
+}
+
+type TimelineItem =
+  | { kind: "event"; event: JobEvent }
+  | AgentToolTimelineItem
+  | CommandTimelineItem
+  | CommandClusterTimelineItem;
 
 const TIMELINE_ENTER_TRANSITION = {
   duration: 0.2,
@@ -68,38 +84,63 @@ export function ExecutionTimeline({
       <span aria-hidden className="bg-border absolute top-2 bottom-2 left-[3.5px] w-px" />
 
       {items.map((item, index) => {
-        const eventId = item.kind === "agent-tool" ? item.started.id : item.event.id;
-        const animateEnter = animateEventIds?.has(eventId) === true;
+        const event = timelineItemEvent(item);
+
+        const animateEnter = animateEventIds?.has(event.id) === true;
         const pulse = pulseActive && index === items.length - 1;
 
-        return item.kind === "agent-tool" ? (
-          <AgentToolRow
-            key={item.started.id}
-            item={item}
-            animateEnter={animateEnter}
-            pulse={pulse}
-          />
-        ) : (
-          <TimelineEventRow
-            key={item.event.id}
-            event={item.event}
-            animateEnter={animateEnter}
-            pulse={pulse}
-          />
-        );
+        switch (item.kind) {
+          case "agent-tool":
+            return (
+              <AgentToolRow
+                key={item.started.id}
+                item={item}
+                animateEnter={animateEnter}
+                pulse={pulse}
+              />
+            );
+          case "command":
+            return (
+              <CommandRow
+                key={item.started.id}
+                item={item}
+                animateEnter={animateEnter}
+                pulse={pulse}
+              />
+            );
+          case "command-cluster":
+            return (
+              <CommandClusterRow
+                key={item.commands[0]?.started.id}
+                item={item}
+                animateEnter={animateEnter}
+                pulse={pulse}
+              />
+            );
+          case "event":
+            return (
+              <TimelineEventRow
+                key={item.event.id}
+                event={item.event}
+                animateEnter={animateEnter}
+                pulse={pulse}
+              />
+            );
+        }
       })}
     </ol>
   );
 }
 
 function buildTimelineItems(events: readonly JobEvent[]): TimelineItem[] {
-  const items: TimelineItem[] = [];
+  const logicalItems: TimelineItem[] = [];
   const tools = new Map<string, AgentToolTimelineItem>();
+  const commands = new Map<string, CommandTimelineItem>();
 
   for (const event of events) {
     if (event.type === "agent.tool_started") {
       const item: AgentToolTimelineItem = { kind: "agent-tool", started: event, completed: null };
-      items.push(item);
+      logicalItems.push(item);
       tools.set(toolKey(event), item);
       continue;
     }
@@ -112,10 +153,197 @@ function buildTimelineItems(events: readonly JobEvent[]): TimelineItem[] {
       }
     }
 
-    items.push({ kind: "event", event });
+    if (event.type === "command.started") {
+      const item: CommandTimelineItem = { kind: "command", started: event, finished: null };
+      logicalItems.push(item);
+      commands.set(commandKey(event), item);
+      continue;
+    }
+
+    if (event.type === "command.completed" || event.type === "command.failed") {
+      const item = commands.get(commandKey(event));
+      if (item) {
+        item.finished = event;
+        continue;
+      }
+    }
+
+    logicalItems.push({ kind: "event", event });
   }
 
-  return items;
+  return foldSuccessfulCommands(logicalItems);
+}
+
+function foldSuccessfulCommands(items: readonly TimelineItem[]): TimelineItem[] {
+  const folded: TimelineItem[] = [];
+
+  for (const item of items) {
+    if (item.kind !== "command" || !isSuccessfulCommand(item)) {
+      folded.push(item);
+      continue;
+    }
+
+    const phase = commandPhase(item);
+    const previous = folded.at(-1);
+    if (previous?.kind === "command-cluster" && previous.phase === phase) {
+      previous.commands.push(item);
+      continue;
+    }
+    if (
+      previous?.kind === "command" &&
+      isSuccessfulCommand(previous) &&
+      commandPhase(previous) === phase
+    ) {
+      folded[folded.length - 1] = {
+        kind: "command-cluster",
+        phase,
+        commands: [previous, item],
+      };
+      continue;
+    }
+
+    folded.push(item);
+  }
+
+  return folded;
+}
+
+function CommandClusterRow({
+  item,
+  animateEnter,
+  pulse,
+}: {
+  item: CommandClusterTimelineItem;
+  animateEnter: boolean;
+  pulse: boolean;
+}) {
+  const first = item.commands[0];
+  if (!first) return null;
+
+  const totalDuration = item.commands.reduce(
+    (total, command) => total + (command.finished?.data?.durationMs ?? 0),
+    0,
+  );
+
+  return (
+    <TimelineRow
+      event={first.started}
+      tone={JOB_EVENT_TONE["command.completed"]}
+      animateEnter={animateEnter}
+      pulse={pulse}
+    >
+      <details
+        className="group rounded-md border border-border/60 bg-muted/15"
+        data-command-group-count={String(item.commands.length)}
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 [&::-webkit-details-marker]:hidden">
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="text-sm font-medium">{item.phase}</span>
+              <span className="text-muted-foreground text-xs">
+                {String(item.commands.length)} sandbox commands
+              </span>
+            </div>
+            <p className="text-muted-foreground mt-0.5 text-xs">
+              All succeeded · {formatDuration(totalDuration)}
+            </p>
+          </div>
+          <span
+            aria-hidden
+            className="text-muted-foreground shrink-0 transition-transform group-open:rotate-180"
+          >
+            ▾
+          </span>
+        </summary>
+        <ol className="divide-border/50 divide-y border-t px-3">
+          {item.commands.map((command) => (
+            <CommandDetail key={command.started.id} item={command} />
+          ))}
+        </ol>
+      </details>
+    </TimelineRow>
+  );
+}
+
+function CommandRow({
+  item,
+  animateEnter,
+  pulse,
+}: {
+  item: CommandTimelineItem;
+  animateEnter: boolean;
+  pulse: boolean;
+}) {
+  const failed = commandFailed(item);
+  const running = item.finished === null;
+
+  return (
+    <TimelineRow
+      event={item.started}
+      tone={
+        failed ? "bg-red-500" : JOB_EVENT_TONE[running ? "command.started" : "command.completed"]
+      }
+      animateEnter={animateEnter}
+      pulse={pulse}
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <code className="min-w-0 break-all font-mono text-xs">{commandLabel(item)}</code>
+        <span
+          className={cn(
+            "text-xs",
+            failed
+              ? "text-destructive"
+              : running
+                ? "text-sky-600 dark:text-sky-400"
+                : "text-muted-foreground",
+          )}
+        >
+          {commandOutcome(item)}
+        </span>
+        {item.finished?.data?.durationMs === undefined ? null : (
+          <span className="text-muted-foreground text-xs">
+            {formatDuration(item.finished.data.durationMs)}
+          </span>
+        )}
+        <CommandTranscriptLink item={item} />
+      </div>
+      {failed ? (
+        <p className="text-destructive text-xs break-words">
+          {item.finished?.message ?? "Command execution failed."}
+        </p>
+      ) : null}
+    </TimelineRow>
+  );
+}
+
+function CommandDetail({ item }: { item: CommandTimelineItem }) {
+  return (
+    <li className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-2 text-xs">
+      <code className="min-w-0 flex-1 break-all font-mono">{commandLabel(item)}</code>
+      <span className="text-muted-foreground">{commandOutcome(item)}</span>
+      {item.finished?.data?.durationMs === undefined ? null : (
+        <span className="text-muted-foreground font-mono tabular-nums">
+          {formatDuration(item.finished.data.durationMs)}
+        </span>
+      )}
+      <CommandTranscriptLink item={item} />
+    </li>
+  );
+}
+
+function CommandTranscriptLink({ item }: { item: CommandTimelineItem }) {
+  const executionId = item.started.data?.commandExecutionId;
+  if (!executionId || item.finished === null) return null;
+
+  return (
+    <a
+      href={`#${commandAnchorId(executionId)}`}
+      onClick={openCommandPanel}
+      className="shrink-0 text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
+    >
+      Transcript
+    </a>
+  );
 }
 
 function TimelineEventRow({
@@ -191,6 +419,7 @@ function AgentToolRow({
           {commandExecutionId ? (
             <a
               href={`#${commandAnchorId(commandExecutionId)}`}
+              onClick={openCommandPanel}
               className="text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
             >
               View command transcript
@@ -688,8 +917,61 @@ function describeEventData(event: JobEvent): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+function timelineItemEvent(item: TimelineItem): JobEvent {
+  switch (item.kind) {
+    case "event":
+      return item.event;
+    case "agent-tool":
+    case "command":
+      return item.started;
+    case "command-cluster":
+      // A cluster is only constructed from at least two commands.
+      return item.commands[0]!.started;
+  }
+}
+
 function toolKey(event: JobEvent): string {
   return event.data?.toolCallId ?? `event-${String(event.id)}`;
+}
+
+function commandKey(event: JobEvent): string {
+  return event.data?.commandExecutionId ?? `event-${String(event.id)}`;
+}
+
+function commandPhase(item: CommandTimelineItem): string {
+  return item.started.data?.phase ?? item.finished?.data?.phase ?? "Sandbox";
+}
+
+function isSuccessfulCommand(item: CommandTimelineItem): boolean {
+  return item.finished?.type === "command.completed" && item.finished.data?.exitCode === 0;
+}
+
+function commandFailed(item: CommandTimelineItem): boolean {
+  return item.finished?.type === "command.failed" || item.finished?.data?.oomKilled === true;
+}
+
+function commandOutcome(item: CommandTimelineItem): string {
+  if (item.finished === null) return "Running";
+  if (item.finished.type === "command.failed") return "Failed";
+  if (item.finished.data?.oomKilled === true) return "OOM killed";
+  if (item.finished.data?.exitCode === null) return "Killed";
+  if (item.finished.data?.exitCode === undefined) return "Finished";
+  return `Exit ${String(item.finished.data.exitCode)}`;
+}
+
+function commandLabel(item: CommandTimelineItem): string {
+  const argv = item.started.data?.argv ?? item.finished?.data?.argv;
+  if (argv && argv.length > 0) {
+    return argv
+      .map((argument) => (/\s/.test(argument) ? JSON.stringify(argument) : argument))
+      .join(" ");
+  }
+  return item.started.message.replace(/ started$/, "");
+}
+
+function openCommandPanel(): void {
+  const commandPanel = document.getElementById("commands");
+  if (commandPanel instanceof HTMLDetailsElement) commandPanel.open = true;
 }
 
 function toolArguments(message: string, toolName: string): string {
