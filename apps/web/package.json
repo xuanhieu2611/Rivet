@@ -14,7 +14,7 @@
     "test:streaming": "vitest run --config vitest.streaming.config.ts"
   },
   "dependencies": {
-    "@hookform/resolvers": "^5.7.1",
+    "@hookform/resolvers": "^5.9.1",
     "@rivet/contracts": "workspace:*",
     "@rivet/core": "workspace:*",
     "@rivet/database": "workspace:*",
@@ -25,10 +25,10 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
-    "jose": "^6.2.8",
-    "lucide-react": "^1.31.0",
+    "jose": "^6.2.9",
+    "lucide-react": "^1.33.0",
     "motion": "^13.1.0",
-    "next": "^16.3.0",
+    "next": "^16.3.1",
     "pino": "^10.3.1",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",
