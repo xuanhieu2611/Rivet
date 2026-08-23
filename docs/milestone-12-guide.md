@@ -64,8 +64,8 @@ The central constraint is:
 > A replayed run is an ordinary job.
 
 The public artifact is the repository, the static landing page, and the
-[recorded issue-to-PR run](https://x.com/hieuspringle/status/2091312854389719528). There is no
-hosted Rivet instance and no public job-detail route.
+[recorded issue-to-PR run](https://youtu.be/X_b03iHhXzU). There is no hosted Rivet instance and no
+public job-detail route.
 
 ## 1. The public and authenticated surfaces
 
@@ -185,9 +185,10 @@ For a live recording, use the checklist in `demo-60s.md`. It covers local Postgr
 startup, browser framing, the live versus terminal data-loading split, and the event rows to show.
 Never put `.env.local`, credentials, terminal history, or an OAuth round trip on screen.
 
-Acceptance run H was published on 2026-08-22 as the
-[public Rivet demo](https://x.com/hieuspringle/status/2091312854389719528). It follows a real job
-from a GitHub issue to a tested, independently reviewed pull request in 3 minutes 11 seconds.
+Acceptance run H was published on 2026-08-22 and is mirrored as the
+[public Rivet demo on YouTube](https://youtu.be/X_b03iHhXzU). It follows a real job from a GitHub
+issue to a tested, independently reviewed pull request in 3 minutes 11 seconds. The accompanying
+engineering notes remain in the [X thread](https://x.com/hieuspringle/status/2091312854389719528).
 
 ## 9. What remains deliberately absent
 
