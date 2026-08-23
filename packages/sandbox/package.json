@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@rivet/core": "workspace:*",
-    "dockerode": "4.0.12"
+    "dockerode": "5.0.1"
   },
   "devDependencies": {
     "@rivet/config": "workspace:*",
