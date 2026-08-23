@@ -8,6 +8,12 @@ updates:
       time: "06:30"
       timezone: Etc/UTC
     open-pull-requests-limit: 5
+    ignore:
+      # Major upgrades require an explicit compatibility review. This is
+      # especially load-bearing for TypeScript, Node types and dockerode.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
     groups:
       production-dependencies:
         dependency-type: production
