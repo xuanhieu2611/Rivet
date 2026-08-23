@@ -2,7 +2,8 @@
 
 **Status: complete.** Written before the remaining M12 code, the way M8 through M10 were, so the
 code was measured against it rather than the other way around. Acceptance run H was published on
-2026-08-22 as the [public demo on X](https://x.com/hieuspringle/status/2091312854389719528).
+2026-08-22 as the [public demo on X](https://x.com/hieuspringle/status/2091312854389719528), with a
+[durable YouTube mirror](https://youtu.be/X_b03iHhXzU).
 [`docs/plans/milestone-12.md`](milestone-12.md) is the plan. Runs A-D and F need no Docker, no
 database and no model and run in `pnpm test`. E is integration (real Postgres, no Docker, no model).
 G needs Docker. H is the milestone's demo.
@@ -178,6 +179,7 @@ same pull-request identity.
 
 Run H passed on 2026-08-22 when the
 [public demo](https://x.com/hieuspringle/status/2091312854389719528) showed a real job moving from a
-GitHub issue to a tested, independently reviewed pull request in 3 minutes 11 seconds. The
+GitHub issue to a tested, independently reviewed pull request in 3 minutes 11 seconds. A
+[YouTube mirror](https://youtu.be/X_b03iHhXzU) keeps the recording available outside X. The
 checked-in capture remains the deterministic fallback for replaying the production UI without
 relying on a live model call.

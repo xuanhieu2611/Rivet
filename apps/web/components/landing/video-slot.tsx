@@ -1,4 +1,4 @@
-const DEMO_URL = "https://x.com/hieuspringle/status/2091312854389719528";
+const DEMO_URL = "https://youtu.be/X_b03iHhXzU";
 
 export function VideoSlot() {
   return (
@@ -7,7 +7,7 @@ export function VideoSlot() {
         href={DEMO_URL}
         target="_blank"
         rel="noreferrer"
-        aria-label="Watch the Rivet demo on X"
+        aria-label="Watch the Rivet demo on YouTube"
         className="relative block aspect-video w-full overflow-hidden rounded-[var(--radius)] focus-visible:outline-2 focus-visible:outline-offset-4"
       >
         <img
@@ -25,7 +25,7 @@ export function VideoSlot() {
             seconds.
           </p>
           <span className="mt-5 w-fit border-b border-current pb-1 text-sm font-semibold">
-            Watch on X ↗
+            Watch on YouTube ↗
           </span>
         </div>
       </a>

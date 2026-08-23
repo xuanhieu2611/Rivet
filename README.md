@@ -54,8 +54,9 @@ replay, publication receipts, evaluation, and telemetry paths.
 
 ## Demo
 
-**[Watch the public demo on X](https://x.com/hieuspringle/status/2091312854389719528).** A GitHub
-issue becomes a tested, independently reviewed pull request in 3 minutes 11 seconds.
+**[Watch the public demo on YouTube](https://youtu.be/X_b03iHhXzU).** A GitHub issue becomes a
+tested, independently reviewed pull request in 3 minutes 11 seconds. The accompanying engineering
+notes are in the [X thread](https://x.com/hieuspringle/status/2091312854389719528).
 
 The recording follows a real job through repository setup, a read-only planning session, sandboxed
 implementation, deterministic validation, independent review, and GitHub publication. The checked-in
@@ -123,8 +124,8 @@ run `pnpm test` to exercise the database-free suite immediately.
 **Milestone 12 - public demo polish - is complete.** The static public landing page, real run
 stills, structured diff viewer, validation cards, evaluation summary, append-only timeline motion,
 real booking capture, replay path, two graded demo repositories, architecture diagrams, and
-[public recording](https://x.com/hieuspringle/status/2091312854389719528) are complete. The replay
-has driven the real UI end to end, and M12 changed no schema or execution vocabulary. See
+[public recording](https://youtu.be/X_b03iHhXzU) are complete. The replay has driven the real UI end
+to end, and M12 changed no schema or execution vocabulary. See
 [the Milestone 12 guide](docs/milestone-12-guide.md) for the presentation and replay paths.
 
 **Milestone 10 - the evaluation harness - is complete.** Rivet now measures itself. A benchmark case
@@ -621,8 +622,7 @@ built before any agent behaviour.
       real job and prints its Grafana trace.
 - [x] **M12 - Public demo polish.** Landing page, polished job and evaluation UI, timeline motion,
       structured diff viewer, capture and replay, graded demo repositories, architecture diagrams, a
-      visitor-first README, and the
-      [public demo recording](https://x.com/hieuspringle/status/2091312854389719528).
+      visitor-first README, and the [public demo recording](https://youtu.be/X_b03iHhXzU).
 
 ## License
 

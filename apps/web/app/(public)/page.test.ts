@@ -48,7 +48,7 @@ describe("acceptance run A - landing page renders with no database", () => {
     expect(html).toContain(EXPERIMENT_1.none.successFraction);
     expect(html).toContain("Sign in");
     expect(html).toContain("Why jobs instead of chat");
-    expect(html).toContain("https://x.com/hieuspringle/status/2091312854389719528");
+    expect(html).toContain("https://youtu.be/X_b03iHhXzU");
     expect(html).toContain("Watch the public demo");
   });
 });
