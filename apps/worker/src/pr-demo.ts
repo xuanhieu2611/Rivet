@@ -136,7 +136,7 @@ function assertDemoConfiguration(): void {
   if (missing.length > 0) {
     throw new Error(
       `pnpm demo:pr needs the following in .env.local:\n- ${missing.join("\n- ")}\n` +
-        "See docs/milestone-9-setup.md.",
+        "See docs/github-app-setup.md.",
     );
   }
 }
@@ -158,7 +158,7 @@ async function resolveInstallation(
   if (installations.length === 0) {
     throw new Error(
       "The App is not installed anywhere. Install it on the demo repository first; " +
-        "see docs/milestone-9-setup.md.",
+        "see docs/github-app-setup.md.",
     );
   }
 

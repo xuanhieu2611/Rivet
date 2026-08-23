@@ -1,7 +1,7 @@
 # Contributing
 
-Rivet is a single-maintainer portfolio project, but bug reports, security-minded review,
-documentation fixes, and focused pull requests are welcome.
+Rivet is an open source project maintained by a single maintainer. Bug reports, security-minded
+review, documentation fixes, and focused pull requests are welcome.
 
 ## Before opening an issue
 

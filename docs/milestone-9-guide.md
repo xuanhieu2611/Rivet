@@ -3,7 +3,7 @@
 This is the educational record for Milestone 9. The plan in
 [`docs/plans/milestone-9.md`](plans/milestone-9.md) describes the intended design, the acceptance
 contract in [`docs/plans/milestone-9-acceptance.md`](plans/milestone-9-acceptance.md) describes the
-observable behavior, and [`docs/milestone-9-setup.md`](milestone-9-setup.md) is the one-time GitHub
+observable behavior, and [`docs/github-app-setup.md`](github-app-setup.md) is the one-time GitHub
 App setup. This guide explains how the implementation fulfills that design, why the important
 decisions were made, how to trace a job through the system, and where to look when something goes
 wrong.
@@ -120,7 +120,7 @@ The phase list is identical. Two phases grew bodies:
 | Web routes         | `/settings/github`, `/api/github/setup`, `/api/github/installations`, `/api/github/repositories`, `/api/github/issues`                                                            |
 | Environment        | `RIVET_GITHUB`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_SLUG`, `GITHUB_CLONE_TIMEOUT_MS`, `GITHUB_PUSH_TIMEOUT_MS`, `GITHUB_SEED_MAX_BYTES`, `RIVET_APP_URL`       |
 | Demo               | `pnpm demo:pr`                                                                                                                                                                    |
-| Documentation      | `SECURITY.md`, `docs/milestone-9-setup.md`                                                                                                                                        |
+| Documentation      | `SECURITY.md`, `docs/github-app-setup.md`                                                                                                                                         |
 
 ---
 

@@ -67,8 +67,8 @@ session immediately; rotating the session secret invalidates all sessions at onc
 
 Repository contents are untrusted data. README files, issue titles and bodies, source comments,
 tests and generated output can contain prompt-injection text, and the agent must not treat that text
-as a system instruction. See the threat model in the
-[README](README.md#repository-prompt-injection-threat-model).
+as a system instruction. See the prompt-injection analysis in the
+[security review](docs/security-review.md#4-prompt-injection-21).
 
 Repository code runs in a disposable container: non-root (uid 1000), `CapDrop: ALL`,
 `no-new-privileges`, required memory, CPU and pid limits, no Docker socket, and a user-defined
