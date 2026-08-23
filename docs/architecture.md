@@ -1,9 +1,9 @@
 # Architecture
 
-This document describes Rivet **as it exists today**, after Milestone 11 and during Milestone 12's
-presentation pass. It names the places where the current shape is a deliberate shortcut rather than
-the intended end state. It is updated as each milestone lands rather than describing a system that
-does not exist yet.
+This document describes Rivet **as it exists today**, after Milestone 12's presentation pass. It
+names the places where the current shape is a deliberate shortcut rather than the intended end
+state. It is updated as each milestone lands rather than describing a system that does not exist
+yet.
 
 ## The system, in one picture
 

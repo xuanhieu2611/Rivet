@@ -12,14 +12,23 @@ job-execution system around the coding agent, not the code generation.
 for product intent and milestone scope. `docs/architecture.md` describes the system as it actually
 exists today and is the best starting point for any structural question.
 
-**Current state: Milestone 11 is complete.** Rivet can now be watched, and it defends itself.
-Traces, metrics and correlated logs flow through a `Telemetry` port to an OTLP collector; every
-durable write passes a `Redactor`; every API route is guarded by a session whose coverage is a test
-rather than a convention; the unauthenticated edges and the spend are rate limited and the limiter
-fails closed; every prompt boundary fences untrusted text; and a startup probe refuses to boot a
-worker whose control plane a sandbox container can reach. **M11's entire schema footprint is one
-nullable `text` column**, `jobs.trace_context` - no new table, no job status, no job event type and
-no failure category. Its acceptance runs are A-H, mapped to their implementations in
+**Current state: Milestone 12 is complete.** Rivet now has a static public landing page, structured
+diff and validation surfaces, append-only timeline motion, deterministic capture and replay, two
+graded demo repositories, and a public recording of a real issue-to-PR run. A replayed run remains
+an ordinary job written through the production writers. **M12 adds no table, column, job status,
+event type or failure category.** Acceptance runs A-H are mapped in
+`docs/plans/milestone-12-acceptance.md`; A-D and F run in `pnpm test`, E is integration, G is the
+Docker-backed demo-repository suite, and H is the recording published on 2026-08-22.
+`docs/milestone-12-guide.md` is the tour.
+
+**Milestone 11 is complete.** Rivet can now be watched, and it defends itself. Traces, metrics and
+correlated logs flow through a `Telemetry` port to an OTLP collector; every durable write passes a
+`Redactor`; every API route is guarded by a session whose coverage is a test rather than a
+convention; the unauthenticated edges and the spend are rate limited and the limiter fails closed;
+every prompt boundary fences untrusted text; and a startup probe refuses to boot a worker whose
+control plane a sandbox container can reach. **M11's entire schema footprint is one nullable `text`
+column**, `jobs.trace_context` - no new table, no job status, no job event type and no failure
+category. Its acceptance runs are A-H, mapped to their implementations in
 `docs/plans/milestone-11-acceptance.md`; A-F need no Docker and run in `pnpm test`, G is
 `apps/worker/tests/sandbox/network-isolation.sbx.test.ts`, and H is
 `benchmarks/prompt-injection-bait/` plus `pnpm demo:observability`. `docs/milestone-11-guide.md` is

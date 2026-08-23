@@ -583,7 +583,7 @@ repetitions, thirty runs, `openrouter/deepseek/deepseek-v4-flash`. The independe
 was wrong, which is exactly the case hidden tests exist to catch.
 
 The write-up says in plain language what that sample can and cannot support, and this guide repeats
-it: **thirty runs per arm is enough to see a large effect and nowhere near enough to see a small
+it: **fifteen runs per arm is enough to see a large effect and nowhere near enough to see a small
 one.** A confident claim from this sample would undermine exactly the credibility the evaluation
 framework exists to build.
 
@@ -592,10 +592,11 @@ Three further limits are deliberate:
 - **Local fixtures are not real repositories.** They are small, dependency-free and authored by the
   same person who wrote the agent's prompts, which is a bias no amount of statistics removes. The
   honest next step is a handful of pinned real-world commits, and it belongs on the roadmap.
-- **The corpus stops at five.** The PRD's "expand to 20" and "eventually 30-50" entries stay
-  unchecked on purpose: five cases exercise every part of the harness, and the marginal
-  architectural insight from cases six through twenty is close to zero. Authoring more is content
-  work, not milestone work.
+- **M10's corpus stopped at five.** M12 added three presentation and security cases, so the current
+  corpus has eight. The PRD's "expand to 20" and "eventually 30-50" entries stay unchecked on
+  purpose: the existing cases exercise every part of the harness, and the marginal architectural
+  insight from cases nine through twenty is close to zero. Authoring more is content work, not
+  milestone work.
 - **Grading costs a container per run.** Dependency-free seed trees keep that to seconds each, and
   it is the price of grading a tree the model never saw the tests for.
 

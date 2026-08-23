@@ -54,14 +54,14 @@ replay, publication receipts, evaluation, and telemetry paths.
 
 ## Demo
 
-> [!NOTE] **Demo video - added during acceptance run H.**
+**[Watch the public demo on X](https://x.com/hieuspringle/status/2091312854389719528).** A GitHub
+issue becomes a tested, independently reviewed pull request in 3 minutes 11 seconds.
 
-The final sixty-second recording will show the captured booking-race job investigate, recover after
-Rivet rejects its first oversized structured plan, implement the database fix, pass validation and
-independent review, and open
-[pull request #3](https://github.com/xuanhieu2611/rivet-demo-booking/pull/3). The checked-in replay
-drives the production writers and SSE UI, so the public demo never depends on a model sampling well
-on demand.
+The recording follows a real job through repository setup, a read-only planning session, sandboxed
+implementation, deterministic validation, independent review, and GitHub publication. The checked-in
+booking replay drives the same production writers and SSE UI, so the interface can also be
+demonstrated without depending on a model sampling well on demand. Its original run ends in
+[pull request #3](https://github.com/xuanhieu2611/rivet-demo-booking/pull/3).
 
 ## Measured results
 
@@ -79,6 +79,22 @@ This is a useful signal, not proof that review caused the improvement: the sampl
 per arm, and the single no-review failure may be sampling variance. The complete method, per-case
 results, token counts, and caveats are in
 [Experiment 1: independent review versus no review](docs/experiments/reviewer-value.md).
+
+## Scope and known limitations
+
+- **Local only.** Rivet is not a hosted service. A Docker worker refuses to start when a sandbox can
+  reach its Postgres or Redis control plane, so hosting it safely requires a different network and
+  isolation design. See section 6.9 of [the security review](docs/security-review.md).
+- **Eight benchmark cases.** The PRD targets 20. Experiment 1 used five cases and 15 runs per arm,
+  which is not enough to separate a small reviewer effect from sampling variance. See
+  [the experiment caveats](docs/experiments/reviewer-value.md).
+- **Postgres-backed artifacts.** Artifacts and checkpoints remain in Postgres behind byte caps
+  rather than using the object storage described in PRD section 8.
+- **No GitHub webhooks.** Installation state is refreshed from GitHub on demand, so changes become
+  visible when the control-plane surface is next read.
+- **Single-principal authentication.** There is no users or sessions table. Access is limited to one
+  allowlisted GitHub login, re-checked on every request; rotating the session secret invalidates all
+  sessions.
 
 ## Quick start
 
@@ -104,11 +120,12 @@ run `pnpm test` to exercise the database-free suite immediately.
 
 ## Project status
 
-**Milestone 12 - public demo polish - is in progress.** The static public landing page, real run
+**Milestone 12 - public demo polish - is complete.** The static public landing page, real run
 stills, structured diff viewer, validation cards, evaluation summary, append-only timeline motion,
-real booking capture, replay path, two graded demo repositories, and architecture diagrams are
-implemented. The replay has driven the real UI end to end. The public recording remains acceptance
-run H, and its placeholder is deliberately isolated in the [Demo](#demo) section.
+real booking capture, replay path, two graded demo repositories, architecture diagrams, and
+[public recording](https://x.com/hieuspringle/status/2091312854389719528) are complete. The replay
+has driven the real UI end to end, and M12 changed no schema or execution vocabulary. See
+[the Milestone 12 guide](docs/milestone-12-guide.md) for the presentation and replay paths.
 
 **Milestone 10 - the evaluation harness - is complete.** Rivet now measures itself. A benchmark case
 is git-tracked files that build into a lock-pinned local bare repository; an evaluation run **is**
@@ -593,17 +610,19 @@ built before any agent behaviour.
 - [x] **M9 - GitHub integration.** A GitHub App, repository and issue pickers, short-lived tokens,
       and branch/commit/push/pull-request creation.
 - [x] **M10 - Evaluation harness.** A benchmark schema, an evaluation runner, hidden tests graded in
-      a separate container, run metrics and a results dashboard. Five cases; the PRD's "expand to
-      20" and "eventually 30-50" entries stay open as authoring work. The first experiment is
-      written up in [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md).
+      a separate container, run metrics and a results dashboard. The corpus now has eight cases; the
+      PRD's "expand to 20" and "eventually 30-50" entries stay open as authoring work. The first
+      experiment is written up in
+      [docs/experiments/reviewer-value.md](docs/experiments/reviewer-value.md).
 - [x] **M11 - Observability and hardening.** Structured logging, tracing, job, worker and model
       metrics, container resource monitoring, redaction across every durable write, authentication
       and CSRF, rate limiting that fails closed, sandbox network isolation, prompt-injection fencing
       and detection, orphan cleanup and a written security review. `pnpm demo:observability` runs a
       real job and prints its Grafana trace.
-- [ ] **M12 - Public demo polish.** Landing page, polished job and evaluation UI, timeline motion,
-      structured diff viewer, capture and replay, graded demo repositories, architecture diagrams,
-      and a visitor-first README. Acceptance run H still owns the recorded public demo.
+- [x] **M12 - Public demo polish.** Landing page, polished job and evaluation UI, timeline motion,
+      structured diff viewer, capture and replay, graded demo repositories, architecture diagrams, a
+      visitor-first README, and the
+      [public demo recording](https://x.com/hieuspringle/status/2091312854389719528).
 
 ## License
 

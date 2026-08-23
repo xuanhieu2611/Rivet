@@ -1,0 +1,67 @@
+name: Bug report
+description: Report reproducible incorrect behavior in Rivet
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For security vulnerabilities, use private vulnerability reporting instead of this form.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest sequence of commands or actions that reproduces the problem.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, architecture, Node.js, pnpm, Docker, Postgres, and Redis versions where relevant.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Web application
+        - Worker or queue
+        - Coding agent
+        - Docker sandbox
+        - Database or migrations
+        - Evaluation harness
+        - Telemetry
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove credentials, tokens, connection strings, and private repository content before pasting logs.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials and private repository content from this report.
+          required: true
+        - label: This is not a security vulnerability requiring private disclosure.
+          required: true

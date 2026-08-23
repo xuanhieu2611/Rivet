@@ -17,7 +17,9 @@ second person expecting the two of you to be isolated from each other - you woul
 
 ## Reporting a vulnerability
 
-Report privately to the project owner. Do not open a public issue for a security problem.
+Report through
+[GitHub private vulnerability reporting](https://github.com/xuanhieu2611/Rivet/security/advisories/new).
+Do not open a public issue for a security problem.
 
 **Never include a live credential in a report.** Remove tokens, keys and connection strings from
 logs, stack traces and examples first. A GitHub installation token, an `OPENROUTER_API_KEY` or a

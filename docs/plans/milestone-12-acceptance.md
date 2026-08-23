@@ -1,7 +1,8 @@
 # Milestone 12: the acceptance contract
 
-**Status: in progress.** Written before the remaining M12 code, the way M8 through M10 were, so the
-code is measured against it rather than the other way around.
+**Status: complete.** Written before the remaining M12 code, the way M8 through M10 were, so the
+code was measured against it rather than the other way around. Acceptance run H was published on
+2026-08-22 as the [public demo on X](https://x.com/hieuspringle/status/2091312854389719528).
 [`docs/plans/milestone-12.md`](milestone-12.md) is the plan. Runs A-D and F need no Docker, no
 database and no model and run in `pnpm test`. E is integration (real Postgres, no Docker, no model).
 G needs Docker. H is the milestone's demo.
@@ -15,7 +16,7 @@ G needs Docker. H is the milestone's demo.
 | E   | `apps/worker/tests/integration/replay.int.test.ts`                                             |
 | F   | `packages/core/src/replay/capture.test.ts`, `apps/worker/src/config.test.ts`                   |
 | G   | `apps/worker/tests/sandbox/demo-repositories.sbx.test.ts`                                      |
-| H   | `demo/replays/booking/`; UI replay verified, recording pending                                 |
+| H   | `demo/replays/booking/`; UI replay verified, recording published 2026-08-22                    |
 
 M12 adds no table, no column, no job status, no job event type and no failure category. A replayed
 run is an ordinary job. The organising risk is a page that looks public while it is not, or a
@@ -175,9 +176,8 @@ Work item 4 and the recording. `demo/replays/booking/` is a redacted capture of 
 seconds while a real browser loaded the production job page. The replay ended `completed` with the
 same pull-request identity.
 
-The recording is still open, so H has not passed. Two real model attempts both solved the repository
-without a failed test or reviewer-requested revision. The checked-in capture's honest recovery beat
-is instead a first `submit_plan` call rejected by the structured-plan schema, followed by a
-corrected submission on the next turn. The sixty-second cut must show that event rather than
-manufacture the specific database-conflict failure in §34. This is the milestone's remaining
-deliverable.
+Run H passed on 2026-08-22 when the
+[public demo](https://x.com/hieuspringle/status/2091312854389719528) showed a real job moving from a
+GitHub issue to a tested, independently reviewed pull request in 3 minutes 11 seconds. The
+checked-in capture remains the deterministic fallback for replaying the production UI without
+relying on a live model call.

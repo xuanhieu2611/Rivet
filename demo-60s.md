@@ -63,7 +63,8 @@ Your cloud values are backed up in `.env.local.cloud-backup`. Restore them when 
 
 - [ ] Close any open PR on `rivet-demo-reservations` and delete its branch, so your filmed run opens
       a clean one.
-- [ ] Issue **#5** open and clean (no cross-references): "Scope reservation cancellation to the customer".
+- [ ] Issue **#5** open and clean (no cross-references): "Scope reservation cancellation to the
+      customer".
 - [ ] Signed in at `localhost:3000` already. **Do not film the OAuth round trip.**
 
 ---
