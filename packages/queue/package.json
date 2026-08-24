@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@rivet/core": "workspace:*",
-    "bullmq": "6.1.2",
+    "bullmq": "6.2.0",
     "ioredis": "6.0.0"
   },
   "devDependencies": {

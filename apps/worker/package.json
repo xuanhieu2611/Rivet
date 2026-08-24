@@ -29,7 +29,7 @@
     "@rivet/queue": "workspace:*",
     "@rivet/sandbox": "workspace:*",
     "@rivet/telemetry": "workspace:*",
-    "bullmq": "6.1.2",
+    "bullmq": "6.2.0",
     "dotenv": "^17.4.2",
     "pino": "^10.3.1",
     "zod": "^4.4.3"
