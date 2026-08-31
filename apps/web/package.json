@@ -46,7 +46,7 @@
     "@types/node": "^24.13.3",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/react-dom": "^19.2.5",
     "eslint": "^10.8.1",
     "pg": "^8.23.0",
     "shadcn": "^4.18.0",
