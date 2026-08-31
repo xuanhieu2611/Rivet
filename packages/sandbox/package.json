@@ -22,7 +22,7 @@
     "@rivet/config": "workspace:*",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^24.13.3",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   }
