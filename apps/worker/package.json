@@ -29,7 +29,7 @@
     "@rivet/queue": "workspace:*",
     "@rivet/sandbox": "workspace:*",
     "@rivet/telemetry": "workspace:*",
-    "bullmq": "6.1.2",
+    "bullmq": "6.3.1",
     "dotenv": "^17.4.2",
     "pino": "^10.3.1",
     "zod": "^4.4.3"
@@ -39,7 +39,7 @@
     "@types/node": "^24.13.3",
     "@types/pg": "^8.23.1",
     "drizzle-orm": "^0.45.2",
-    "eslint": "^10.8.1",
+    "eslint": "^10.9.1",
     "pg": "^8.23.0",
     "pino-pretty": "^13.1.3",
     "tsx": "^4.23.12",
