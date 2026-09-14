@@ -18,12 +18,12 @@
     "@rivet/contracts": "workspace:*",
     "@rivet/database": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "zod": "^4.4.3"
+    "zod": "^4.6.2"
   },
   "devDependencies": {
     "@rivet/config": "workspace:*",
     "@types/node": "^24.13.3",
-    "eslint": "^10.8.1",
+    "eslint": "^10.10.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   }
