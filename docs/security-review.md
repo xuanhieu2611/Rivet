@@ -391,6 +391,17 @@ is provably not a live credential (a test fixture, a documented sentinel, a publ
 advisory has no fixed version and does not reach a code path Rivet executes. Every entry carries a
 comment saying which of those it is. An entry with no comment is a bug.
 
+**An override is a fix, not an exception, which is why it lives in `package.json`.** A transitive
+advisory whose requiring package has not yet released against the patched version is not a reason to
+ignore the advisory - the patched version is published, and `pnpm.overrides` is what pulls it
+through a dependency that still names the old range. Each entry is keyed by the vulnerable range
+rather than by the bare package name - `"fast-uri@<3.1.6": "^3.1.6"` - so it applies only to the
+versions an advisory actually names and stops doing anything the moment the requiring package moves
+on its own. Each stays inside the package's existing major, because forcing a major through a
+dependency that was never tested against it trades a rated advisory for an unrated breakage.
+`fast-uri` and `js-yaml` are both there for that reason; both are reached only through tooling, and
+both should be deleted rather than maintained once the packages above them catch up.
+
 CodeQL needs `security-events: write` to upload its SARIF, which is the one permission any Rivet
 workflow holds beyond `contents: read`; it is scoped to that job alone rather than to the workflow.
 
