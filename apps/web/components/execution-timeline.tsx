@@ -1,11 +1,14 @@
 "use client";
 
 import type { JobEvent } from "@rivet/contracts";
+import { CircleCheck, CircleX, PenLine } from "lucide-react";
 import { motion } from "motion/react";
 import type { ReactNode } from "react";
 
 import { commandAnchorId } from "@/components/job-live/command-anchor";
-import { JOB_EVENT_TONE, statusLabel } from "@/lib/job-status";
+import { AnchorLink, ExternalLink } from "@/components/ui/link";
+import { Disclosure } from "@/components/ui/disclosure";
+import { JOB_EVENT_MARKER, statusLabel, type EventMarker } from "@/lib/job-status";
 import { formatAgentCost, formatBytes, formatTimeOfDay, formatTokenCount } from "@/lib/format";
 import { describePublicationEvent, isPublicationEvent } from "@/lib/publication-events";
 import { describeRecoveryEvent, isRecoveryEvent } from "@/lib/recovery-events";
@@ -228,16 +231,16 @@ function CommandClusterRow({
   return (
     <TimelineRow
       event={first.started}
-      tone={JOB_EVENT_TONE["command.completed"]}
+      marker={JOB_EVENT_MARKER["command.completed"]}
       animateEnter={animateEnter}
       pulse={pulse}
     >
-      <details
-        className="group rounded-md border border-border/60 bg-muted/15"
+      <Disclosure
+        className="bg-muted/15"
         data-command-group-count={String(item.commands.length)}
-      >
-        <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 [&::-webkit-details-marker]:hidden">
-          <div className="min-w-0 flex-1">
+        contentClassName={null}
+        summary={
+          <>
             <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <span className="text-sm font-medium">{item.phase}</span>
               <span className="text-muted-foreground text-xs">
@@ -247,20 +250,15 @@ function CommandClusterRow({
             <p className="text-muted-foreground mt-0.5 text-xs">
               All succeeded · {formatDuration(totalDuration)}
             </p>
-          </div>
-          <span
-            aria-hidden
-            className="text-muted-foreground shrink-0 transition-transform group-open:rotate-180"
-          >
-            ▾
-          </span>
-        </summary>
+          </>
+        }
+      >
         <ol className="divide-border/50 divide-y border-t px-3">
           {item.commands.map((command) => (
             <CommandDetail key={command.started.id} item={command} />
           ))}
         </ol>
-      </details>
+      </Disclosure>
     </TimelineRow>
   );
 }
@@ -280,8 +278,8 @@ function CommandRow({
   return (
     <TimelineRow
       event={item.started}
-      tone={
-        failed ? "bg-red-500" : JOB_EVENT_TONE[running ? "command.started" : "command.completed"]
+      marker={
+        failed ? FAILED_MARKER : JOB_EVENT_MARKER[running ? "command.started" : "command.completed"]
       }
       animateEnter={animateEnter}
       pulse={pulse}
@@ -291,11 +289,7 @@ function CommandRow({
         <span
           className={cn(
             "text-xs",
-            failed
-              ? "text-destructive"
-              : running
-                ? "text-sky-600 dark:text-sky-400"
-                : "text-muted-foreground",
+            failed ? "text-destructive" : running ? "text-progress" : "text-muted-foreground",
           )}
         >
           {commandOutcome(item)}
@@ -336,13 +330,13 @@ function CommandTranscriptLink({ item }: { item: CommandTimelineItem }) {
   if (!executionId || item.finished === null) return null;
 
   return (
-    <a
+    <AnchorLink
       href={`#${commandAnchorId(executionId)}`}
       onClick={openCommandPanel}
-      className="shrink-0 text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
+      className="shrink-0"
     >
       Transcript
-    </a>
+    </AnchorLink>
   );
 }
 
@@ -358,7 +352,12 @@ function TimelineEventRow({
   const detail = describeEventData(event);
 
   return (
-    <TimelineRow event={event} tone={timelineTone(event)} animateEnter={animateEnter} pulse={pulse}>
+    <TimelineRow
+      event={event}
+      marker={timelineMarker(event)}
+      animateEnter={animateEnter}
+      pulse={pulse}
+    >
       <EventContent event={event} />
       {detail ? <p className="text-muted-foreground text-xs">{detail}</p> : null}
     </TimelineRow>
@@ -386,7 +385,7 @@ function AgentToolRow({
   return (
     <TimelineRow
       event={item.started}
-      tone={failed ? "bg-red-500" : JOB_EVENT_TONE["agent.tool_started"]}
+      marker={failed ? FAILED_MARKER : JOB_EVENT_MARKER["agent.tool_started"]}
       animateEnter={animateEnter}
       pulse={pulse}
     >
@@ -401,7 +400,7 @@ function AgentToolRow({
             status === "failed"
               ? "text-destructive"
               : status === "running"
-                ? "text-sky-600 dark:text-sky-400"
+                ? "text-progress"
                 : "text-muted-foreground",
           )}
         >
@@ -417,13 +416,9 @@ function AgentToolRow({
         <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           {duration !== undefined ? <span>{formatDuration(duration)}</span> : null}
           {commandExecutionId ? (
-            <a
-              href={`#${commandAnchorId(commandExecutionId)}`}
-              onClick={openCommandPanel}
-              className="text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
-            >
+            <AnchorLink href={`#${commandAnchorId(commandExecutionId)}`} onClick={openCommandPanel}>
               View command transcript
-            </a>
+            </AnchorLink>
           ) : null}
         </div>
       ) : null}
@@ -433,17 +428,19 @@ function AgentToolRow({
 
 function TimelineRow({
   event,
-  tone,
+  marker,
   animateEnter,
   pulse,
   children,
 }: {
   event: JobEvent;
-  tone: string;
+  marker: EventMarker;
   animateEnter: boolean;
   pulse: boolean;
   children: ReactNode;
 }) {
+  const Icon = marker.icon;
+
   return (
     <motion.li
       className="relative grid grid-cols-[auto_1fr_auto] items-start gap-3"
@@ -457,16 +454,18 @@ function TimelineRow({
       <motion.span
         aria-hidden
         data-pulse-active={pulse ? "true" : undefined}
-        className={cn("mt-1.5 size-2 shrink-0 rounded-full", tone)}
+        className={cn("mt-0.5 flex size-4 shrink-0 items-center justify-center", marker.text)}
         animate={
           pulse
-            ? { opacity: [1, 0.5, 1], transform: ["scale(1)", "scale(1.35)", "scale(1)"] }
+            ? { opacity: [1, 0.5, 1], transform: ["scale(1)", "scale(1.2)", "scale(1)"] }
             : { opacity: 1, transform: "scale(1)" }
         }
         transition={
           pulse ? { duration: 1.6, ease: "linear", repeat: Infinity } : TIMELINE_ENTER_TRANSITION
         }
-      />
+      >
+        <Icon className="size-4" />
+      </motion.span>
       <div className="min-w-0 space-y-1">{children}</div>
       <time
         dateTime={event.createdAt.toISOString()}
@@ -482,23 +481,20 @@ function EventContent({ event }: { event: JobEvent }): ReactNode {
   switch (event.type) {
     case "agent.message":
       return (
-        <details className="group rounded-md border border-border/60 bg-muted/20">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-sm [&::-webkit-details-marker]:hidden">
-            <span className="text-foreground shrink-0 font-medium">Assistant</span>
-            <span className="text-muted-foreground min-w-0 flex-1 truncate">
-              {singleLinePreview(event.message)}
+        <Disclosure
+          summaryClassName="gap-2 px-2.5 py-2 text-sm"
+          contentClassName="max-h-96 overflow-auto px-2.5 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words"
+          summary={
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="text-foreground shrink-0 font-medium">Assistant</span>
+              <span className="text-muted-foreground min-w-0 flex-1 truncate">
+                {singleLinePreview(event.message)}
+              </span>
             </span>
-            <span
-              aria-hidden
-              className="text-muted-foreground shrink-0 transition-transform group-open:rotate-180"
-            >
-              ▾
-            </span>
-          </summary>
-          <div className="border-border/60 max-h-96 overflow-auto border-t px-2.5 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words">
-            {event.message}
-          </div>
-        </details>
+          }
+        >
+          {event.message}
+        </Disclosure>
       );
 
     case "agent.usage":
@@ -672,14 +668,9 @@ function PublicationEventContent({ event }: { event: JobEvent }) {
         </p>
       ) : null}
       {presentation.link ? (
-        <a
-          href={presentation.link.href}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="inline-block text-xs text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
-        >
+        <ExternalLink href={presentation.link.href} className="text-xs">
           {presentation.link.text}
-        </a>
+        </ExternalLink>
       ) : null}
     </div>
   );
@@ -700,12 +691,7 @@ function ArtifactEventContent({ event }: { event: JobEvent }) {
           <span className="text-amber-700 dark:text-amber-300">truncated</span>
         ) : null}
         {artifactId !== undefined ? (
-          <a
-            href="#artifacts"
-            className="text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
-          >
-            View artifacts
-          </a>
+          <AnchorLink href="#artifacts">View artifacts</AnchorLink>
         ) : null}
       </div>
     </div>
@@ -994,16 +980,51 @@ function formatDuration(milliseconds: number): string {
   return `${(milliseconds / 1_000).toFixed(milliseconds >= 10_000 ? 0 : 1)}s`;
 }
 
-function timelineTone(event: JobEvent): string {
+/** A command or tool call that errored, whatever its event type says. */
+const FAILED_MARKER: EventMarker = {
+  icon: CircleX,
+  dot: "bg-red-500",
+  text: "text-destructive",
+};
+
+const REVIEW_APPROVED_MARKER: EventMarker = {
+  icon: CircleCheck,
+  dot: "bg-emerald-500",
+  text: "text-emerald-600 dark:text-emerald-400",
+};
+
+const REVIEW_REVISE_MARKER: EventMarker = {
+  icon: PenLine,
+  dot: "bg-amber-500",
+  text: "text-amber-600 dark:text-amber-400",
+};
+
+/**
+ * The row's marker, after the payload gets a say.
+ *
+ * Three event types carry their verdict in `data` rather than in `type` -
+ * `review.recorded` is the same row whether the reviewer approved or asked for
+ * changes, and both validation events are the same row whether a check
+ * regressed or was verified. The glyph still comes from the event type, since
+ * what happened did not change; only the colour moves.
+ */
+function timelineMarker(event: JobEvent): EventMarker {
+  const base = JOB_EVENT_MARKER[event.type];
+
   if (event.type === "review.recorded") {
-    if (event.data?.reviewDecision === "approve") return "bg-emerald-500";
-    if (event.data?.reviewDecision === "revise") return "bg-amber-500";
+    if (event.data?.reviewDecision === "approve") return REVIEW_APPROVED_MARKER;
+    if (event.data?.reviewDecision === "revise") return REVIEW_REVISE_MARKER;
+    return base;
   }
-  if (event.type === "validation.check_recorded") {
-    const outcome = event.data?.checkOutcome;
-    return outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome].tone : JOB_EVENT_TONE[event.type];
-  }
-  if (event.type !== "validation.recorded") return JOB_EVENT_TONE[event.type];
-  const outcome = event.data?.validation;
-  return outcome ? VALIDATION_OUTCOME_PRESENTATION[outcome].tone : JOB_EVENT_TONE[event.type];
+
+  const outcome =
+    event.type === "validation.check_recorded"
+      ? event.data?.checkOutcome
+      : event.type === "validation.recorded"
+        ? event.data?.validation
+        : undefined;
+  if (!outcome) return base;
+
+  const presentation = VALIDATION_OUTCOME_PRESENTATION[outcome];
+  return { icon: base.icon, dot: presentation.tone, text: presentation.textClassName };
 }

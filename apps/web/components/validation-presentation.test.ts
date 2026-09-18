@@ -123,7 +123,10 @@ describe("validation timeline presentations", () => {
     expect(html).toContain("Full test suite");
     expect(html).toContain("Unresolved");
     expect(html).toContain('data-event-type="validation.check_recorded"');
-    expect(html).toContain("bg-red-500");
+    // The marker is coloured by the payload outcome rather than by the event
+    // type, which is the whole point of the row: `verified` and `regressed`
+    // arrive as the same `validation.check_recorded`.
+    expect(html).toContain("text-red-700 dark:text-red-300");
   });
 });
 

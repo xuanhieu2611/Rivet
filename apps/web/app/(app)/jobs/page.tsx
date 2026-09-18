@@ -2,9 +2,11 @@ import "server-only";
 
 import { isTerminal, type JobSummary } from "@rivet/contracts";
 import { listJobs } from "@rivet/core";
+import { Filter, Inbox } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { EmptyState } from "@/components/empty-state";
 import { JobsLiveRefresh } from "@/components/jobs-live-refresh";
 import { RelativeTime } from "@/components/relative-time";
 import { StatusBadge } from "@/components/status-badge";
@@ -71,28 +73,30 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
       {jobs.length === 0 ? (
         filter === "all" ? (
-          <div className="border-border rounded-xl border border-dashed px-6 py-16 text-center">
-            <h2 className="text-base font-medium">Nothing queued</h2>
-            <p className="text-muted-foreground mx-auto mt-2 max-w-md text-sm">
-              Describe a change and point Rivet at a repository. A worker picks it up and walks it
-              through the pipeline; when configured, the coding agent works inside the job sandbox.
-            </p>
-            <Button asChild className="mt-6">
-              <Link href="/jobs/new">Create the first job</Link>
-            </Button>
-          </div>
+          <EmptyState
+            icon={Inbox}
+            title="Nothing queued"
+            action={
+              <Button asChild>
+                <Link href="/jobs/new">Create the first job</Link>
+              </Button>
+            }
+          >
+            Describe a change and point Rivet at a repository. A worker picks it up and walks it
+            through the pipeline; when configured, the coding agent works inside the job sandbox.
+          </EmptyState>
         ) : (
-          <div className="border-border rounded-xl border border-dashed px-6 py-16 text-center">
-            <h2 className="text-base font-medium">
-              No {JOB_FILTER_LABELS[filter].toLowerCase()} jobs
-            </h2>
-            <p className="text-muted-foreground mx-auto mt-2 max-w-md text-sm">
-              Nothing in the newest 50 jobs matches this filter.
-            </p>
-            <Button asChild variant="outline" className="mt-6">
-              <Link href={jobFilterHref("all")}>Show all jobs</Link>
-            </Button>
-          </div>
+          <EmptyState
+            icon={Filter}
+            title={`No ${JOB_FILTER_LABELS[filter].toLowerCase()} jobs`}
+            action={
+              <Button asChild variant="outline">
+                <Link href={jobFilterHref("all")}>Show all jobs</Link>
+              </Button>
+            }
+          >
+            Nothing in the newest 50 jobs matches this filter.
+          </EmptyState>
         )
       ) : (
         <div className="border-border overflow-hidden rounded-xl border">

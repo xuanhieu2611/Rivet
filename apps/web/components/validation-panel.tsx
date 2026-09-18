@@ -2,6 +2,7 @@ import type { CheckAttribution, CheckComparison, JobArtifact } from "@rivet/cont
 
 import { ValidationOutcomeBadge } from "@/components/validation-outcome-badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Disclosure } from "@/components/ui/disclosure";
 import { formatDateTime } from "@/lib/format";
 import { CHECK_KIND_LABELS, CHECK_STATUS_LABELS, plural } from "@/lib/validation-presentation";
 import { readValidationReport } from "@/lib/validation-report";
@@ -113,22 +114,15 @@ function AttributionDetails({ attribution }: { attribution: CheckAttribution }) 
     attribution.fixedFailures.length;
 
   return (
-    <details className="group rounded-md border border-border/60 bg-muted/20">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium [&::-webkit-details-marker]:hidden">
-        <span>Failure attribution ({plural(total, "result")})</span>
-        <span
-          aria-hidden
-          className="text-muted-foreground shrink-0 transition-transform group-open:rotate-180"
-        >
-          ▾
-        </span>
-      </summary>
-      <div className="border-border/60 grid gap-4 border-t px-3 py-3 md:grid-cols-3">
-        <FailureList title="New failures" failures={attribution.newFailures} />
-        <FailureList title="Pre-existing failures" failures={attribution.preExistingFailures} />
-        <FailureList title="Fixed failures" failures={attribution.fixedFailures} />
-      </div>
-    </details>
+    <Disclosure
+      summaryClassName="text-xs font-medium"
+      contentClassName="grid gap-4 md:grid-cols-3"
+      summary={<span>Failure attribution ({plural(total, "result")})</span>}
+    >
+      <FailureList title="New failures" failures={attribution.newFailures} />
+      <FailureList title="Pre-existing failures" failures={attribution.preExistingFailures} />
+      <FailureList title="Fixed failures" failures={attribution.fixedFailures} />
+    </Disclosure>
   );
 }
 
@@ -155,23 +149,17 @@ function FailureList({ title, failures }: { title: string; failures: readonly st
 
 function TargetedPaths({ paths }: { paths: readonly string[] }) {
   return (
-    <details className="group rounded-md border border-border/60 bg-muted/20">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-medium [&::-webkit-details-marker]:hidden">
-        <span>Targeted selection ({plural(paths.length, "path")})</span>
-        <span
-          aria-hidden
-          className="text-muted-foreground shrink-0 transition-transform group-open:rotate-180"
-        >
-          ▾
-        </span>
-      </summary>
-      <ul className="border-border/60 space-y-1 border-t px-3 py-3">
+    <Disclosure
+      summaryClassName="text-xs font-medium"
+      summary={<span>Targeted selection ({plural(paths.length, "path")})</span>}
+    >
+      <ul className="space-y-1">
         {paths.map((path) => (
           <li key={path} className="break-all font-mono text-xs">
             {path}
           </li>
         ))}
       </ul>
-    </details>
+    </Disclosure>
   );
 }

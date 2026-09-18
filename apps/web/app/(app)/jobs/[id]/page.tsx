@@ -19,6 +19,8 @@ import { PhaseStepper } from "@/components/job-live/phase-stepper";
 import { ReviewPanel } from "@/components/review-panel";
 import { ValidationPanel } from "@/components/validation-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Disclosure } from "@/components/ui/disclosure";
+import { ExternalLink } from "@/components/ui/link";
 import { latestDiffStats } from "@/lib/diff-stats";
 import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/format";
 import { requirePageSession } from "@/lib/auth/page-guard";
@@ -170,30 +172,24 @@ export default async function JobDetailPage({ params }: PageProps) {
               </CardContent>
             </Card>
 
-            <details
+            <Disclosure
               id="commands"
-              className="group scroll-mt-24 overflow-hidden rounded-xl bg-card text-sm text-card-foreground ring-1 ring-foreground/10"
-            >
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-4 [&::-webkit-details-marker]:hidden">
-                <div>
+              className="bg-card text-card-foreground ring-foreground/10 scroll-mt-24 overflow-hidden rounded-xl border-0 text-sm ring-1"
+              summaryClassName="px-4 py-4"
+              contentClassName="px-4 py-4"
+              summary={
+                <>
                   <h2 className="font-heading text-base leading-snug font-medium">
                     Sandbox commands
                   </h2>
                   <p className="text-muted-foreground mt-1 text-xs">
                     Low-level command transcripts, hidden by default.
                   </p>
-                </div>
-                <span
-                  aria-hidden
-                  className="text-muted-foreground transition-transform group-open:rotate-180"
-                >
-                  ▾
-                </span>
-              </summary>
-              <div className="border-t px-4 py-4">
-                <LiveCommandLog />
-              </div>
-            </details>
+                </>
+              }
+            >
+              <LiveCommandLog />
+            </Disclosure>
           </div>
 
           <div className="space-y-6 lg:sticky lg:top-24">
@@ -286,59 +282,55 @@ export default async function JobDetailPage({ params }: PageProps) {
               </CardContent>
             </Card>
 
-            <details className="group overflow-hidden rounded-xl bg-card text-sm text-card-foreground ring-1 ring-foreground/10">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-4 [&::-webkit-details-marker]:hidden">
-                <div>
+            <Disclosure
+              className="bg-card text-card-foreground ring-foreground/10 overflow-hidden rounded-xl border-0 text-sm ring-1"
+              summaryClassName="px-4 py-4"
+              contentClassName="space-y-5 px-4 py-4"
+              summary={
+                <>
                   <h2 className="font-heading text-base leading-snug font-medium">Run metadata</h2>
                   <p className="text-muted-foreground mt-1 text-xs">
                     Environment, budgets and timestamps
                   </p>
-                </div>
-                <span
-                  aria-hidden
-                  className="text-muted-foreground transition-transform group-open:rotate-180"
-                >
-                  ▾
-                </span>
-              </summary>
-              <div className="space-y-5 border-t px-4 py-4">
-                <section className="space-y-2">
-                  <h3 className="text-xs font-medium">Environment fingerprint</h3>
-                  {job.envFingerprint ? (
-                    <pre className="max-h-64 overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
-                      {JSON.stringify(job.envFingerprint, null, 2)}
-                    </pre>
-                  ) : (
-                    <p className="text-muted-foreground text-xs">Not recorded yet.</p>
-                  )}
-                </section>
+                </>
+              }
+            >
+              <section className="space-y-2">
+                <h3 className="text-xs font-medium">Environment fingerprint</h3>
+                {job.envFingerprint ? (
+                  <pre className="max-h-64 overflow-auto rounded-lg bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
+                    {JSON.stringify(job.envFingerprint, null, 2)}
+                  </pre>
+                ) : (
+                  <p className="text-muted-foreground text-xs">Not recorded yet.</p>
+                )}
+              </section>
 
-                <section className="space-y-3 border-t pt-4">
-                  <h3 className="text-xs font-medium">Budget</h3>
-                  <DetailList
-                    rows={[
-                      ["Max duration", formatDuration(job.maxDurationSeconds)],
-                      ["Max cost", formatUsd(job.maxCostUsd)],
-                      ["Max model calls", String(job.maxModelCalls)],
-                      ["Max tool calls", String(job.maxToolCalls)],
-                      ["Priority", String(job.priority)],
-                    ]}
-                  />
-                </section>
+              <section className="space-y-3 border-t pt-4">
+                <h3 className="text-xs font-medium">Budget</h3>
+                <DetailList
+                  rows={[
+                    ["Max duration", formatDuration(job.maxDurationSeconds)],
+                    ["Max cost", formatUsd(job.maxCostUsd)],
+                    ["Max model calls", String(job.maxModelCalls)],
+                    ["Max tool calls", String(job.maxToolCalls)],
+                    ["Priority", String(job.priority)],
+                  ]}
+                />
+              </section>
 
-                <section className="space-y-3 border-t pt-4">
-                  <h3 className="text-xs font-medium">Timestamps</h3>
-                  <DetailList
-                    rows={[
-                      ["Created", formatDateTime(job.createdAt)],
-                      ["Updated", formatDateTime(job.updatedAt)],
-                      ["Started", formatDateTime(job.startedAt)],
-                      ["Completed", formatDateTime(job.completedAt)],
-                    ]}
-                  />
-                </section>
-              </div>
-            </details>
+              <section className="space-y-3 border-t pt-4">
+                <h3 className="text-xs font-medium">Timestamps</h3>
+                <DetailList
+                  rows={[
+                    ["Created", formatDateTime(job.createdAt)],
+                    ["Updated", formatDateTime(job.updatedAt)],
+                    ["Started", formatDateTime(job.startedAt)],
+                    ["Completed", formatDateTime(job.completedAt)],
+                  ]}
+                />
+              </section>
+            </Disclosure>
 
             {job.failureReason ? (
               <Card>
@@ -382,19 +374,6 @@ function JobSectionNav({ hasPullRequest }: { hasPullRequest: boolean }) {
         </a>
       ))}
     </nav>
-  );
-}
-
-function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer noopener"
-      className="text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
-    >
-      {children}
-    </a>
   );
 }
 

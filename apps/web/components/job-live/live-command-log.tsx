@@ -4,8 +4,10 @@ import { jobStatusSchema } from "@rivet/contracts";
 import type { SyntheticEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Disclosure } from "@/components/ui/disclosure";
 import { formatCommandDuration, formatTimeOfDay } from "@/lib/format";
 import { statusLabel } from "@/lib/job-status";
+import { cn } from "@/lib/utils";
 
 import { commandAnchorId } from "./command-anchor";
 import { useJobLive } from "./job-live-provider";
@@ -50,15 +52,22 @@ function LiveCommandRow({ command }: { command: LiveCommand }) {
         : commandAnchorId(String(commandId));
 
   return (
-    <details
+    <Disclosure
       id={anchorId}
-      className="group scroll-mt-20 rounded-lg border bg-muted/20"
+      className="bg-muted/20 border-border scroll-mt-20 rounded-lg"
+      summaryClassName="items-start gap-4 p-3"
+      contentClassName="px-3 pt-3 pb-3"
       onToggle={handleToggle}
       data-command-id={commandId === null ? undefined : String(commandId)}
       data-command-status={command.status}
-    >
-      <summary className="flex cursor-pointer list-none items-start gap-4 p-3 [&::-webkit-details-marker]:hidden">
-        <div className="min-w-0 flex-1">
+      trailing={
+        <>
+          <span className={cn("text-xs", outcomeClassName(command))}>{outcomeLabel(command)}</span>
+          <span className="text-muted-foreground font-mono text-xs">{durationLabel(command)}</span>
+        </>
+      }
+      summary={
+        <>
           <code className="block font-mono text-xs break-all" title={formatArgv(command.argv)}>
             {formatArgv(command.argv)}
           </code>
@@ -73,58 +82,47 @@ function LiveCommandRow({ command }: { command: LiveCommand }) {
               {formatTimeOfDay(command.createdAt)}
             </time>
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-3 text-xs">
-          <span className={outcomeClassName(command)}>{outcomeLabel(command)}</span>
-          <span className="text-muted-foreground font-mono">{durationLabel(command)}</span>
-          <span
-            aria-hidden
-            className="text-muted-foreground transition-transform group-open:rotate-180"
-          >
-            ▾
-          </span>
-        </div>
-      </summary>
-      <div className="border-t px-3 pt-3 pb-3">
-        <div className="text-muted-foreground mb-2 flex flex-wrap gap-2 text-xs">
-          {commandId !== null ? <span>Command #{String(commandId)}</span> : null}
-          {command.executionId ? (
-            <span className="font-mono">Execution {command.executionId}</span>
-          ) : null}
-          {recordedCommand?.truncated ? <span>Output truncated</span> : null}
-          {recordedCommand?.oomKilled ? <span>OOM killed</span> : null}
-          {recordedCommand?.timedOut ? <span>Timed out</span> : null}
-        </div>
-
-        {command.status === "running" ? (
-          <p className="text-muted-foreground text-xs">Command is running…</p>
-        ) : command.status === "failed" ? (
-          <p className="text-destructive text-sm">{command.error ?? "Command execution failed."}</p>
-        ) : command.detail ? (
-          <Transcript command={command.detail} />
-        ) : command.detailState.status === "loading" ? (
-          <p className="text-muted-foreground text-xs">Loading transcript…</p>
-        ) : command.detailState.status === "error" ? (
-          <div className="space-y-2">
-            <p className="text-destructive text-xs">
-              {command.detailState.error ?? "Could not load transcript."}
-            </p>
-            {commandId === null ? null : (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => retryCommandDetails(commandId)}
-              >
-                Retry transcript
-              </Button>
-            )}
-          </div>
-        ) : (
-          <p className="text-muted-foreground text-xs">Open this command to load its transcript.</p>
-        )}
+        </>
+      }
+    >
+      <div className="text-muted-foreground mb-2 flex flex-wrap gap-2 text-xs">
+        {commandId !== null ? <span>Command #{String(commandId)}</span> : null}
+        {command.executionId ? (
+          <span className="font-mono">Execution {command.executionId}</span>
+        ) : null}
+        {recordedCommand?.truncated ? <span>Output truncated</span> : null}
+        {recordedCommand?.oomKilled ? <span>OOM killed</span> : null}
+        {recordedCommand?.timedOut ? <span>Timed out</span> : null}
       </div>
-    </details>
+
+      {command.status === "running" ? (
+        <p className="text-muted-foreground text-xs">Command is running…</p>
+      ) : command.status === "failed" ? (
+        <p className="text-destructive text-sm">{command.error ?? "Command execution failed."}</p>
+      ) : command.detail ? (
+        <Transcript command={command.detail} />
+      ) : command.detailState.status === "loading" ? (
+        <p className="text-muted-foreground text-xs">Loading transcript…</p>
+      ) : command.detailState.status === "error" ? (
+        <div className="space-y-2">
+          <p className="text-destructive text-xs">
+            {command.detailState.error ?? "Could not load transcript."}
+          </p>
+          {commandId === null ? null : (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => retryCommandDetails(commandId)}
+            >
+              Retry transcript
+            </Button>
+          )}
+        </div>
+      ) : (
+        <p className="text-muted-foreground text-xs">Open this command to load its transcript.</p>
+      )}
+    </Disclosure>
   );
 }
 
@@ -181,7 +179,7 @@ function outcomeClassName(command: LiveCommand): string {
   ) {
     return "text-destructive";
   }
-  if (command.status === "running") return "text-sky-600 dark:text-sky-400";
+  if (command.status === "running") return "text-progress";
   return command.exitCode === 0
     ? "text-emerald-600 dark:text-emerald-400"
     : "text-amber-600 dark:text-amber-400";

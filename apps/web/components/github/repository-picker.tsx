@@ -3,6 +3,7 @@
 import type { Installation, Issue, Repository } from "@rivet/contracts";
 import { useCallback, useEffect, useState } from "react";
 
+import { AppLink } from "@/components/ui/link";
 import { cn } from "@/lib/utils";
 import { fetchInstallations, fetchIssues, fetchRepositories } from "@/lib/github/browser";
 
@@ -178,10 +179,7 @@ export function RepositoryPicker({
     return (
       <p className="text-muted-foreground text-sm">
         The App is not installed anywhere yet. Install it from{" "}
-        <a href="/settings/github" className="text-sky-700 hover:underline dark:text-sky-300">
-          the GitHub settings page
-        </a>
-        , then come back.
+        <AppLink href="/settings/github">the GitHub settings page</AppLink>, then come back.
       </p>
     );
   }

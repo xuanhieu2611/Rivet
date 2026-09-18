@@ -2,6 +2,7 @@ import type { JobDetail, ValidationOutcome } from "@rivet/contracts";
 
 import { ValidationOutcomeBadge } from "@/components/validation-outcome-badge";
 import { Button } from "@/components/ui/button";
+import { ExternalLink } from "@/components/ui/link";
 import { RelativeTime } from "@/components/relative-time";
 import { type DiffStats, formatDiffStats } from "@/lib/diff-stats";
 import { formatElapsed } from "@/lib/format";
@@ -89,14 +90,9 @@ export function JobResultHeader({ job, diffStats, validationOutcome }: JobResult
         {job.issueUrl || job.issueNumber !== null ? (
           <Fact label="Issue">
             {job.issueUrl ? (
-              <a
-                href={job.issueUrl}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="text-sky-700 underline-offset-2 hover:underline dark:text-sky-300"
-              >
+              <ExternalLink href={job.issueUrl}>
                 {job.issueNumber === null ? "View issue" : `#${String(job.issueNumber)}`}
-              </a>
+              </ExternalLink>
             ) : (
               `#${String(job.issueNumber)}`
             )}
