@@ -1,9 +1,11 @@
 import "server-only";
 
 import { countEvaluationOutcomes, listEvaluationRuns, listEvaluationSuites } from "@rivet/core";
+import { SquareActivity } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { EmptyState } from "@/components/empty-state";
 import { RelativeTime } from "@/components/relative-time";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -56,14 +58,11 @@ export default async function EvaluationsPage() {
       </div>
 
       {suites.length === 0 ? (
-        <div className="border-border rounded-xl border border-dashed px-6 py-16 text-center">
-          <h2 className="text-base font-medium">Nothing measured yet</h2>
-          <p className="text-muted-foreground mx-auto mt-2 max-w-md text-sm">
-            Suites are started from the command line - <code>pnpm eval:run</code>, after{" "}
-            <code>pnpm eval:build</code>. Try <code>pnpm eval:run --dry-run</code> first: it prints
-            the case x arm x repetition matrix without creating a job or spending anything.
-          </p>
-        </div>
+        <EmptyState icon={SquareActivity} title="Nothing measured yet">
+          Suites are started from the command line - <code>pnpm eval:run</code>, after{" "}
+          <code>pnpm eval:build</code>. Try <code>pnpm eval:run --dry-run</code> first: it prints
+          the case x arm x repetition matrix without creating a job or spending anything.
+        </EmptyState>
       ) : (
         <div className="border-border overflow-hidden rounded-xl border">
           <Table>

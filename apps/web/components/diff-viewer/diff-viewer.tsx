@@ -14,6 +14,7 @@ import {
   type DiffFileKind,
   type ParsedDiffArtifact,
 } from "@/components/diff-viewer/parse-diff-artifact";
+import { Disclosure } from "@/components/ui/disclosure";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -93,16 +94,27 @@ function FileDiff({ file, collapsed }: { file: DiffFile; collapsed: boolean }) {
   const path = displayPath(file);
   const [open, setOpen] = useState(!collapsed);
   return (
-    <details
-      className="group overflow-hidden rounded-md border bg-background"
+    <Disclosure
+      className="bg-background border-border overflow-hidden rounded-md"
+      summaryClassName="px-3 py-2 text-xs"
+      contentClassName="border-t p-0"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
       data-diff-file={path}
       data-diff-kind={file.kind}
       data-diff-collapsed={collapsed ? "true" : "false"}
       data-diff-incomplete={file.incomplete ? "true" : "false"}
-    >
-      <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-3 py-2 text-xs [&::-webkit-details-marker]:hidden">
+      trailing={
+        file.kind === "binary" || file.kind === "mode" ? null : (
+          <span className="text-muted-foreground flex items-baseline gap-2 font-mono text-xs">
+            <span className="text-emerald-700 dark:text-emerald-300">
+              +{String(file.insertions)}
+            </span>
+            <span className="text-red-700 dark:text-red-300">-{String(file.deletions)}</span>
+          </span>
+        )
+      }
+      summary={
         <div className="flex min-w-0 flex-wrap items-baseline gap-2">
           <KindBadge kind={file.kind} />
           <code className="truncate font-mono text-xs">{path}</code>
@@ -112,24 +124,10 @@ function FileDiff({ file, collapsed }: { file: DiffFile; collapsed: boolean }) {
             </span>
           ) : null}
         </div>
-        <div className="text-muted-foreground flex items-baseline gap-2 font-mono">
-          {file.kind === "binary" || file.kind === "mode" ? null : (
-            <>
-              <span className="text-emerald-700 dark:text-emerald-300">
-                +{String(file.insertions)}
-              </span>
-              <span className="text-red-700 dark:text-red-300">-{String(file.deletions)}</span>
-            </>
-          )}
-          <span aria-hidden className="transition-transform group-open:rotate-180">
-            ▾
-          </span>
-        </div>
-      </summary>
-      <div className="border-t">
-        <FileBody file={file} />
-      </div>
-    </details>
+      }
+    >
+      <FileBody file={file} />
+    </Disclosure>
   );
 }
 

@@ -1,4 +1,58 @@
 import type { FailureCategory, JobEventType, JobStatus } from "@rivet/contracts";
+import {
+  ArrowRight,
+  Ban,
+  Bot,
+  Camera,
+  Check,
+  CircleAlert,
+  CircleCheck,
+  CircleSlash,
+  CircleX,
+  ClipboardList,
+  Clock,
+  Code,
+  Coins,
+  Container,
+  Cpu,
+  Eye,
+  EyeOff,
+  FilePlus2,
+  FileText,
+  FlaskConical,
+  Gauge,
+  GitBranch,
+  GitCommitHorizontal,
+  GitFork,
+  GitPullRequest,
+  GitCompare,
+  GitCompareArrows,
+  GitPullRequestArrow,
+  History,
+  Inbox,
+  Link2,
+  ListChecks,
+  MessageSquare,
+  Microscope,
+  OctagonAlert,
+  Package,
+  PenLine,
+  Play,
+  Receipt,
+  Repeat,
+  RotateCcw,
+  ScrollText,
+  ShieldAlert,
+  SkipForward,
+  SquareTerminal,
+  Terminal,
+  Trash2,
+  TriangleAlert,
+  Unplug,
+  Upload,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 
 /**
  * Presentation metadata for the job lifecycle.
@@ -9,73 +63,84 @@ import type { FailureCategory, JobEventType, JobStatus } from "@rivet/contracts"
  *
  * The `Record<JobStatus, ...>` type is the enforcement mechanism - adding a
  * fifteenth status to the contract breaks `pnpm typecheck` here until it has a
- * label and a colour.
+ * label, a tone and an icon.
  */
+
+/**
+ * What a badge is asking the reader to conclude.
+ *
+ * Three readings, plus the absence of one. The palette used to spread fourteen
+ * statuses over teal, sky, emerald, red, amber and orange, and at the twenty
+ * pixels a badge actually occupies the first three were the same colour - so
+ * the hue carried a phase distinction nobody could see and no reader had a
+ * model for. Phase is now carried by the label, by the icon and by the stepper,
+ * all three of which say it in words or in shape rather than in a shade of
+ * blue-green.
+ */
+export type StatusTone =
+  /** Nothing is happening and nothing went wrong: queued, or cancelled. */
+  | "idle"
+  /** Working. The one accent, plus motion. */
+  | "progress"
+  /** It worked. */
+  | "success"
+  /** It did not work, whatever the reason. */
+  | "attention";
+
+/**
+ * The surface for each tone.
+ *
+ * `progress` reads as the product's own accent rather than as a fourth hue,
+ * because a running job is the thing the page is about. `attention` covers
+ * `failed`, `budget_exceeded` and `timed_out` alike: they differ in cause, not
+ * in what the reader should do about them, and the label already says which.
+ */
+export const STATUS_TONE_CLASSNAME: Record<StatusTone, string> = {
+  idle: "border-border bg-muted text-muted-foreground",
+  progress: "border-primary/30 bg-primary/10 text-primary",
+  success: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  attention: "border-destructive/30 bg-destructive/10 text-destructive",
+};
+
 export interface StatusPresentation {
   /** Human-readable label shown in the badge. */
   label: string;
-  /** Tailwind classes for the badge surface. One mapping, used everywhere. */
+  /** Which of the three readings this status is. */
+  tone: StatusTone;
+  /** One glyph, always paired with the label and never the only affordance. */
+  icon: LucideIcon;
+  /** Tailwind classes for the badge surface, derived from the tone. */
   className: string;
 }
 
+function presentation(label: string, tone: StatusTone, icon: LucideIcon): StatusPresentation {
+  return { label, tone, icon, className: STATUS_TONE_CLASSNAME[tone] };
+}
+
 export const JOB_STATUS_PRESENTATION: Record<JobStatus, StatusPresentation> = {
-  queued: {
-    label: "Queued",
-    className: "border-border bg-muted text-muted-foreground",
-  },
-  provisioning: {
-    label: "Provisioning",
-    className: "border-teal-600/30 bg-teal-500/10 text-teal-800 dark:text-teal-200",
-  },
-  analyzing: {
-    label: "Analyzing",
-    className: "border-teal-600/30 bg-teal-500/10 text-teal-800 dark:text-teal-200",
-  },
-  planning: {
-    label: "Planning",
-    className: "border-teal-600/30 bg-teal-500/10 text-teal-800 dark:text-teal-200",
-  },
-  implementing: {
-    label: "Implementing",
-    className: "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  testing: {
-    label: "Testing",
-    className: "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  reviewing: {
-    label: "Reviewing",
-    className: "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  revising: {
-    label: "Revising",
-    className: "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  finalizing: {
-    label: "Finalizing",
-    className: "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  },
-  completed: {
-    label: "Completed",
-    className: "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  },
-  failed: {
-    label: "Failed",
-    className: "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300",
-  },
-  cancelled: {
-    label: "Cancelled",
-    className: "border-border bg-muted text-muted-foreground",
-  },
-  budget_exceeded: {
-    label: "Budget exceeded",
-    className: "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  },
-  timed_out: {
-    label: "Timed out",
-    className: "border-orange-500/25 bg-orange-500/10 text-orange-700 dark:text-orange-300",
-  },
+  queued: presentation("Queued", "idle", Clock),
+  provisioning: presentation("Provisioning", "progress", Container),
+  analyzing: presentation("Analyzing", "progress", Microscope),
+  planning: presentation("Planning", "progress", ListChecks),
+  implementing: presentation("Implementing", "progress", Code),
+  testing: presentation("Testing", "progress", FlaskConical),
+  // An eye, because the reviewer's read-only-ness is a capability boundary
+  // rather than a convention: it holds `list_files`, `read`, `search_text` and
+  // `submit_review`, and nothing that writes.
+  reviewing: presentation("Reviewing", "progress", Eye),
+  revising: presentation("Revising", "progress", RotateCcw),
+  finalizing: presentation("Finalizing", "progress", GitPullRequest),
+  completed: presentation("Completed", "success", CircleCheck),
+  failed: presentation("Failed", "attention", CircleX),
+  cancelled: presentation("Cancelled", "idle", Ban),
+  budget_exceeded: presentation("Budget exceeded", "attention", CircleAlert),
+  timed_out: presentation("Timed out", "attention", CircleAlert),
 };
+
+/** Whether a status should render with motion. */
+export function isProgressStatus(status: JobStatus): boolean {
+  return JOB_STATUS_PRESENTATION[status].tone === "progress";
+}
 
 export function statusLabel(status: JobStatus): string {
   return JOB_STATUS_PRESENTATION[status].label;
@@ -122,7 +187,7 @@ export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
 };
 
 /**
- * Marker colour for each kind of timeline entry.
+ * Marker colour and glyph for each kind of timeline entry.
  *
  * Same enforcement mechanism as the status table above, for the same reason:
  * `JOB_EVENT_TYPES` grows every milestone, and a total `Record` means a new
@@ -130,82 +195,137 @@ export const FAILURE_CATEGORY_LABELS: Record<FailureCategory, string> = {
  * should read. The grouping is by what the reader needs to notice - an ending,
  * something going wrong, something being retried, or ordinary progress - not by
  * which subsystem emitted it.
+ *
+ * The glyph is what makes a two-hundred-row log scannable: colour says whether
+ * to stop, and the icon says what happened, which is a distinction eight
+ * shades of blue-green were never going to carry. Teal and sky collapsed into
+ * the one accent here for the same reason they collapsed in the status badge -
+ * at marker size they were the same colour, so the difference between them was
+ * information nobody could read.
  */
-export const JOB_EVENT_TONE: Record<JobEventType, string> = {
-  "job.created": "bg-muted-foreground/40",
-  "job.enqueued": "bg-muted-foreground/40",
-  "job.enqueue_failed": "bg-amber-500",
-  "job.claimed": "bg-teal-500",
-  "job.status_changed": "bg-sky-500",
-  "phase.started": "bg-sky-500",
-  "phase.completed": "bg-sky-500/40",
-  "job.cancel_requested": "bg-amber-500",
-  "job.retry_scheduled": "bg-amber-500",
-  "job.reclaimed": "bg-amber-500",
-  "job.lease_lost": "bg-amber-500",
-  "job.failed": "bg-red-500",
-  "job.completed": "bg-emerald-500",
-  "sandbox.created": "bg-teal-500",
-  "sandbox.destroyed": "bg-muted-foreground/40",
-  "sandbox.resources_recorded": "bg-teal-500",
-  "repo.cloned": "bg-sky-500",
-  "deps.installed": "bg-sky-500",
-  "command.started": "bg-sky-500",
-  "command.completed": "bg-sky-500/40",
-  "command.failed": "bg-red-500",
-  "baseline.check_recorded": "bg-sky-500/40",
-  "baseline.recorded": "bg-sky-500",
+export interface EventMarker {
+  /** One glyph, in the marker column. Never the only signal - the row says it in words too. */
+  icon: LucideIcon;
+  /** The dot surface, for the collapsed command-group rows that still use one. */
+  dot: string;
+  /** The glyph colour. A literal, because Tailwind scans source rather than runtime strings. */
+  text: string;
+}
+
+function marker(icon: LucideIcon, dot: string, text: string): EventMarker {
+  return { icon, dot, text };
+}
+
+export const JOB_EVENT_MARKER: Record<JobEventType, EventMarker> = {
+  "job.created": marker(FilePlus2, "bg-muted-foreground/40", "text-muted-foreground/60"),
+  "job.enqueued": marker(Inbox, "bg-muted-foreground/40", "text-muted-foreground/60"),
+  "job.enqueue_failed": marker(TriangleAlert, "bg-amber-500", "text-amber-600 dark:text-amber-400"),
+  "job.claimed": marker(Cpu, "bg-progress", "text-progress"),
+  "job.status_changed": marker(ArrowRight, "bg-progress", "text-progress"),
+  "phase.started": marker(Play, "bg-progress", "text-progress"),
+  "phase.completed": marker(Check, "bg-progress/40", "text-progress/70"),
+  "job.cancel_requested": marker(Ban, "bg-amber-500", "text-amber-600 dark:text-amber-400"),
+  "job.retry_scheduled": marker(RotateCcw, "bg-amber-500", "text-amber-600 dark:text-amber-400"),
+  "job.reclaimed": marker(Repeat, "bg-amber-500", "text-amber-600 dark:text-amber-400"),
+  "job.lease_lost": marker(Unplug, "bg-amber-500", "text-amber-600 dark:text-amber-400"),
+  "job.failed": marker(CircleX, "bg-red-500", "text-destructive"),
+  "job.completed": marker(CircleCheck, "bg-emerald-500", "text-emerald-600 dark:text-emerald-400"),
+  "sandbox.created": marker(Container, "bg-progress", "text-progress"),
+  "sandbox.destroyed": marker(Trash2, "bg-muted-foreground/40", "text-muted-foreground/60"),
+  "sandbox.resources_recorded": marker(Gauge, "bg-progress", "text-progress"),
+  "repo.cloned": marker(GitFork, "bg-progress", "text-progress"),
+  "deps.installed": marker(Package, "bg-progress", "text-progress"),
+  "command.started": marker(Terminal, "bg-progress", "text-progress"),
+  "command.completed": marker(Terminal, "bg-progress/40", "text-progress/70"),
+  "command.failed": marker(SquareTerminal, "bg-red-500", "text-destructive"),
+  "baseline.check_recorded": marker(ClipboardList, "bg-progress/40", "text-progress/70"),
+  "baseline.recorded": marker(ClipboardList, "bg-progress", "text-progress"),
   // The agent's own entries read as progress, because that is what they are.
   // Only the two that end something get a colour of their own, and a tool call
   // that errored is deliberately not one of them: the model reads the error and
   // tries something else, which is the loop working rather than failing.
-  "agent.session_started": "bg-teal-500",
-  "agent.turn_started": "bg-sky-500/40",
-  "agent.turn_completed": "bg-sky-500/40",
-  "agent.message": "bg-sky-500",
-  "agent.tool_started": "bg-sky-500",
-  "agent.tool_completed": "bg-sky-500/40",
-  "agent.usage": "bg-muted-foreground/40",
-  "agent.session_ended": "bg-muted-foreground/40",
-  "agent.budget_exceeded": "bg-amber-500",
+  "agent.session_started": marker(Bot, "bg-progress", "text-progress"),
+  "agent.turn_started": marker(MessageSquare, "bg-progress/40", "text-progress/70"),
+  "agent.turn_completed": marker(MessageSquare, "bg-progress/40", "text-progress/70"),
+  "agent.message": marker(MessageSquare, "bg-progress", "text-progress"),
+  "agent.tool_started": marker(Wrench, "bg-progress", "text-progress"),
+  "agent.tool_completed": marker(Wrench, "bg-progress/40", "text-progress/70"),
+  "agent.usage": marker(Coins, "bg-muted-foreground/40", "text-muted-foreground/60"),
+  "agent.session_ended": marker(Bot, "bg-muted-foreground/40", "text-muted-foreground/60"),
+  "agent.budget_exceeded": marker(
+    CircleAlert,
+    "bg-amber-500",
+    "text-amber-600 dark:text-amber-400",
+  ),
   // A deferred plan is deliberately quiet: it says a phase decided to do
   // nothing, which is the opposite of something the reader needs to notice.
-  "plan.deferred": "bg-muted-foreground/40",
-  "artifact.recorded": "bg-teal-500",
-  "validation.check_recorded": "bg-sky-500/40",
+  "plan.deferred": marker(SkipForward, "bg-muted-foreground/40", "text-muted-foreground/60"),
+  "artifact.recorded": marker(FileText, "bg-progress", "text-progress"),
+  // A comparison glyph rather than a tick, for the same reason the colour is
+  // neutral: `verified` and `regressed` are the same event type, and an icon
+  // that said "passed" would be wrong half the time.
+  "validation.check_recorded": marker(GitCompare, "bg-progress/40", "text-progress/70"),
   // Neutral rather than green or red, because the outcome is in the payload:
   // `regressed` and `fixed` are the same event type. Stage 7 colours the row
   // by `data.validation`; the marker only says the comparison happened.
-  "validation.recorded": "bg-sky-500",
+  "validation.recorded": marker(GitCompareArrows, "bg-progress", "text-progress"),
   // The closing line, and the only entry a reader who scrolled to the bottom
-  // needs. Teal rather than green for the same reason `validation.recorded`
-  // is not green: this row states an outcome, and `job.completed` is the one
-  // that says the outcome was a good one.
-  "run.summarized": "bg-teal-500",
-  "plan.recorded": "bg-teal-500",
-  "checkpoint.created": "bg-teal-500",
-  "checkpoint.restored": "bg-emerald-500",
-  "checkpoint.rejected": "bg-red-500",
-  "run.resumed": "bg-amber-500",
+  // needs. The accent rather than green, for the same reason
+  // `validation.recorded` is not green: this row states an outcome, and
+  // `job.completed` is the one that says the outcome was a good one.
+  "run.summarized": marker(ScrollText, "bg-progress", "text-progress"),
+  "plan.recorded": marker(ListChecks, "bg-progress", "text-progress"),
+  "checkpoint.created": marker(Camera, "bg-progress", "text-progress"),
+  "checkpoint.restored": marker(
+    History,
+    "bg-emerald-500",
+    "text-emerald-600 dark:text-emerald-400",
+  ),
+  "checkpoint.rejected": marker(CircleX, "bg-red-500", "text-destructive"),
+  "run.resumed": marker(Play, "bg-amber-500", "text-amber-600 dark:text-amber-400"),
   // Neutral for the same reason `validation.recorded` is neutral: `approve` and
   // `revise` are the same event type and the verdict is in the payload.
-  "review.recorded": "bg-teal-500",
+  "review.recorded": marker(Eye, "bg-progress", "text-progress"),
   // The row that makes a looping timeline readable. Amber because it is the
   // marker that explains why a second `testing` block follows a first one.
-  "review.revision_requested": "bg-amber-500",
-  "review.limit_reached": "bg-red-500",
+  "review.revision_requested": marker(
+    PenLine,
+    "bg-amber-500",
+    "text-amber-600 dark:text-amber-400",
+  ),
+  "review.limit_reached": marker(OctagonAlert, "bg-red-500", "text-destructive"),
   // A run that asked for no review is not a run whose reviewer said nothing,
   // and the timeline should be quiet about the difference rather than loud.
-  "review.skipped": "bg-muted-foreground/40",
+  "review.skipped": marker(EyeOff, "bg-muted-foreground/40", "text-muted-foreground/60"),
   // Publication events are progress markers; their payload carries the
   // branch, receipt, or pull request details shown by the M9 timeline work.
-  "github.repository_bound": "bg-teal-500",
-  "branch.created": "bg-teal-500",
-  "commit.created": "bg-sky-500",
-  "push.completed": "bg-emerald-500",
-  "pull_request.opened": "bg-emerald-500",
-  "pull_request.adopted": "bg-emerald-500",
-  "publication.skipped": "bg-muted-foreground/40",
-  "external_effect.recorded": "bg-teal-500",
-  "security.injection_suspected": "bg-amber-500",
+  "github.repository_bound": marker(Link2, "bg-progress", "text-progress"),
+  "branch.created": marker(GitBranch, "bg-progress", "text-progress"),
+  "commit.created": marker(GitCommitHorizontal, "bg-progress", "text-progress"),
+  "push.completed": marker(Upload, "bg-emerald-500", "text-emerald-600 dark:text-emerald-400"),
+  "pull_request.opened": marker(
+    GitPullRequest,
+    "bg-emerald-500",
+    "text-emerald-600 dark:text-emerald-400",
+  ),
+  "pull_request.adopted": marker(
+    GitPullRequestArrow,
+    "bg-emerald-500",
+    "text-emerald-600 dark:text-emerald-400",
+  ),
+  "publication.skipped": marker(CircleSlash, "bg-muted-foreground/40", "text-muted-foreground/60"),
+  "external_effect.recorded": marker(Receipt, "bg-progress", "text-progress"),
+  "security.injection_suspected": marker(
+    ShieldAlert,
+    "bg-amber-500",
+    "text-amber-600 dark:text-amber-400",
+  ),
 };
+
+/**
+ * The dot surface alone, which is what the command-group and tool rows pass
+ * around when they override the marker for a failure.
+ */
+export const JOB_EVENT_TONE: Record<JobEventType, string> = Object.fromEntries(
+  Object.entries(JOB_EVENT_MARKER).map(([type, { dot }]) => [type, dot]),
+) as Record<JobEventType, string>;

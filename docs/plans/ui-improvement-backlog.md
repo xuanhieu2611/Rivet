@@ -115,80 +115,130 @@ deliberately left out.
 
 ## Tier 2 - coherence pass
 
+**Done.** All seven shipped together. Two items asked for a decision first and got one: the accent
+is **teal** (`--primary`), and the footer carries version, docs and source rather than nothing.
+
 ### 6. One disclosure component
 
-- [ ] **Problem.** Nine raw `<details>` blocks hand-roll the same surface with copy-pasted classes
+- [x] **Problem.** Nine raw `<details>` blocks hand-rolled the same surface with copy-pasted classes
       and a literal `▾` text character as the chevron.
-- [ ] **Where.** `app/(app)/jobs/[id]/page.tsx:157` and `:259`,
+- [x] **Where.** `app/(app)/jobs/[id]/page.tsx:157` and `:259`,
       `components/validation-panel.tsx:115` and `:157`, `components/execution-timeline.tsx:236` and
       `:485`, plus the rest.
-- [ ] **What to build.** One `components/ui/disclosure.tsx` wrapping the pattern, with a lucide
+- [x] **What to build.** One `components/ui/disclosure.tsx` wrapping the pattern, with a lucide
       `ChevronDown` and a single rotation transition. Replace all nine call sites.
-- [ ] **Done when.** Every collapsible section in the app opens the same way and
+- [x] **Done when.** Every collapsible section in the app opens the same way and
       `grep -c "<details"` over `app` and `components` returns 0 outside the new component.
+- [x] **Built as.** `components/ui/disclosure.tsx`, with a `trailing` slot because the chevron is
+      not always last in the summary row - a command header ends with an outcome and a duration, a
+      file diff with its insertion counts, and those sit in the same flex group as the chevron
+      rather than in the summary. The grep is a test rather than a thing to remember:
+      `components/ui/disclosure.test.ts` walks every `.ts`/`.tsx` under `app` and `components` and
+      fails on any authored `<details`.
 
 ### 7. Use the icon library that is already installed
 
-- [ ] **Problem.** `lucide-react` is a dependency and its only import in the whole app is inside
+- [x] **Problem.** `lucide-react` is a dependency and its only import in the whole app is inside
       `components/ui/sonner.tsx`. Nav, status badges, timeline rows, empty states and buttons are
       all text-only.
-- [ ] **What to build.** A restrained pass: status glyphs on `StatusBadge`, event-kind icons in the
+- [x] **What to build.** A restrained pass: status glyphs on `StatusBadge`, event-kind icons in the
       timeline, an external-link arrow on `ExternalLink`, icons on the four nav items, an icon in
       each empty state.
-- [ ] **Watch out for.** Restraint is the point. One icon per row maximum, always paired with text,
+- [x] **Watch out for.** Restraint is the point. One icon per row maximum, always paired with text,
       never as the only affordance.
-- [ ] **Done when.** The timeline and the jobs list can be scanned without reading every word.
+- [x] **Done when.** The timeline and the jobs list can be scanned without reading every word.
+- [x] **Built as.** `JOB_EVENT_MARKER` replaces `JOB_EVENT_TONE` as the authored record - still a
+      total `Record<JobEventType, ...>`, now carrying a glyph alongside two colour literals, with
+      `JOB_EVENT_TONE` derived from it so a new event type still breaks `pnpm typecheck` until
+      somebody decides how it reads. `JOB_STATUS_PRESENTATION` grew an `icon`. Both colours are
+      literals rather than a runtime `bg-` to `text-` rewrite, because Tailwind scans source and
+      would never generate a class it has not seen. The nav's labels are `sr-only sm:not-sr-only`
+      rather than `hidden sm:inline`: a nav that collapses to bare glyphs on a phone leaves the link
+      with no accessible name at all.
+- [x] **Also.** `components/empty-state.tsx` replaces the dashed box three pages spelled themselves.
 
 ### 8. A link token instead of six hardcoded sky pairs
 
-- [ ] **Problem.** `text-sky-700 dark:text-sky-300` is hardcoded in six places
+- [x] **Problem.** `text-sky-700 dark:text-sky-300` is hardcoded in six places
       (`app/(app)/jobs/[id]/page.tsx:346`, `components/execution-timeline.tsx:342` and `:423`,
       `components/github/repository-picker.tsx:185`, and others). It is not a token, and it competes
       with the real accent, `--primary` (teal, `oklch(0.4 0.09 185)`), which the app shell barely
       uses outside buttons and one eight-pixel dot.
-- [ ] **Files.** `app/globals.css` for the token, a new shared `ExternalLink` / `A` primitive, then
+- [x] **Files.** `app/globals.css` for the token, a new shared `ExternalLink` / `A` primitive, then
       every call site.
-- [ ] **Decide first.** Is the accent teal or sky? Commit to one and make the other unused.
-- [ ] **Done when.** No component spells a link color itself.
+- [x] **Decide first.** Is the accent teal or sky? Commit to one and make the other unused.
+- [x] **Decided.** Teal. `--link: var(--primary)` and `--progress: var(--primary)` are the two new
+      tokens; sky survives only in `components/diff-viewer/`, where it is syntax colour for hunk
+      headers rather than accent.
+- [x] **Done when.** No component spells a link color itself.
+- [x] **Built as.** `components/ui/link.tsx` exports `AppLink` (in-app, `next/link`), `ExternalLink`
+      (leaves Rivet, carries the arrow from item 7) and `AnchorLink` (same page). A test in
+      `lib/job-status.test.ts` fails on any `sky-` or `teal-` literal reaching a timeline marker.
 
 ### 9. Collapse the status palette
 
-- [ ] **Problem.** `lib/job-status.ts` spreads fourteen statuses across teal, sky, emerald, red,
+- [x] **Problem.** `lib/job-status.ts` spreads fourteen statuses across teal, sky, emerald, red,
       amber and orange. At twenty-pixel badge height teal, sky and emerald are nearly
       indistinguishable, and the teal/sky split (provisioning-analyzing-planning against
       implementing-testing-reviewing) encodes a distinction users have no mental model for.
-- [ ] **What to build.** Three visual states: in progress (one accent plus motion), succeeded
+- [x] **What to build.** Three visual states: in progress (one accent plus motion), succeeded
       (green), needs attention (red or amber). Let the stepper from item 1 and the icon from item 7
       carry which phase it is.
-- [ ] **Keep.** The `Record<JobStatus, StatusPresentation>` shape, which is what makes a fifteenth
+- [x] **Keep.** The `Record<JobStatus, StatusPresentation>` shape, which is what makes a fifteenth
       status break `pnpm typecheck` until somebody gives it a treatment.
-- [ ] **Done when.** A glance at a badge answers good / bad / working, and the phase is read from
+- [x] **Done when.** A glance at a badge answers good / bad / working, and the phase is read from
       the label rather than the hue.
+- [x] **Built as.** A `StatusTone` of `idle | progress | success | attention`, with the fourteen
+      statuses mapping onto four surfaces in `STATUS_TONE_CLASSNAME` and the badge deriving its
+      classes from the tone rather than spelling them. `failed`, `budget_exceeded` and `timed_out`
+      all read as `attention`: they differ in cause, not in what the reader should do, and the label
+      already says which. Amber left the status palette entirely. Motion is `animate-pulse` on the
+      progress glyph, with `motion-reduce:animate-none`. A test asserts the surface count is four,
+      so a reviewer reaching for a fifth hue fails `pnpm test` rather than review.
 
 ### 10. Header: active state, identity, and a global create action
 
-- [ ] **Problem.** In `app/(app)/layout.tsx:20-45` the four nav items render identically whatever
+- [x] **Problem.** In `app/(app)/layout.tsx:20-45` the four nav items render identically whatever
       page you are on, "Sign out" carries the same weight as a destination, nothing says who you are
       signed in as, and "New job" is only reachable from `/jobs`.
-- [ ] **What to build.** Active-route styling on the nav. Sign out demoted into an avatar menu on
+- [x] **What to build.** Active-route styling on the nav. Sign out demoted into an avatar menu on
       the right showing the GitHub login. A primary "New job" button in the header.
-- [ ] **Done when.** You always know where you are, who you are, and how to start a job.
+- [x] **Done when.** You always know where you are, who you are, and how to start a job.
+- [x] **Built as.** `components/app-nav.tsx` is the only client code in the shell, and it is client
+      code for exactly one reason: `usePathname`. `readPageSessionLogin()` in
+      `lib/auth/page-guard.ts` supplies the login and is presentation only - it re-runs the same
+      owner comparison rather than trusting the signature, and returns `null` under `RIVET_AUTH=off`
+      so the header shows nothing rather than claiming an identity. `components/account-menu.tsx`
+      keeps sign out a real form POST, because the route answers 303 with the expired cookie on the
+      redirect response.
 
 ### 11. Replace the footer
 
-- [ ] **Problem.** `app/(app)/layout.tsx:51-56` puts release-notes prose in persistent chrome: "Jobs
+- [x] **Problem.** `app/(app)/layout.tsx:51-56` puts release-notes prose in persistent chrome: "Jobs
       run with real sandbox provisioning, baseline testing, validation, and sandbox-backed coding
       agent sessions when the worker is configured for Pi."
-- [ ] **What to build.** Either something useful (version, docs link, worker health) or nothing.
+- [x] **What to build.** Either something useful (version, docs link, worker health) or nothing.
+- [x] **Built as.** `lib/app-chrome.ts`, a pure function of an env object with no Next.js import and
+      no database read, giving `RIVET_SERVICE_VERSION` (the same value that becomes
+      `service.version` on every span), a docs link and a source link. Worker health was left out:
+      the footer is on every page, and a persistent liveness probe is a query per render for a fact
+      the job pages already answer.
 
 ### 12. Theme toggle
 
-- [ ] **Problem.** `app/layout.tsx:44` follows the OS only, by explicit design. The reasoning in
+- [x] **Problem.** `app/layout.tsx:44` follows the OS only, by explicit design. The reasoning in
       that comment is sound, but users expect the control and dark is the stronger of the two
       palettes.
-- [ ] **What to build.** A three-way toggle (system / light / dark) writing to `localStorage`, read
+- [x] **What to build.** A three-way toggle (system / light / dark) writing to `localStorage`, read
       by the existing inline pre-paint script. Keep the script inline and keep every page a server
       component - that is what the current design buys and it should survive.
+- [x] **Built as.** `lib/theme.ts` holds the script as a string and is the only place the decision
+      is made; the script installs a setter and `components/theme-toggle.tsx` calls it, so nothing
+      else ever touches the `dark` class. The current preference is read back off `data-theme` after
+      hydration rather than serialized into the server's HTML, which is what keeps a per-viewer
+      preference out of a server component's output. Every `localStorage` access is wrapped - a
+      private window makes the accessor throw, and falling through to the OS is the right answer
+      there anyway.
 
 ---
 
@@ -258,3 +308,6 @@ extending it is safe.
 
 1, 2, 5, 3, 4 first - those five change how the product feels to operate. Then Tier 2 as a single
 consistency pass. Tier 3 and 4 as you touch the pages.
+
+Tiers 1 and 2 are done. Tier 3 and 4 remain, plus the two Tier 1 leftovers noted under item 3
+(search, and pagination past `limit: 50`).
