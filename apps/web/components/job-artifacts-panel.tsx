@@ -34,7 +34,7 @@ export function JobArtifactsPanel({ artifacts, summary, diff }: JobArtifactsPane
   const stats = latestDiffStats(artifacts);
 
   return (
-    <Card id="artifacts" className="scroll-mt-24">
+    <Card id="artifacts" className="scroll-mt-32">
       <CardHeader>
         <CardTitle>Artifacts</CardTitle>
         <CardDescription>

@@ -99,43 +99,64 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           </EmptyState>
         )
       ) : (
-        <div className="border-border overflow-hidden rounded-xl border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Title</TableHead>
-                <TableHead>Repository</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Created</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {jobs.map((job) => (
-                <TableRow key={job.id}>
-                  <TableCell className="font-medium">
-                    <Link href={`/jobs/${job.id}`} className="hover:underline">
-                      {job.title}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground font-mono text-sm">
-                    {shortenRepoUrl(job.repoUrl)}
-                    <span> @ {job.baseBranch}</span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <LivePulse active={!isTerminal(job.status)} />
-                      <StatusBadge status={job.status} />
-                      <PhaseHint job={job} />
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-right text-sm whitespace-nowrap">
-                    <RelativeTime value={job.createdAt} />
-                  </TableCell>
+        <>
+          {/*
+           * Four columns do not survive a phone: they either overflow sideways
+           * or crush the title to two characters a row. Below `sm` the same
+           * rows render as cards, which is a different shape for the same data
+           * rather than a second source of it - both branches read `jobs`.
+           */}
+          <div className="border-border hidden overflow-hidden rounded-xl border sm:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Repository</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Created</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+              </TableHeader>
+              <TableBody>
+                {jobs.map((job) => (
+                  <TableRow key={job.id}>
+                    <TableCell className="font-medium">
+                      <Link href={`/jobs/${job.id}`} className="hover:underline">
+                        {job.title}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground font-mono text-sm">
+                      {shortenRepoUrl(job.repoUrl)}
+                      <span> @ {job.baseBranch}</span>
+                    </TableCell>
+                    <TableCell>
+                      <JobStatusCell job={job} />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-right text-sm whitespace-nowrap">
+                      <RelativeTime value={job.createdAt} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          <ul className="border-border divide-border/60 divide-y overflow-hidden rounded-xl border sm:hidden">
+            {jobs.map((job) => (
+              <li key={job.id}>
+                <Link href={`/jobs/${job.id}`} className="hover:bg-muted/40 block space-y-2 p-4">
+                  <p className="text-sm leading-snug font-medium">{job.title}</p>
+                  <JobStatusCell job={job} />
+                  <p className="text-muted-foreground truncate font-mono text-xs">
+                    {shortenRepoUrl(job.repoUrl)} @ {job.baseBranch}
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    <RelativeTime value={job.createdAt} />
+                  </p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
@@ -163,6 +184,17 @@ function JobFilterTabs({ active }: { active: JobFilter }) {
         );
       })}
     </nav>
+  );
+}
+
+/** Pulse, badge and position, in the one arrangement both layouts use. */
+function JobStatusCell({ job }: { job: JobSummary }) {
+  return (
+    <div className="flex items-center gap-2">
+      <LivePulse active={!isTerminal(job.status)} />
+      <StatusBadge status={job.status} />
+      <PhaseHint job={job} />
+    </div>
   );
 }
 

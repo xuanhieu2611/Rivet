@@ -12,7 +12,7 @@ export function ValidationPanel({ artifact }: { artifact: JobArtifact | null }) 
   const report = readValidationReport(artifact);
 
   return (
-    <Card id="validation" className="scroll-mt-24">
+    <Card id="validation" className="scroll-mt-32">
       <CardHeader className="border-b pb-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl space-y-1">
@@ -66,8 +66,15 @@ function ValidationCheckRow({ check }: { check: CheckComparison }) {
 
   return (
     <li className="bg-muted/10 px-3.5 py-3" data-check-kind={check.kind}>
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 sm:grid-cols-[minmax(9rem,1fr)_minmax(11rem,1fr)_auto]">
-        <div className="min-w-0">
+      {/*
+       * The count reflows below the name on a phone rather than disappearing.
+       * It used to be `hidden sm:block`, which meant the most important number
+       * in the panel - how many tests passed - was the one thing a phone never
+       * showed. Explicit placement on all three cells, because the badge has to
+       * stay on the first row while the count moves to the second.
+       */}
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(9rem,1fr)_minmax(11rem,1fr)_auto] sm:gap-y-0">
+        <div className="col-start-1 row-start-1 min-w-0">
           <h3 className="text-sm font-medium">{CHECK_KIND_LABELS[check.kind]}</h3>
           <p className="text-muted-foreground mt-0.5 text-xs">
             Baseline {baseline} · after {check.status.toLowerCase()}
@@ -75,7 +82,7 @@ function ValidationCheckRow({ check }: { check: CheckComparison }) {
           </p>
         </div>
 
-        <div className="hidden min-w-0 sm:block">
+        <div className="col-span-2 col-start-1 row-start-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-1">
           {check.tests ? (
             <p className="font-mono text-sm font-medium tabular-nums">
               {check.tests.passed}/{check.tests.total} passed
@@ -95,7 +102,9 @@ function ValidationCheckRow({ check }: { check: CheckComparison }) {
           ) : null}
         </div>
 
-        <ValidationOutcomeBadge outcome={check.outcome} />
+        <div className="col-start-2 row-start-1 justify-self-end sm:col-start-3">
+          <ValidationOutcomeBadge outcome={check.outcome} />
+        </div>
       </div>
 
       {check.attribution ? (

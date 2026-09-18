@@ -8,6 +8,7 @@ import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
 import { RelativeTime } from "@/components/relative-time";
 import { Badge } from "@/components/ui/badge";
+import { InlineCode } from "@/components/ui/inline-code";
 import {
   Table,
   TableBody,
@@ -59,51 +60,85 @@ export default async function EvaluationsPage() {
 
       {suites.length === 0 ? (
         <EmptyState icon={SquareActivity} title="Nothing measured yet">
-          Suites are started from the command line - <code>pnpm eval:run</code>, after{" "}
-          <code>pnpm eval:build</code>. Try <code>pnpm eval:run --dry-run</code> first: it prints
-          the case x arm x repetition matrix without creating a job or spending anything.
+          Suites are started from the command line - <InlineCode>pnpm eval:run</InlineCode>, after{" "}
+          <InlineCode>pnpm eval:build</InlineCode>. Try{" "}
+          <InlineCode>pnpm eval:run --dry-run</InlineCode> first: it prints the case x arm x
+          repetition matrix without creating a job or spending anything.
         </EmptyState>
       ) : (
-        <div className="border-border overflow-hidden rounded-xl border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Suite</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Matrix</TableHead>
-                <TableHead>Success</TableHead>
-                <TableHead className="text-right">Started</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map(({ suite, counts }) => (
-                <TableRow key={suite.id}>
-                  <TableCell className="font-medium">
-                    <Link href={`/evaluations/${suite.id}`} className="hover:underline">
-                      {suite.label}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={cn(suiteStatusClassName(suite.status))}>
+        <>
+          {/* Five columns on a phone is worse than four; same fallback as /jobs. */}
+          <div className="border-border hidden overflow-hidden rounded-xl border sm:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Suite</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Matrix</TableHead>
+                  <TableHead>Success</TableHead>
+                  <TableHead className="text-right">Started</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map(({ suite, counts }) => (
+                  <TableRow key={suite.id}>
+                    <TableCell className="font-medium">
+                      <Link href={`/evaluations/${suite.id}`} className="hover:underline">
+                        {suite.label}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={cn(suiteStatusClassName(suite.status))}>
+                        {suite.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {suite.caseIds.length} cases x {suite.arms.length} arms x {suite.repetitions}
+                      {" reps"}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <span className="font-medium">{formatSuccessRate(counts.successRate)}</span>{" "}
+                      <span className="text-muted-foreground">{formatSuccessFraction(counts)}</span>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap">
+                      <RelativeTime value={suite.startedAt} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          <ul className="border-border divide-border/60 divide-y overflow-hidden rounded-xl border sm:hidden">
+            {rows.map(({ suite, counts }) => (
+              <li key={suite.id}>
+                <Link
+                  href={`/evaluations/${suite.id}`}
+                  className="hover:bg-muted/40 block space-y-2 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="min-w-0 text-sm leading-snug font-medium">{suite.label}</p>
+                    <Badge
+                      variant="outline"
+                      className={cn("shrink-0", suiteStatusClassName(suite.status))}
+                    >
                       {suite.status}
                     </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {suite.caseIds.length} cases x {suite.arms.length} arms x {suite.repetitions}
-                    {" reps"}
-                  </TableCell>
-                  <TableCell className="text-sm">
+                  </div>
+                  <p className="text-sm">
                     <span className="font-medium">{formatSuccessRate(counts.successRate)}</span>{" "}
                     <span className="text-muted-foreground">{formatSuccessFraction(counts)}</span>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap">
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    {suite.caseIds.length} cases x {suite.arms.length} arms x {suite.repetitions}
+                    {" reps · "}
                     <RelativeTime value={suite.startedAt} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+                  </p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );

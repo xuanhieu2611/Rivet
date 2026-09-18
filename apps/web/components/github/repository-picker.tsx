@@ -4,6 +4,7 @@ import type { Installation, Issue, Repository } from "@rivet/contracts";
 import { useCallback, useEffect, useState } from "react";
 
 import { AppLink } from "@/components/ui/link";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { fetchInstallations, fetchIssues, fetchRepositories } from "@/lib/github/browser";
 
@@ -167,9 +168,7 @@ export function RepositoryPicker({
     );
   };
 
-  if (loading) {
-    return <p className="text-muted-foreground text-sm">Loading GitHub installations…</p>;
-  }
+  if (loading) return <PickerSkeleton />;
 
   if (installations === null) {
     return <p className="text-muted-foreground text-sm">{error ?? "GitHub is unavailable."}</p>;
@@ -265,6 +264,38 @@ export function RepositoryPicker({
 
 function repositoryKeyOf(repository: Repository): string {
   return `${repository.owner}/${repository.name}`;
+}
+
+/**
+ * The shape the three selects are about to take.
+ *
+ * A bare "Loading GitHub installations…" left the form a sentence tall and
+ * then grew three fields under it, pushing everything below down the moment
+ * GitHub answered. Two skeleton fields - Account is only rendered when there
+ * is more than one, so promising it would be a lie half the time - hold the
+ * height the real controls need.
+ */
+function PickerSkeleton() {
+  return (
+    <div className="space-y-4">
+      {/*
+       * The status text is the accessible version of this and is not inside
+       * the `aria-hidden` shapes: `aria-hidden` on an ancestor hides its whole
+       * subtree, and a nested `aria-hidden={false}` does not undo it.
+       */}
+      <p className="sr-only" role="status">
+        Loading GitHub installations…
+      </p>
+      <div aria-hidden className="space-y-4">
+        {["Repository", "Issue"].map((label) => (
+          <div key={label} className="space-y-2">
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className="h-8 w-full rounded-lg" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function PickerField({

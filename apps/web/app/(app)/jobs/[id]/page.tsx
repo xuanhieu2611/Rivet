@@ -15,6 +15,7 @@ import { LiveExecutionTimeline } from "@/components/job-live/live-execution-time
 import { ImplementationPlanPanel } from "@/components/implementation-plan-panel";
 import { JobArtifactsPanel } from "@/components/job-artifacts-panel";
 import { JobResultHeader } from "@/components/job-result-header";
+import { JobSectionNav } from "@/components/job-section-nav";
 import { PhaseStepper } from "@/components/job-live/phase-stepper";
 import { ReviewPanel } from "@/components/review-panel";
 import { ValidationPanel } from "@/components/validation-panel";
@@ -134,9 +135,17 @@ export default async function JobDetailPage({ params }: PageProps) {
 
         <JobSectionNav hasPullRequest={job.pullRequestUrl !== null} />
 
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        {/*
+         * `grid-cols-[minmax(0,1fr)]` at the base width, not just at `lg`.
+         * A single implicit grid column is sized `auto`, so the timeline
+         * card - which holds argv strings and commit shas - stretched the
+         * column to its own content and took the whole page 1010px wide on
+         * a 390px phone. Every panel inside already handles its own
+         * overflow; they were never given a bound to overflow against.
+         */}
+        <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <div className="space-y-6">
-            <Card id="timeline" className="scroll-mt-36">
+            <Card id="timeline" className="scroll-mt-32">
               <CardHeader className="border-b pb-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -163,7 +172,7 @@ export default async function JobDetailPage({ params }: PageProps) {
 
             <JobArtifactsPanel artifacts={artifactSummaries} summary={summary} diff={diff} />
 
-            <Card id="task" className="scroll-mt-24">
+            <Card id="task" className="scroll-mt-32">
               <CardHeader>
                 <CardTitle>Task</CardTitle>
               </CardHeader>
@@ -174,7 +183,7 @@ export default async function JobDetailPage({ params }: PageProps) {
 
             <Disclosure
               id="commands"
-              className="bg-card text-card-foreground ring-foreground/10 scroll-mt-24 overflow-hidden rounded-xl border-0 text-sm ring-1"
+              className="bg-card text-card-foreground ring-foreground/10 scroll-mt-32 overflow-hidden rounded-xl border-0 text-sm ring-1"
               summaryClassName="px-4 py-4"
               contentClassName="px-4 py-4"
               summary={
@@ -225,7 +234,7 @@ export default async function JobDetailPage({ params }: PageProps) {
               </CardContent>
             </Card>
 
-            <Card id="publication" className="scroll-mt-24">
+            <Card id="publication" className="scroll-mt-32">
               <CardHeader>
                 <CardTitle>Repository</CardTitle>
               </CardHeader>
@@ -346,34 +355,6 @@ export default async function JobDetailPage({ params }: PageProps) {
         </div>
       </div>
     </JobLiveProvider>
-  );
-}
-
-function JobSectionNav({ hasPullRequest }: { hasPullRequest: boolean }) {
-  const links = [
-    ["Live run", "#timeline"],
-    ["Plan", "#plan"],
-    ["Validation", "#validation"],
-    ["Review", "#review"],
-    ["Changes", "#artifacts"],
-    [hasPullRequest ? "Pull request" : "Repository", "#publication"],
-  ] as const;
-
-  return (
-    <nav
-      aria-label="Job sections"
-      className="border-border bg-card/70 flex gap-1 overflow-x-auto rounded-lg border p-1"
-    >
-      {links.map(([label, href]) => (
-        <a
-          key={href}
-          href={href}
-          className="hover:bg-muted focus-visible:ring-ring shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none"
-        >
-          {label}
-        </a>
-      ))}
-    </nav>
   );
 }
 

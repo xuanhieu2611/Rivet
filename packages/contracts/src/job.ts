@@ -30,6 +30,27 @@ export const JOB_STATUSES = [
 
 export const jobStatusSchema = z.enum(JOB_STATUSES);
 
+/**
+ * The budgets a job gets when the caller names none.
+ *
+ * These are Postgres column defaults, which makes them invisible to anything
+ * that has not inserted a row yet - including the create form, which wants to
+ * tell somebody what a run may cost before they spend it. They are mirrored
+ * here rather than re-derived, because `@rivet/database` is a type-only import
+ * in this package and a value import would put `pg` in a browser bundle.
+ * `job.test.ts` reads the real column defaults and fails on drift, the same
+ * arrangement the status enum has.
+ *
+ * They are ceilings, not estimates. A run that finishes in ninety seconds spent
+ * ninety seconds; these are where it is stopped instead.
+ */
+export const JOB_BUDGET_DEFAULTS = {
+  maxDurationSeconds: 3600,
+  maxCostUsd: "5.00",
+  maxModelCalls: 200,
+  maxToolCalls: 500,
+} as const;
+
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
 /** Statuses from which a job never transitions again - the live stream closes here. */
