@@ -8,6 +8,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { InlineCode } from "@/components/ui/inline-code";
 import { requirePageSession } from "@/lib/auth/page-guard";
 import { githubAccess } from "@/lib/github/client";
 import {
@@ -119,9 +120,13 @@ export default async function GitHubSettingsPage({ searchParams }: PageProps) {
           {installations.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               No installations yet.{" "}
-              {installUrl
-                ? "Install the App on an account, and GitHub sends you back here."
-                : "Set GITHUB_APP_SLUG to get an install link on this page."}
+              {installUrl ? (
+                "Install the App on an account, and GitHub sends you back here."
+              ) : (
+                <>
+                  Set <InlineCode>GITHUB_APP_SLUG</InlineCode> to get an install link on this page.
+                </>
+              )}
             </p>
           ) : (
             <ul className="divide-border/60 divide-y">

@@ -1,8 +1,10 @@
+import { jobs } from "@rivet/database/schema";
 import { describe, expect, it } from "vitest";
 
 import {
   createJobSchema,
   isTerminal,
+  JOB_BUDGET_DEFAULTS,
   JOB_STATUSES,
   jobStatusSchema,
   TERMINAL_STATUSES,
@@ -207,5 +209,26 @@ describe("isTerminal", () => {
 
   it("treats queued as non-terminal so the live stream remains open", () => {
     expect(isTerminal("queued")).toBe(false);
+  });
+});
+
+/**
+ * The same drift guard the status enum gets, one level down.
+ *
+ * `JOB_BUDGET_DEFAULTS` exists so a browser can name a ceiling without
+ * importing `pg`, which only works while the two agree. This is a test rather
+ * than a type-level assertion because a column default is a runtime value:
+ * TypeScript knows `maxDurationSeconds` is a number, not that it is 3600.
+ *
+ * The schema import is safe here for the reason the type-only one is safe in
+ * `job.ts`: it reaches `@rivet/database/schema`, which builds table definitions
+ * and opens nothing.
+ */
+describe("JOB_BUDGET_DEFAULTS", () => {
+  it("mirrors the job table's column defaults", () => {
+    expect(JOB_BUDGET_DEFAULTS.maxDurationSeconds).toBe(jobs.maxDurationSeconds.default);
+    expect(JOB_BUDGET_DEFAULTS.maxCostUsd).toBe(jobs.maxCostUsd.default);
+    expect(JOB_BUDGET_DEFAULTS.maxModelCalls).toBe(jobs.maxModelCalls.default);
+    expect(JOB_BUDGET_DEFAULTS.maxToolCalls).toBe(jobs.maxToolCalls.default);
   });
 });

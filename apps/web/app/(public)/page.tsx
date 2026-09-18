@@ -34,13 +34,20 @@ export default function LandingPage() {
               Point it at a repository. Rivet plans, edits, tests, reviews, and opens a pull
               request.
             </p>
+            {/*
+             * "See a run" leads. Sign-in is a dead end for everyone who is not
+             * the configured owner - one person - and making the primary CTA a
+             * door that refuses almost every reader is the worst use of the
+             * strongest position on the page. The run walkthrough is the thing
+             * this page is actually offering, and it is right here.
+             */}
             <div className="flex flex-wrap items-center gap-3">
-              <Link href="/sign-in" className="landing-cta">
-                Sign in
-              </Link>
-              <a href="#run" className="landing-cta-ghost">
+              <a href="#run" className="landing-cta">
                 See a run
               </a>
+              <Link href="/sign-in" className="landing-cta-ghost">
+                Sign in
+              </Link>
             </div>
           </div>
           <div className="landing-hero-asset relative aspect-[4/3] w-full overflow-hidden rounded-[var(--radius)]">

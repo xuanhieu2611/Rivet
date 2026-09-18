@@ -20,7 +20,7 @@ export function ImplementationPlanPanel({ artifact }: { artifact: JobArtifact | 
   const sections = readImplementationPlanSections(artifact);
 
   return (
-    <Card id="plan" className="scroll-mt-24">
+    <Card id="plan" className="scroll-mt-32">
       <CardHeader>
         <CardTitle>Implementation plan</CardTitle>
         <CardDescription>

@@ -2,6 +2,7 @@ import type { JobArtifact, JobDetail, ReviewDecision, ReviewIssue } from "@rivet
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { InlineCode } from "@/components/ui/inline-code";
 import { formatDateTime } from "@/lib/format";
 import {
   formatReviewConfidence,
@@ -39,7 +40,7 @@ export function ReviewPanel({
   const decision = report?.decision ?? job.reviewDecision;
 
   return (
-    <Card id="review" className="scroll-mt-24">
+    <Card id="review" className="scroll-mt-32">
       <CardHeader>
         <CardTitle>Independent review</CardTitle>
         <CardDescription>
@@ -216,9 +217,7 @@ function Finding({ issue }: { issue: ReviewIssue }) {
         <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Related paths">
           {issue.paths.map((path) => (
             <li key={path}>
-              <code className="rounded bg-background px-1.5 py-0.5 font-mono text-[11px] break-all">
-                {path}
-              </code>
+              <InlineCode className="text-[11px] break-all">{path}</InlineCode>
             </li>
           ))}
         </ul>
