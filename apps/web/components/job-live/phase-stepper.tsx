@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useMemo } from "react";
 
 import { formatCommandDuration } from "@/lib/format";
@@ -8,9 +8,27 @@ import { statusLabel } from "@/lib/job-status";
 import { cn } from "@/lib/utils";
 
 import { useJobLive } from "./job-live-provider";
-import { derivePhaseProgress, type PhaseSegment } from "./phase-progress";
+import { derivePhaseProgress, type PhaseSegment, type PhaseSegmentState } from "./phase-progress";
 
 const SEGMENT_FILL_TRANSITION = { duration: 0.45, ease: [0.23, 1, 0.32, 1] } as const;
+
+/**
+ * How long the newly active segment waits before it starts filling.
+ *
+ * An advance is one phase finishing and the next starting, and the two are
+ * legible as a handoff only if they happen in that order. Playing both at once
+ * reads as the whole bar twitching. The delay costs nothing on load, because
+ * mount is not animated at all.
+ */
+const SEGMENT_HANDOFF_DELAY = 0.3;
+
+const SEGMENT_FILL_WIDTH: Record<PhaseSegmentState, string> = {
+  pending: "0%",
+  active: "55%",
+  complete: "100%",
+};
+
+const STATUS_SWAP_TRANSITION = { duration: 0.22, ease: [0.23, 1, 0.32, 1] } as const;
 
 /**
  * Where the run is, as seven segments.
@@ -19,6 +37,12 @@ const SEGMENT_FILL_TRANSITION = { duration: 0.45, ease: [0.23, 1, 0.32, 1] } as 
  * renders - so it needs no second data path and no polling. Reading the log is
  * how you would otherwise answer "how far along is this", and reading a log is
  * work.
+ *
+ * Every fill is `initial={false}`: opening a job that is already four phases in
+ * paints those four filled and still, and only an advance that happens while
+ * somebody is watching moves. Replaying a run's history as animation on every
+ * load would make a page refresh indistinguishable from progress, which is the
+ * one thing this component exists to tell apart.
  */
 export function PhaseStepper() {
   const { events, status, timelineMotion } = useJobLive();
@@ -29,12 +53,17 @@ export function PhaseStepper() {
   }
 
   const { segments, completedCount, revisions } = progress;
+  const animate = !timelineMotion.reduceMotion;
 
   return (
     <section aria-label="Pipeline progress" className="space-y-2">
       <div className="flex items-baseline justify-between gap-4">
         <p className="text-muted-foreground text-xs">
-          <span className="text-foreground font-medium">{statusLabel(status)}</span>
+          <Swap
+            value={statusLabel(status)}
+            animate={animate}
+            className="text-foreground font-medium"
+          />
           {status === "queued" ? " · waiting for a worker" : null}
           {revisions > 0 ? (
             <span className="text-amber-700 dark:text-amber-300">
@@ -43,7 +72,7 @@ export function PhaseStepper() {
           ) : null}
         </p>
         <p className="text-muted-foreground text-xs tabular-nums">
-          {completedCount} of {segments.length} phases
+          <Swap value={String(completedCount)} animate={animate} /> of {segments.length} phases
         </p>
       </div>
 
@@ -53,13 +82,52 @@ export function PhaseStepper() {
             <Segment
               segment={segment}
               revisions={segment.status === "implementing" ? revisions : 0}
-              animate={!timelineMotion.reduceMotion}
+              animate={animate}
               pulse={timelineMotion.pulseActive}
             />
           </li>
         ))}
       </ol>
     </section>
+  );
+}
+
+/**
+ * One short string replacing another, rolling upward.
+ *
+ * Used for the phase word and for the completed count, which are the two pieces
+ * of text an advance changes. Neither is a quantity worth tweening - the count
+ * moves by exactly one and a fractional phase means nothing - so the motion is
+ * a swap in the direction the stepper travels rather than a counter.
+ */
+function Swap({
+  value,
+  animate,
+  className,
+}: {
+  value: string;
+  animate: boolean;
+  className?: string;
+}) {
+  if (!animate) {
+    return <span className={className}>{value}</span>;
+  }
+
+  return (
+    <span className="relative inline-flex">
+      <AnimatePresence initial={false} mode="popLayout">
+        <motion.span
+          key={value}
+          className={className}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={STATUS_SWAP_TRANSITION}
+        >
+          {value}
+        </motion.span>
+      </AnimatePresence>
+    </span>
   );
 }
 
@@ -82,42 +150,62 @@ function Segment({
   ]
     .filter((part) => part !== null)
     .join(" · ");
+  const width = SEGMENT_FILL_WIDTH[segment.state];
 
   return (
     <div className="group/segment space-y-1.5" title={title} data-phase-state={segment.state}>
       <div className="bg-muted relative h-1 w-full overflow-hidden rounded-full">
-        {segment.state === "pending" ? null : animate ? (
+        {animate ? (
           <motion.span
             className={cn(
-              "absolute inset-y-0 left-0 rounded-full",
+              "absolute inset-y-0 left-0 overflow-hidden rounded-full",
               segment.state === "complete" ? "bg-primary" : "bg-primary/70",
             )}
-            initial={{ width: "0%" }}
-            animate={{ width: segment.state === "complete" ? "100%" : "55%" }}
-            transition={SEGMENT_FILL_TRANSITION}
-          />
+            initial={false}
+            animate={{ width }}
+            transition={{
+              ...SEGMENT_FILL_TRANSITION,
+              delay: segment.state === "active" ? SEGMENT_HANDOFF_DELAY : 0,
+            }}
+          >
+            {/*
+             * A sweep rather than a throb, and inside the fill rather than
+             * over the whole segment. An opacity pulse on a four-pixel bar is
+             * barely visible and reads as a rendering glitch; a highlight
+             * travelling left to right says work is moving through here, and
+             * points the same direction the stepper advances. Over the unfilled
+             * remainder it would instead draw progress that has not happened.
+             */}
+            {segment.state === "active" && pulse ? (
+              <motion.span
+                aria-hidden
+                className="via-primary-foreground/45 absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent to-transparent"
+                initial={{ x: "-100%" }}
+                animate={{ x: ["-100%", "300%"] }}
+                transition={{
+                  duration: 1.6,
+                  repeat: Infinity,
+                  repeatDelay: 0.5,
+                  ease: "easeInOut",
+                  delay: SEGMENT_HANDOFF_DELAY,
+                }}
+              />
+            ) : null}
+          </motion.span>
         ) : (
           <span
             className={cn(
               "absolute inset-y-0 left-0 rounded-full",
-              segment.state === "complete" ? "w-full bg-primary" : "w-[55%] bg-primary/70",
+              segment.state === "complete" ? "bg-primary" : "bg-primary/70",
             )}
+            style={{ width }}
           />
         )}
-
-        {segment.state === "active" && animate && pulse ? (
-          <motion.span
-            aria-hidden
-            className="bg-primary/30 absolute inset-y-0 left-0 w-full rounded-full"
-            animate={{ opacity: [0.15, 0.5, 0.15] }}
-            transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-          />
-        ) : null}
       </div>
 
       <p
         className={cn(
-          "truncate text-[11px] leading-tight",
+          "truncate text-[11px] leading-tight transition-colors duration-300 motion-reduce:transition-none",
           segment.state === "active"
             ? "text-foreground font-medium"
             : segment.state === "complete"
