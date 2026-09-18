@@ -2,6 +2,7 @@ import type { ArtifactType, JobArtifact, JobArtifactSummary } from "@rivet/contr
 
 import { DiffViewer } from "@/components/diff-viewer/diff-viewer";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatDiffStats, latestDiffStats } from "@/lib/diff-stats";
 import { formatBytes, formatDateTime } from "@/lib/format";
 
 const ARTIFACT_LABELS: Record<ArtifactType, string> = {
@@ -30,8 +31,7 @@ interface JobArtifactsPanelProps {
  * timeline payload or the browser's live reducer.
  */
 export function JobArtifactsPanel({ artifacts, summary, diff }: JobArtifactsPanelProps) {
-  const diffStat = latestArtifactOfType(artifacts, "diff_stat");
-  const stats = diffStat ? readDiffStats(diffStat.metadata) : null;
+  const stats = latestDiffStats(artifacts);
 
   return (
     <Card id="artifacts" className="scroll-mt-24">
@@ -154,42 +154,4 @@ function ArtifactMeta({ artifact }: { artifact: JobArtifact }) {
       ) : null}
     </div>
   );
-}
-
-function latestArtifactOfType(
-  artifacts: readonly JobArtifactSummary[],
-  type: ArtifactType,
-): JobArtifactSummary | null {
-  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
-    const artifact = artifacts[index];
-    if (artifact?.type === type) return artifact;
-  }
-  return null;
-}
-
-interface DiffStats {
-  filesChanged: number;
-  insertions: number;
-  deletions: number;
-}
-
-function readDiffStats(metadata: Record<string, unknown> | null): DiffStats | null {
-  if (!metadata) return null;
-  const filesChanged = nonNegativeInteger(metadata.filesChanged);
-  const insertions = nonNegativeInteger(metadata.insertions);
-  const deletions = nonNegativeInteger(metadata.deletions);
-  if (filesChanged === null || insertions === null || deletions === null) return null;
-  return { filesChanged, insertions, deletions };
-}
-
-function nonNegativeInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
-function formatDiffStats(stats: DiffStats): string {
-  return `${plural(stats.filesChanged, "file")} changed, +${String(stats.insertions)}/-${String(stats.deletions)}`;
-}
-
-function plural(count: number, noun: string): string {
-  return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
