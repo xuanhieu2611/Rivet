@@ -14,12 +14,16 @@ import { LiveCommandLog } from "@/components/job-live/live-command-log";
 import { LiveExecutionTimeline } from "@/components/job-live/live-execution-timeline";
 import { ImplementationPlanPanel } from "@/components/implementation-plan-panel";
 import { JobArtifactsPanel } from "@/components/job-artifacts-panel";
+import { JobResultHeader } from "@/components/job-result-header";
+import { PhaseStepper } from "@/components/job-live/phase-stepper";
 import { ReviewPanel } from "@/components/review-panel";
 import { ValidationPanel } from "@/components/validation-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { latestDiffStats } from "@/lib/diff-stats";
 import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/format";
 import { requirePageSession } from "@/lib/auth/page-guard";
 import { FAILURE_CATEGORY_LABELS } from "@/lib/job-status";
+import { readValidationReport } from "@/lib/validation-report";
 
 /** Reads Postgres per request; `next build` must not need a database. */
 export const dynamic = "force-dynamic";
@@ -78,6 +82,10 @@ export default async function JobDetailPage({ params }: PageProps) {
     latestReview ? getArtifact(job.id, latestReview.id) : Promise.resolve(null),
   ]);
   const finished = isTerminal(job.status);
+  // Both already read above for their panels, so leading with the result
+  // costs the page no extra query.
+  const diffStats = latestDiffStats(artifactSummaries);
+  const validationOutcome = readValidationReport(validation)?.outcome ?? null;
 
   return (
     <JobLiveProvider
@@ -116,6 +124,12 @@ export default async function JobDetailPage({ params }: PageProps) {
           </div>
         </div>
 
+        <PhaseStepper />
+
+        {finished ? (
+          <JobResultHeader job={job} diffStats={diffStats} validationOutcome={validationOutcome} />
+        ) : null}
+
         <JobSectionNav hasPullRequest={job.pullRequestUrl !== null} />
 
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -145,6 +159,8 @@ export default async function JobDetailPage({ params }: PageProps) {
 
             <ReviewPanel artifact={review} job={job} />
 
+            <JobArtifactsPanel artifacts={artifactSummaries} summary={summary} diff={diff} />
+
             <Card id="task" className="scroll-mt-24">
               <CardHeader>
                 <CardTitle>Task</CardTitle>
@@ -153,8 +169,6 @@ export default async function JobDetailPage({ params }: PageProps) {
                 <p className="text-sm leading-relaxed whitespace-pre-wrap">{job.description}</p>
               </CardContent>
             </Card>
-
-            <JobArtifactsPanel artifacts={artifactSummaries} summary={summary} diff={diff} />
 
             <details
               id="commands"
@@ -217,7 +231,7 @@ export default async function JobDetailPage({ params }: PageProps) {
 
             <Card id="publication" className="scroll-mt-24">
               <CardHeader>
-                <CardTitle>Target</CardTitle>
+                <CardTitle>Repository</CardTitle>
               </CardHeader>
               <CardContent>
                 <DetailList
@@ -350,7 +364,7 @@ function JobSectionNav({ hasPullRequest }: { hasPullRequest: boolean }) {
     ["Validation", "#validation"],
     ["Review", "#review"],
     ["Changes", "#artifacts"],
-    [hasPullRequest ? "Pull request" : "Target", "#publication"],
+    [hasPullRequest ? "Pull request" : "Repository", "#publication"],
   ] as const;
 
   return (

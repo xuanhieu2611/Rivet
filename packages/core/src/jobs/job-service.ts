@@ -1,6 +1,7 @@
 import {
   type CreateJob,
   type JobDetail,
+  type JobStatus,
   type JobSummary,
   parseFailureCategory,
   parseReviewDecision,
@@ -8,7 +9,7 @@ import {
   TERMINAL_STATUSES,
 } from "@rivet/contracts";
 import { db, type Database, type Job, jobs } from "@rivet/database";
-import { desc, eq, notInArray, sql } from "drizzle-orm";
+import { desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 
 import { appendEvent } from "../events/event-service";
 
@@ -221,13 +222,26 @@ export async function createJob(
   });
 }
 
-/** Newest jobs first, capped at `MAX_JOB_LIST_LIMIT`. */
-export async function listJobs(options: { limit?: number } = {}): Promise<JobSummary[]> {
-  const rows = await db
-    .select()
-    .from(jobs)
-    .orderBy(desc(jobs.createdAt))
-    .limit(resolveListLimit(options.limit));
+/**
+ * Newest jobs first, capped at `MAX_JOB_LIST_LIMIT`.
+ *
+ * `statuses` narrows in SQL rather than in the caller, and the difference
+ * matters: filtering the page's own window would search only the newest fifty
+ * rows and quietly answer "no failed jobs" for an account that has plenty. An
+ * empty array is a filter that matches nothing and is returned as such, because
+ * silently widening it to "everything" is the more surprising of the two.
+ */
+export async function listJobs(
+  options: { limit?: number; statuses?: readonly JobStatus[] } = {},
+): Promise<JobSummary[]> {
+  if (options.statuses?.length === 0) return [];
+
+  const query = db.select().from(jobs);
+  const filtered = options.statuses
+    ? query.where(inArray(jobs.status, [...options.statuses]))
+    : query;
+
+  const rows = await filtered.orderBy(desc(jobs.createdAt)).limit(resolveListLimit(options.limit));
 
   return rows.map(toJobSummary);
 }

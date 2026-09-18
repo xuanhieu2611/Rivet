@@ -4,6 +4,7 @@ import { countEvaluationOutcomes, listEvaluationRuns, listEvaluationSuites } fro
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { RelativeTime } from "@/components/relative-time";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -18,7 +19,6 @@ import {
   formatSuccessRate,
   suiteStatusClassName,
 } from "@/lib/evaluation-presentation";
-import { formatDateTime } from "@/lib/format";
 import { requirePageSession } from "@/lib/auth/page-guard";
 import { cn } from "@/lib/utils";
 
@@ -98,7 +98,7 @@ export default async function EvaluationsPage() {
                     <span className="text-muted-foreground">{formatSuccessFraction(counts)}</span>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-right text-xs whitespace-nowrap">
-                    {formatDateTime(suite.startedAt)}
+                    <RelativeTime value={suite.startedAt} />
                   </TableCell>
                 </TableRow>
               ))}
