@@ -8,6 +8,7 @@ import Link from "next/link";
 
 import { EmptyState } from "@/components/empty-state";
 import { JobsLiveRefresh } from "@/components/jobs-live-refresh";
+import { JobTitleLink } from "@/components/job-title-link";
 import { RelativeTime } from "@/components/relative-time";
 import { StatusBadge } from "@/components/status-badge";
 import { pipelinePhaseIndex, PIPELINE_PHASES } from "@/components/job-live/phase-progress";
@@ -120,9 +121,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 {jobs.map((job) => (
                   <TableRow key={job.id}>
                     <TableCell className="font-medium">
-                      <Link href={`/jobs/${job.id}`} className="hover:underline">
+                      <JobTitleLink href={`/jobs/${job.id}`} className="hover:underline">
                         {job.title}
-                      </Link>
+                      </JobTitleLink>
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">
                       {shortenRepoUrl(job.repoUrl)}

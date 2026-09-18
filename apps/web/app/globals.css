@@ -326,3 +326,43 @@
     transition: none;
   }
 }
+
+/*
+ * The list-to-detail title morph.
+ *
+ * Driven by `components/job-title-link.tsx` rather than by the router: Next 16
+ * has no view-transition flag and the stable React build exports no
+ * `<ViewTransition>`, so the one navigation worth animating opts in by hand.
+ * Only the title wears a name; everything else crosses over in the default
+ * `root` group, kept short because a full-page fade that outlasts the morph
+ * reads as the page hesitating.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: var(--ease-out);
+}
+
+::view-transition-old(job-title),
+::view-transition-new(job-title) {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-out);
+}
+
+::view-transition-group(job-title) {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-out);
+}
+
+/*
+ * Reduced motion turns the whole thing off at the source as well - the link
+ * never starts a transition - but a snapshot animation is exactly the kind of
+ * motion that must not survive a code path being added later.
+ */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

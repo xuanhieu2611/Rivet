@@ -329,17 +329,95 @@ instead; the note under it says why.
 
 ## Tier 4 - motion
 
-`motion` is a dependency used in exactly three files: `components/execution-timeline.tsx`,
-`components/job-live/live-status-badge.tsx` and `components/job-live/job-live-provider.tsx`.
-Everything already respects `prefers-reduced-motion` through `timelineMotion.reduceMotion`, so
-extending it is safe.
+**Done.** All four shipped together. The one item that could not be built the way it was written is
+the last: Next 16 ships no router integration for view transitions, so Rivet drives the API itself
+from one link component, and the note under it says what that costs.
 
-- [ ] Animate the stepper from item 1 advancing between phases. This is the marquee moment of the
+`motion` was a dependency used in exactly three files: `components/execution-timeline.tsx`,
+`components/job-live/live-status-badge.tsx` and `components/job-live/job-live-provider.tsx`.
+Everything already respected `prefers-reduced-motion` through `timelineMotion.reduceMotion`, so
+extending it was safe - every item below reads the same flag rather than inventing a second one.
+
+### 19. The stepper advancing
+
+- [x] Animate the stepper from item 1 advancing between phases. This is the marquee moment of the
       whole product and deserves the most attention.
-- [ ] Count up the live token and cost numbers in `components/job-live/live-agent-usage.tsx` instead
+- [x] **Built as.** Three changes in `components/job-live/phase-stepper.tsx`, and the first is the
+      one that matters: every fill is now `initial={false}` and pending segments render at width
+      `0%` rather than not rendering at all. The old version replayed the whole run on every load -
+      opening a job four phases in animated four bars filling from zero, which is exactly what
+      progress looks like, so a page refresh was indistinguishable from the pipeline moving. Now
+      mount is still and only an advance that happens while somebody is watching moves. The advance
+      itself is sequenced: the completing segment fills to 100% immediately and the newly active one
+      waits `SEGMENT_HANDOFF_DELAY` before starting, so it reads left to right as a handoff instead
+      of the whole bar twitching at once. The delay costs nothing on load precisely because mount is
+      not animated.
+- [x] **Also.** The active segment's opacity throb became a highlight sweeping along the fill. A
+      pulse on a four-pixel bar is barely visible and reads as a rendering glitch; a sweep says work
+      is moving through here and points the direction the stepper advances. It lives **inside** the
+      fill element, because over the unfilled remainder it would draw progress that has not
+      happened. Its colour is `--primary-foreground`, which is by definition what stays legible on
+      `--primary` in both themes. The phase word and the `4 of 7` count roll upward through one
+      shared `Swap`, in `popLayout` rather than `wait` - emptying the box between two words makes
+      the text after it jump left.
+
+### 20. Counting up the live usage numbers
+
+- [x] Count up the live token and cost numbers in `components/job-live/live-agent-usage.tsx` instead
       of swapping them hard.
-- [ ] Give `components/cancel-job-button.tsx` optimistic state rather than only a label change.
-- [ ] Add `view-transition-name` on the job title so the list to detail navigation is continuous.
+- [x] **Built as.** `lib/count-up.ts` holds the tween and is unit tested; `components/count-up.tsx`
+      holds the twenty lines of `requestAnimationFrame` that are not. The first render returns the
+      value unchanged, which is what keeps it safe inside a server-rendered tree: the server prints
+      the persisted total, the browser's first pass prints the same total, and only a change
+      arriving after hydration animates. Counting up from zero on load would replay a whole run's
+      spend as if it were happening now - the same mistake the stepper used to make, one component
+      over.
+- [x] **Duration scales with the share of the number that changed**, not with the delta. 40 tokens
+      onto 20 is the whole counter moving and gets the full sweep; 40 tokens onto 400,000 is a
+      rounding error and lands almost immediately. A fixed duration leaves the header permanently
+      mid-tween on a long run.
+- [x] **Cost is counted as a number and reformatted per frame**, never interpolated as a string. The
+      persisted total is `numeric(10,4)`, so every frame keeps all four places; an unpriced turn
+      still renders `unpriced` and is not animated at all, because there is no number there.
+
+### 21. Optimistic cancellation
+
+- [x] Give `components/cancel-job-button.tsx` optimistic state rather than only a label change.
+- [x] **Built as.** A four-state control - `idle`, `cancelling`, `requested`, `cancelled` - behind
+      `useOptimistic` and an async `useTransition`, with an icon and a rolling label per state.
+      `requested` is why it is a state rather than a boolean: `202` means a worker has been asked to
+      stop and has not stopped yet, so the button must neither claim success nor offer the action
+      again. `useOptimistic` rather than a `pending` flag because the two differ exactly where it
+      matters - a flag has to be cleared by hand on every exit path and the failing path is the one
+      that gets forgotten, while React drops the optimistic value when the transition settles, so a
+      request that never reached the server puts the action back by itself.
+- [x] **Also.** The page passes `cancelRequested` from `jobs.cancel_requested_at`, so a reload of a
+      job whose cancellation is already in flight opens with the committed state rather than
+      re-offering a button that would answer `409`.
+
+### 22. A continuous job title
+
+- [x] Add `view-transition-name` on the job title so the list to detail navigation is continuous.
+- [x] **Built as.** `lib/view-transition.ts` (the decisions, unit tested) plus
+      `components/job-title-link.tsx` (the DOM). Next 16 ships no router integration for this - its
+      config has no view-transition flag and the stable React build exports no `<ViewTransition>` -
+      so the one navigation worth animating opts in by hand: the link intercepts a plain left click,
+      applies the name imperatively, and resolves `startViewTransition`'s update callback when the
+      router commits. Imperatively because `startViewTransition` captures the DOM the moment it is
+      called and a React state update would not have landed yet.
+- [x] **The name is shared, not per job.** A view transition requires each name to be unique within
+      the old document and within the new one, so only the clicked row wears it; fifty per-job names
+      would make every row a separate snapshot layer for a transition that morphs exactly one.
+- [x] **The skeleton is the frame it lands on.** `app/(app)/jobs/[id]/loading.tsx` from item 5
+      renders as soon as the route commits, so its title placeholder carries the same name - without
+      that, the morph would have nothing to morph into and would simply drop the title.
+- [x] **Everything about it is additive.** Reduced motion, a browser without the API, a modified
+      click or no JavaScript at all leave an ordinary `next/link`, and the update callback has an
+      800ms ceiling because the page is frozen on its old snapshot until it settles: a stalled
+      navigation must arrive late rather than freeze the product.
+- [ ] **Not done.** The mobile card list navigates without the morph. Its whole card is the link, so
+      the title cannot be a second anchor inside it, and restructuring the card to make the title
+      the only tap target would trade a real affordance for an animation.
 
 ---
 
@@ -348,5 +426,6 @@ extending it is safe.
 1, 2, 5, 3, 4 first - those five change how the product feels to operate. Then Tier 2 as a single
 consistency pass. Tier 3 and 4 as you touch the pages.
 
-Tiers 1, 2 and 3 are done. Tier 4 remains, plus the two Tier 1 leftovers noted under item 3 (search,
-and pagination past `limit: 50`).
+All four tiers are done. What is left is named in the backlog rather than here: search and
+pagination past `limit: 50` under item 3, and the mobile card list's missing title morph under
+item 22.

@@ -27,6 +27,7 @@ import { formatDateTime, formatDuration, formatElapsed, formatUsd } from "@/lib/
 import { requirePageSession } from "@/lib/auth/page-guard";
 import { FAILURE_CATEGORY_LABELS } from "@/lib/job-status";
 import { readValidationReport } from "@/lib/validation-report";
+import { JOB_TITLE_VIEW_TRANSITION_NAME } from "@/lib/view-transition";
 
 /** Reads Postgres per request; `next build` must not need a database. */
 export const dynamic = "force-dynamic";
@@ -109,7 +110,12 @@ export default async function JobDetailPage({ params }: PageProps) {
               Back to jobs
             </Link>
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-semibold tracking-tight">{job.title}</h1>
+              <h1
+                className="text-2xl font-semibold tracking-tight"
+                style={{ viewTransitionName: JOB_TITLE_VIEW_TRANSITION_NAME }}
+              >
+                {job.title}
+              </h1>
               <LiveStatusBadge />
             </div>
             <p className="text-muted-foreground font-mono text-sm">{job.id}</p>
@@ -228,7 +234,10 @@ export default async function JobDetailPage({ params }: PageProps) {
                         worker stops between phases, so this can take a heartbeat interval.
                       </p>
                     ) : null}
-                    <CancelJobButton jobId={job.id} />
+                    <CancelJobButton
+                      jobId={job.id}
+                      cancelRequested={job.cancelRequestedAt !== null}
+                    />
                   </div>
                 )}
               </CardContent>
