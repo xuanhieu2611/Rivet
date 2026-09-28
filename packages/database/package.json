@@ -18,7 +18,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^0.45.3",
     "pg": "^8.23.0"
   },
   "devDependencies": {
@@ -27,7 +27,7 @@
     "@types/pg": "^8.23.1",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
-    "eslint": "^10.8.1",
+    "eslint": "^10.11.0",
     "tsx": "^4.23.12",
     "typescript": "^5.9.3"
   }
