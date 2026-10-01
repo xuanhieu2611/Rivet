@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { EXPERIMENT_1 } from "@/lib/experiment-1";
-import { LINKS } from "@/lib/links";
+import { AUTHOR, LINKS } from "@/lib/links";
 import { RUN } from "@/lib/run-script";
 
 import Home from "./page";
@@ -38,6 +38,7 @@ describe("public site", () => {
     expect(html).toContain(EXPERIMENT_1.none.successFraction);
     expect(html).toContain(LINKS.repo);
     expect(html).toContain("Built by Hieu Le");
+    expect(html).toContain(AUTHOR.linkedin);
     expect(html).not.toContain("Sign in");
   });
 
