@@ -33,9 +33,9 @@ describe("page proxy", () => {
     }
   });
 
-  it("lets landing photographs through without a session", () => {
+  it("lets the favicon through without a session", () => {
     githubMode();
-    const response = proxy(request("/landing/hero-rivet.jpg"));
+    const response = proxy(request("/favicon.ico"));
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBeNull();
   });

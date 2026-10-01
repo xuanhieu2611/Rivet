@@ -10,7 +10,7 @@ G needs Docker. H is the milestone's demo.
 
 | run | where it lives                                                                                 |
 | --- | ---------------------------------------------------------------------------------------------- |
-| A   | `apps/web/app/(public)/page.test.ts`                                                           |
+| A   | `apps/site/app/page.test.ts` (moved from `apps/web/app/(public)/page.test.ts` on 2026-10-01)   |
 | B   | `apps/web/lib/auth/pages.test.ts` (static), `apps/web/lib/auth/live-page-guard.test.ts` (live) |
 | C   | `apps/web/components/diff-viewer/diff-viewer.test.ts`                                          |
 | D   | `apps/web/components/job-live/stream-state.test.ts`                                            |
@@ -43,6 +43,11 @@ landing page that looks static while it is reading Postgres.
 ## A - The landing page builds and renders with no database and no session
 
 **`apps/web/app/(public)/page.test.ts`.**
+
+> **2026-10-01:** the landing page moved to `apps/site`, a static export hosted separately, and run
+> A moved with it to `apps/site/app/page.test.ts`. The property is now stronger than the one below:
+> the site's only runtime dependencies are `next`, `react` and `react-dom`, so it cannot import
+> `@rivet/core` or `@rivet/database` at all. The text below is the original contract.
 
 `/` is a public server component. It renders checked-in copy, a checked-in diagram, checked-in still
 slots and the Experiment 1 numbers from a TypeScript module, not from a query. `DATABASE_URL` is

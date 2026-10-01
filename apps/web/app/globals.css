@@ -179,35 +179,20 @@
 }
 
 /*
- * Public pages share the operator tokens so the product is one surface.
- * Aliases exist because the architecture SVG cannot use Tailwind classes.
+ * The sign-in page and its layout. The public introduction to Rivet lives in
+ * apps/site; what remains here is the one page an operator meets before a
+ * session exists, styled with the operator tokens so the product is one surface.
  */
 [data-landing] {
-  --landing-paper: var(--background);
-  --landing-ink: var(--foreground);
   --landing-muted: var(--muted-foreground);
   --landing-rule: var(--border);
-  --landing-rivet: var(--primary);
-  --landing-rivet-ink: var(--primary-foreground);
-  --landing-grid: var(--primary);
   --landing-pass: oklch(0.42 0.1 165);
-  --landing-fail: oklch(0.5 0.16 25);
-  --landing-still: var(--card);
   background: var(--background);
   color: var(--foreground);
 }
 
 .dark [data-landing] {
   --landing-pass: oklch(0.78 0.1 165);
-  --landing-fail: oklch(0.72 0.14 25);
-}
-
-.font-landing-display {
-  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-}
-
-.font-landing-mono {
-  font-family: var(--font-mono), ui-monospace, monospace;
 }
 
 .text-landing-muted {
@@ -238,8 +223,7 @@
   background: var(--primary);
 }
 
-.landing-cta,
-.landing-cta-ghost {
+.landing-cta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -249,16 +233,11 @@
   line-height: 1;
   padding: 0.7rem 1.15rem;
   border-radius: var(--radius);
-  transition:
-    transform 160ms var(--ease-out),
-    background-color 160ms var(--ease-out),
-    color 160ms var(--ease-out),
-    border-color 160ms var(--ease-out);
-}
-
-.landing-cta {
   color: var(--primary-foreground);
   background: var(--primary);
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 160ms var(--ease-out);
 }
 
 .landing-cta-compact {
@@ -266,19 +245,11 @@
   font-size: 0.8125rem;
 }
 
-.landing-cta-ghost {
-  color: var(--foreground);
-  background: transparent;
-  border: 1px solid var(--border);
-}
-
-.landing-cta:active,
-.landing-cta-ghost:active {
+.landing-cta:active {
   transform: scale(0.97);
 }
 
-.landing-cta:focus-visible,
-.landing-cta-ghost:focus-visible {
+.landing-cta:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 3px;
 }
@@ -287,42 +258,10 @@
   .landing-cta:hover {
     background: color-mix(in oklch, var(--primary) 88%, var(--foreground));
   }
-
-  .landing-cta-ghost:hover {
-    background: var(--muted);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .landing-hero-copy {
-    animation: landing-enter 420ms var(--ease-out) both;
-  }
-
-  .landing-hero-asset {
-    animation: landing-enter 520ms var(--ease-out) 70ms both;
-  }
-}
-
-@keyframes landing-enter {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .landing-hero-copy,
-  .landing-hero-asset {
-    animation: none;
-  }
-
-  .landing-cta,
-  .landing-cta-ghost {
+  .landing-cta {
     transition: none;
   }
 }
