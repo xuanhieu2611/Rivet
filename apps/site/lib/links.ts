@@ -18,7 +18,7 @@ export const AUTHOR = {
   name: "Hieu Le",
   github: "https://github.com/xuanhieu2611",
   x: "https://x.com/hieuspringle",
-  linkedin: null as string | null,
+  linkedin: "https://www.linkedin.com/in/hieule2611/" as string | null,
   website: null as string | null,
 } as const;
 
