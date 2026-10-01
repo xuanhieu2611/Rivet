@@ -400,7 +400,10 @@ versions an advisory actually names and stops doing anything the moment the requ
 on its own. Each stays inside the package's existing major, because forcing a major through a
 dependency that was never tested against it trades a rated advisory for an unrated breakage.
 `fast-uri` and `js-yaml` are both there for that reason; both are reached only through tooling, and
-both should be deleted rather than maintained once the packages above them catch up.
+both should be deleted rather than maintained once the packages above them catch up. `undici` 8 is
+the exception to "only tooling": `@earendil-works/pi-coding-agent` pins it to exactly `8.9.0`, and
+it runs on the worker host for every model session, so its entry moves it to the patched `8.10.x`
+inside the same major and should go as soon as Pi releases against it.
 
 CodeQL needs `security-events: write` to upload its SARIF, which is the one permission any Rivet
 workflow holds beyond `contents: read`; it is scoped to that job alone rather than to the workflow.
