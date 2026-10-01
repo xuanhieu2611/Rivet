@@ -1,5 +1,7 @@
 # Rivet
 
+[![Rivet: give it a GitHub issue, get back a tested pull request](apps/site/public/og.png)](https://rivet-dev.vercel.app)
+
 **An autonomous software engineering platform that turns a GitHub issue into a tested pull
 request.**
 
@@ -8,7 +10,9 @@ repository's existing checks, sends the patch through an independent review, and
 ordinary GitHub pull request. Postgres-backed leases, checkpoints, and an append-only event log keep
 the run durable and observable when workers or browser connections fail.
 
-[Watch a real issue-to-PR run on YouTube](https://youtu.be/X_b03iHhXzU) or read the accompanying
+**Website: [rivet-dev.vercel.app](https://rivet-dev.vercel.app)** - a plain-English tour with a
+replay of a real run, screenshots and results. You can also
+[watch a real issue-to-PR run on YouTube](https://youtu.be/X_b03iHhXzU) or read the accompanying
 [engineering notes on X](https://x.com/hieuspringle/status/2091312854389719528).
 
 ## What Rivet includes
@@ -160,6 +164,7 @@ docs              Architecture, security, operations, and experiments
 
 ## Documentation
 
+- [Project website](https://rivet-dev.vercel.app)
 - [Architecture](docs/architecture.md)
 - [GitHub App setup](docs/github-app-setup.md)
 - [Security policy and supported use](SECURITY.md)
