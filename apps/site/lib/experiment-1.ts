@@ -1,8 +1,7 @@
 /**
  * Snapshot of Experiment 1, written by the evaluation run, not read from
- * Postgres. The landing page imports this module. A live query here would
- * make `pnpm build` need `DATABASE_URL`, which is the property CI's verify
- * job exists to protect.
+ * Postgres. The public site is a static export with no database to query.
+ * Re-run the suite and update these values together with the source below.
  *
  * Source: `docs/experiments/reviewer-value.md`, suite
  * `e222928b-1de4-458d-a57a-7c93f0651421`, 2026-08-17.
@@ -11,6 +10,7 @@ export const EXPERIMENT_1 = {
   runDate: "2026-08-17",
   suiteId: "e222928b-1de4-458d-a57a-7c93f0651421",
   model: "openrouter/deepseek/deepseek-v4-flash",
+  modelName: "DeepSeek V4 Flash via OpenRouter",
   cases: 5,
   repetitions: 3,
   independent: {
@@ -37,6 +37,8 @@ export const EXPERIMENT_1 = {
     successRate: "+6.67 pp",
     cost: "+$0.0206 (+43.9%)",
     meanRuntime: "+51.9s (+48.9%)",
+    costIncrease: "$0.0206",
+    meanRuntimeIncrease: "52 seconds",
   },
   caveat:
     "Fifteen observations per arm. The independent arm had one fewer failed task in this run. That is a useful signal, not a demonstrated reviewer correction, and not a reason to pick a default workflow.",

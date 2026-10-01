@@ -62,19 +62,20 @@ without changing the schema or the execution model.
 
 ## What exists today
 
-| Component         | Where                | Responsibility                                                                           |
-| ----------------- | -------------------- | ---------------------------------------------------------------------------------------- |
-| Web UI            | `apps/web/app`       | Landing page, dashboard, job detail, evaluation pages, live timeline, logs and artifacts |
-| HTTP API          | `apps/web/app/api`   | Session-guarded job, GitHub, benchmark, evaluation, artifact and event endpoints         |
-| Worker            | `apps/worker`        | BullMQ consumer: claim, heartbeat, run the pipeline, publish, finalize, sweep            |
-| Domain logic      | `packages/core`      | Jobs, transitions, artifacts, replay, evaluation, GitHub workflows, telemetry ports      |
-| Queue adapter     | `packages/queue`     | BullMQ over Redis behind core's `JobQueue` port, plus an in-memory fake                  |
-| Sandbox adapter   | `packages/sandbox`   | Dockerode behind core's `SandboxProvider` port, plus a scripted fake                     |
-| Coding agent      | `packages/agent`     | Pi adapter, scripted fake, event mapper, and sandbox-backed tools                        |
-| Telemetry adapter | `packages/telemetry` | OTLP/HTTP traces and metrics behind core's `Telemetry` port                              |
-| Contracts         | `packages/contracts` | Zod schemas, job/event/command contracts, and the status enum                            |
-| Data access       | `packages/database`  | Drizzle schema, generated migrations, and the `pg` pool                                  |
-| Shared config     | `packages/config`    | The tsconfig and ESLint bases every workspace extends                                    |
+| Component         | Where                | Responsibility                                                                         |
+| ----------------- | -------------------- | -------------------------------------------------------------------------------------- |
+| Public site       | `apps/site`          | Static-export introduction to Rivet, hosted on Vercel; no runtime and no Rivet package |
+| Web UI            | `apps/web/app`       | Dashboard, job detail, evaluation pages, live timeline, logs and artifacts             |
+| HTTP API          | `apps/web/app/api`   | Session-guarded job, GitHub, benchmark, evaluation, artifact and event endpoints       |
+| Worker            | `apps/worker`        | BullMQ consumer: claim, heartbeat, run the pipeline, publish, finalize, sweep          |
+| Domain logic      | `packages/core`      | Jobs, transitions, artifacts, replay, evaluation, GitHub workflows, telemetry ports    |
+| Queue adapter     | `packages/queue`     | BullMQ over Redis behind core's `JobQueue` port, plus an in-memory fake                |
+| Sandbox adapter   | `packages/sandbox`   | Dockerode behind core's `SandboxProvider` port, plus a scripted fake                   |
+| Coding agent      | `packages/agent`     | Pi adapter, scripted fake, event mapper, and sandbox-backed tools                      |
+| Telemetry adapter | `packages/telemetry` | OTLP/HTTP traces and metrics behind core's `Telemetry` port                            |
+| Contracts         | `packages/contracts` | Zod schemas, job/event/command contracts, and the status enum                          |
+| Data access       | `packages/database`  | Drizzle schema, generated migrations, and the `pg` pool                                |
+| Shared config     | `packages/config`    | The tsconfig and ESLint bases every workspace extends                                  |
 
 Five tables. `jobs` holds the domain model: the task, repository and base branch, the full status
 machine, budget ceilings, cumulative model spend, the immutable deadline, lease and retry state, the

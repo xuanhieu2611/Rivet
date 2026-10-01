@@ -144,6 +144,7 @@ fall back to inference, while a malformed configuration fails explicitly instead
 ## Repository layout
 
 ```text
+apps/site         Static public website (Next.js export, hosted on Vercel)
 apps/web          Next.js control plane and live run interface
 apps/worker       Worker process, demos, and infrastructure suites
 packages/core     Domain logic, pipeline, state transitions, and ports

@@ -69,9 +69,14 @@ public job-detail route.
 
 ## 1. The public and authenticated surfaces
 
-`apps/web/app/(public)/page.tsx` is a force-static server component. It renders checked-in copy,
-images, diagrams, and experiment numbers without reading Postgres or a session. This preserves the
-property that `pnpm build` needs no environment.
+`apps/web/app/(public)/page.tsx` was a force-static server component that rendered checked-in copy,
+images, diagrams, and experiment numbers without reading Postgres or a session.
+
+**Since 2026-10-01 the public introduction is its own deployable, `apps/site`.** It is a Next.js
+static export with no Rivet package among its dependencies, hosted on Vercel, so the page a
+recruiter or reviewer opens has no server, no session and no route that could reach a job. In
+`apps/web`, `/` now redirects to `/jobs` and stays in `PUBLIC_PAGES` only because the redirect reads
+nothing. Run A moved with the page to `apps/site/app/page.test.ts`.
 
 The dashboard moved to `/jobs`. Every other application page remains authenticated. Page coverage
 mirrors API coverage:
