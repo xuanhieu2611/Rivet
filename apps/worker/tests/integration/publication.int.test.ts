@@ -49,7 +49,7 @@ import {
  * makes this suite worth its runtime - the real host Git operations against a
  * real bare repository standing in for GitHub. The sandbox, the model and the
  * provider API are scripted; the patch, the apply, the commit and the push are
- * not. See `docs/plans/milestone-9-acceptance.md`, whose eight runs these are.
+ * not.
  *
  * Run H needs a real container and lives in `pipeline.sbx.test.ts`.
  */

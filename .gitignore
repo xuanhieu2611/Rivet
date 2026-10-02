@@ -46,3 +46,6 @@ Thumbs.db
 
 # Vercel CLI project link
 .vercel
+
+# private notes, plans and demo scripts kept out of the public repo
+.private/

@@ -29,10 +29,10 @@ const { POST } = await import("./route");
 /**
  * **Acceptance run F, the live half.**
  *
- * `docs/plans/milestone-11.md`: "Creation attempts past the window limit return
- * 429 with a reset hint and leave **no** `jobs` row. With the active-job cap
- * reached, creation is refused for the same reason. With Redis unreachable,
- * creation is refused rather than allowed."
+ * Creation attempts past the window limit return 429 with a reset hint and
+ * leave **no** `jobs` row. With the active-job cap reached, creation is refused
+ * for the same reason. With Redis unreachable, creation is refused rather than
+ * allowed.
  *
  * `packages/queue/src/rate-limiter.test.ts` proves the limiter itself fails
  * closed. What it cannot prove is that the *route* honours the refusal, and

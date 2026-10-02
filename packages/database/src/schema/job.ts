@@ -200,8 +200,7 @@ export const jobs = pgTable(
      * Deliberately not a parent. Each attempt opens its own root `job.run` span
      * and *links* back to this one: the request finishes in milliseconds while
      * the run takes minutes across possibly three processes, and a root span
-     * held open that long is one most backends drop. See
-     * `docs/plans/milestone-11.md` §2.
+     * held open that long is one most backends drop.
      */
     traceContext: text("trace_context"),
   },

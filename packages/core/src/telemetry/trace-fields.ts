@@ -1,8 +1,8 @@
 /**
  * A `traceparent`, as the two ids a log line carries.
  *
- * This is the whole of "logs join the trace rather than being replaced by it"
- * (`docs/plans/milestone-11.md` §3). Both deployables put `trace_id` and
+ * This is the whole of "logs join the trace rather than being replaced by
+ * it". Both deployables put `trace_id` and
  * `span_id` on every pino line through a mixin, and both need the same three
  * lines of parsing to do it - so it lives here, next to the port that defines
  * trace context as a W3C `traceparent` string in the first place, rather than
