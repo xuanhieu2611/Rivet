@@ -16,10 +16,9 @@ exists today and is the best starting point for any structural question.
 "The public site" below), structured diff and validation surfaces, append-only timeline motion,
 deterministic capture and replay, two graded demo repositories, and a public recording of a real
 issue-to-PR run. A replayed run remains an ordinary job written through the production writers.
-**M12 adds no table, column, job status, event type or failure category.** Acceptance runs A-H are
-mapped in `docs/plans/milestone-12-acceptance.md`; A-D and F run in `pnpm test`, E is integration, G
-is the Docker-backed demo-repository suite, and H is the recording published on 2026-08-22.
-`docs/milestone-12-guide.md` is the tour.
+**M12 adds no table, column, job status, event type or failure category.** Of its acceptance runs
+A-H, A-D and F run in `pnpm test`, E is integration, G is the Docker-backed demo-repository suite,
+and H is the recording published on 2026-08-22.
 
 **Milestone 11 is complete.** Rivet can now be watched, and it defends itself. Traces, metrics and
 correlated logs flow through a `Telemetry` port to an OTLP collector; every durable write passes a
@@ -28,11 +27,9 @@ convention; the unauthenticated edges and the spend are rate limited and the lim
 every prompt boundary fences untrusted text; and a startup probe refuses to boot a worker whose
 control plane a sandbox container can reach. **M11's entire schema footprint is one nullable `text`
 column**, `jobs.trace_context` - no new table, no job status, no job event type and no failure
-category. Its acceptance runs are A-H, mapped to their implementations in
-`docs/plans/milestone-11-acceptance.md`; A-F need no Docker and run in `pnpm test`, G is
+category. Its acceptance runs are A-H; A-F need no Docker and run in `pnpm test`, G is
 `apps/worker/tests/sandbox/network-isolation.sbx.test.ts`, and H is
-`benchmarks/prompt-injection-bait/` plus `pnpm demo:observability`. `docs/milestone-11-guide.md` is
-the tour.
+`benchmarks/prompt-injection-bait/` plus `pnpm demo:observability`.
 
 **Milestone 10 is complete.** Rivet measures itself. A benchmark case is git-tracked files that
 build into a lock-pinned local bare repository; an evaluation run **is** an ordinary job, created
@@ -47,8 +44,7 @@ measuring a different system than production runs. Its acceptance runs are A-G
 the builder and the corpus, `apps/worker/tests/integration/evaluation.int.test.ts` for
 classification and metrics, `apps/worker/tests/sandbox/local-seed.sbx.test.ts` and
 `apps/worker/tests/sandbox/evaluation.sbx.test.ts` for the container-level ones) plus run H,
-`pnpm demo:eval`. `docs/plans/milestone-10-acceptance.md` is the contract they implement and
-`docs/milestone-10-guide.md` is the tour.
+`pnpm demo:eval`.
 
 **Milestone 9 is complete.** Jobs execute, survive their worker, deterministically validate what the
 coding session changed, run an independent read-only review, and **end in a pull request on
@@ -67,7 +63,7 @@ against `FakeGitHubClient`, the **real** host Git operations and a local bare re
 for GitHub) and `apps/worker/tests/sandbox/publication.sbx.test.ts` (run H, against Docker: the
 seeded container, a binary file that survives the round trip byte for byte, and the sentinel-token
 grep across the container environment, its `.git/config`, every command row, every event row and
-every host Git argv). `docs/plans/milestone-9-acceptance.md` is the contract they implement.
+every host Git argv).
 
 **Every GitHub failure category is terminal, including `github_unavailable`.** The bounded,
 jittered, `Retry-After`-honouring retry lives in the adapter, one HTTP call away from the failure. A

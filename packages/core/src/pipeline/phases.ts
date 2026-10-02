@@ -45,8 +45,6 @@ import { validationPhase } from "./validation-phase";
  *   repeating it the run must ask the provider what already happened. M9's
  *   `finalizing` phase is the first declaration: its branch, push and pull
  *   request effects are safe to repeat only through the receipt protocol.
- *
- * See `docs/plans/milestone-6.md` §7 for the protocol the third one implies.
  */
 export type PhaseRecovery = "replay" | "checkpoint" | "reconcile_external";
 

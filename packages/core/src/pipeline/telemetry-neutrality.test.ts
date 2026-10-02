@@ -39,9 +39,8 @@ vi.mock("../jobs/agent-usage", () => ({ recordAgentUsage: vi.fn() }));
 /**
  * **Acceptance run C - telemetry is not in the way.**
  *
- * `docs/plans/milestone-11.md`: "The same job run with `RIVET_TELEMETRY=off`
- * and with the adapter attached produces byte-identical projected event lists
- * and identical terminal state."
+ * The same job run with `RIVET_TELEMETRY=off` and with the adapter attached
+ * produces byte-identical projected event lists and identical terminal state.
  *
  * The technique is M10's: run the thing twice, project both runs down to what a
  * reader would actually see, and compare the projections rather than trusting

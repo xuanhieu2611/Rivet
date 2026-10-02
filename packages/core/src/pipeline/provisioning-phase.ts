@@ -449,8 +449,8 @@ async function resolveBaseCommit(
  * work so far.
  *
  * Verification happens here, immediately after the apply and *before* the
- * dependency install, which is a deliberate departure from the step order in
- * `docs/plans/milestone-6.md`. The check exists to prove that restoration was
+ * dependency install, which is a deliberate departure from the obvious step
+ * order. The check exists to prove that restoration was
  * lossless; an install that rewrites a lockfile changes the working tree for
  * reasons that have nothing to do with restoration, and letting it run first
  * would fail perfectly restored jobs with `checkpoint_restore_failed`. The

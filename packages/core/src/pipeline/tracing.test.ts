@@ -50,11 +50,11 @@ vi.mock("../jobs/agent-usage", () => ({ recordAgentUsage: vi.fn() }));
 /**
  * **Acceptance run A - one job, one trace, one shape.**
  *
- * `docs/plans/milestone-11.md`: "A job run through the pipeline against a
- * recording telemetry fake produces a span tree whose phase spans match the
- * job's `phase.completed` events exactly, in order, with model and command
- * spans nested under the phase that ran them and every span carrying
- * `rivet.job_id`. Asserted in-process, with no collector."
+ * A job run through the pipeline against a recording telemetry fake produces
+ * a span tree whose phase spans match the job's `phase.completed` events
+ * exactly, in order, with model and command spans nested under the phase that
+ * ran them and every span carrying `rivet.job_id`. Asserted in-process, with
+ * no collector.
  *
  * That is what this file is, and the reason it can be an ordinary unit test -
  * no SDK, no exporter, no Docker, no database - is the whole argument for
